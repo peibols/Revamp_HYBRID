@@ -7,7 +7,7 @@ You need to have Pythia8 installed, and make sure that the paths to the relevant
 
 then cp main to test folder to test it.
 
-You need to download the hydro file from this link https://drive.google.com/file/d/1ngYVF7wEuLljAC4Z6TAWs6Zdeqnx7zhR/view?usp=share_link
+You need to download the hydro file from this link https://drive.google.com/file/d/1Gzewx4MFre7_4NdAaL9Gx171GUSMQJmn/view?usp=sharing
 and put inside the test folder. This corresponds to PbPb with sqrt(s)=5.02 ATeV and centrality = 0-5%.
 
 You also need the TAb2LL.dat (associated to initial profile), which you already have in the test folder.
