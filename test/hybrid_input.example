@@ -3,11 +3,11 @@
 
 # Simulation control
 njob = 0
-Nev = 100
+Nev = 10
 cent = 0-5
 
 # Energy loss parameters
-kappa = 15.0
+kappa = 0.0
 alpha = 0.404
 
 tmethod = 0
@@ -19,7 +19,7 @@ mode = 0
 # do_source: true/false
 
 do_quench = true
-#do_wake = true
+do_wake = true
 #do_source = false
 
 # Hydro mode: 0 = averaged hydro (Hydro_PbPb), 1 = event-by-event (ipsat)

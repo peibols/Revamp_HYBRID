@@ -4,15 +4,14 @@ main_trigger
 *.o
 *.dSYM/
 
-# Test folder: exclude outputs, logs, binaries and plots; keep input/config/data
+# Test folder: exclude outputs, logs, binaries; keep input/config/data/plots
 test/main
 test/*.out
 test/*.log
 test/*.sh
-test/*.pdf
-test/*.png
 test/plot_*.py
 test/hydroinfo*.dat
+test/hydro_test.input
 
 # macOS
 .DS_Store
