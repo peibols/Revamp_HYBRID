@@ -10,6 +10,12 @@ then cp main to test folder to test it.
 You need to download the hydro file from this link https://drive.google.com/file/d/1Gzewx4MFre7_4NdAaL9Gx171GUSMQJmn/view?usp=sharing
 and put inside the test folder. This corresponds to PbPb with sqrt(s)=5.02 ATeV and centrality = 0-5%.
 
+Additional event-averaged hydro files for other systems:
+- OO @ 5.36 TeV: https://zenodo.org/records/15749762
+- NeNe @ 5.36 TeV: https://zenodo.org/records/15750450
+
+For event-by-event hydro, the files are available here: https://drive.google.com/drive/folders/1rEF7Cfe2DMHmZmlUyGvMW4RjM5BijqMt?usp=sharing
+
 You also need the TAb2LL.dat (associated to initial profile), which you already have in the test folder.
 
 Then use the script run_it.sh to run the program. There is a brief description of the meaning of the arguments in there.
