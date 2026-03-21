@@ -1,4 +1,4 @@
-# arjun_HYBRID
+# HYBRID
 
 To compile simply run
 ./compiler.sh main
