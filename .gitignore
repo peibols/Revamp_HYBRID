@@ -1,0 +1,11 @@
+# Compiled binaries
+main
+main_trigger
+*.o
+*.dSYM/
+
+# Test output
+test/
+
+# macOS
+.DS_Store
