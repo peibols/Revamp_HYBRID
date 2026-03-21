@@ -1,0 +1,29 @@
+# hybrid_input example
+# Lines starting with # or // are ignored.
+
+# Simulation control
+njob = 0
+Nev = 100
+cent = 0-5
+
+# Energy loss parameters
+kappa = 15.0
+alpha = 0.404
+
+tmethod = 0
+mode = 0
+
+# Physics toggles
+# do_quench: true/false
+# do_wake: true/false
+# do_source: true/false
+
+do_quench = true
+#do_wake = true
+#do_source = false
+
+# Hydro mode: 0 = averaged hydro (Hydro_PbPb), 1 = event-by-event (ipsat)
+ebe_hydro = 0
+
+# Output base name (files will be <output_base>_Hadrons.out and <output_base>_Partons.out)
+output_base = HYBRID
