@@ -40,7 +40,7 @@ void TreeGenerator::setTrigger(double pt, double eta, int id) {
     trigger_id_ = id;
 }
 
-bool TreeGenerator::nextEvent(std::vector<Parton> &partons, double &weight, double &cross, double &cross_err, bool &have_trigger) {
+bool TreeGenerator::nextEvent(std::vector<Parton> &partons, double &weight, double &cross, double &cross_err) {
     if (!pythia_) {
         std::cerr << "TreeGenerator not initialized (call init() before generating events).\n";
         return false;
@@ -50,6 +50,28 @@ bool TreeGenerator::nextEvent(std::vector<Parton> &partons, double &weight, doub
 
     if (!pythia_->next()) {
         return false;
+    }
+
+    weight = info.weight();
+    cross = info.sigmaGen();
+    cross_err = info.sigmaErr();
+
+    // Check for trigger
+    bool have_trigger = false;
+    if (use_trigger_) {
+        for (int i = 0; i < pythia_->event.size(); ++i) {
+            const Particle &p = pythia_->event[i];
+            if (!p.isFinal()) continue;
+            if (p.id() != trigger_id_) continue;
+            if (p.pT() < trigger_pt_) continue;
+            if (std::abs(p.eta()) > trigger_eta_) continue;
+            have_trigger = true;
+            break;
+        }
+        if (!have_trigger) {
+            // If trigger is set but not found, skip this event
+            return false;
+        }
     }
 
     partons.clear();
@@ -147,28 +169,5 @@ bool TreeGenerator::nextEvent(std::vector<Parton> &partons, double &weight, doub
         }
     } while (changes == 0);
 
-    weight = info.weight();
-    cross = info.sigmaGen();
-    cross_err = info.sigmaErr();
-
-    // Check for trigger
-    have_trigger = false;
-    if (use_trigger_) {
-        for (int i = 0; i < pythia_->event.size(); ++i) {
-            const Particle &p = pythia_->event[i];
-            if (!p.isFinal()) continue;
-            if (p.id() != trigger_id_) continue;
-            if (p.pT() < trigger_pt_) continue;
-            if (std::abs(p.eta()) > trigger_eta_) continue;
-            have_trigger = true;
-            break;
-        }
-    }
-
     return true;
-}
-
-bool TreeGenerator::nextEvent(std::vector<Parton> &partons, double &weight, double &cross, double &cross_err) {
-    bool dummy;
-    return nextEvent(partons, weight, cross, cross_err, dummy);
 }

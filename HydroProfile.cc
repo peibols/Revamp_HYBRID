@@ -28,7 +28,7 @@ double HydroProfile::fracFromIndex(double coord, double origin, double spacing, 
 void HydroProfile::loadHydro(int mode, const std::string &cent) {
     mode_ = mode;
     if (mode == 0) {
-        tempScalingFactor_ = 0.2;
+        tempScalingFactor_ = 0.197327;  // hbar*c [GeV·fm]: converts fm^-1 -> GeV
         loadPlaintextHydro(cent);
     } else {
         tempScalingFactor_ = 1.0;

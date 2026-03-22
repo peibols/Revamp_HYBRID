@@ -24,10 +24,7 @@ public:
 
     // Generate one event and fill the output parton list.
     // Returns false if the event generation failed.
-    // If trigger is set, checks for trigger particle and sets have_trigger.
-    bool nextEvent(std::vector<Parton> &partons, double &weight, double &cross, double &cross_err, bool &have_trigger);
-
-    // Overload without trigger for backward compatibility
+    // If trigger is set, checks for trigger particle.
     bool nextEvent(std::vector<Parton> &partons, double &weight, double &cross, double &cross_err);
 
 private:

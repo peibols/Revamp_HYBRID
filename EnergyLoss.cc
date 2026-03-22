@@ -97,7 +97,7 @@ void EnergyLoss::do_eloss_impl(const std::vector<Parton> &partons, std::vector<Q
             quenched[tp].vSetRf(pos);
             quenched[tp].SetIsDone(true);
             quenched[tp].AddLength(length, tlength);
-            // If mother got fully quenched, quenched descendance and exit
+            // If it got fully quenched, quenched descendance and exit
             if (p[3] == 0.) {
                 for (size_t j = w; j > 0; j--) {
                     tp = Fam[j - 1];
@@ -141,8 +141,8 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
 
     double tot = pos[3] + tof;    // Final time
 
-    double tau0h = 0.6;
-    if (ebe_hydro_ == 1) tau0h = 0.4;
+    double tau0h = 0.6;             //Ave hydro
+    if (ebe_hydro_ == 1) tau0h = 0.4;   //ebe hydro
 
     double ei = p[3];      // Initial energy
 
@@ -171,7 +171,6 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
         // Proper time
         double tau = sqrt(pos[3] * pos[3] - pos[2] * pos[2]);
         if (tau != tau) {
-            tau = 0.;
             std::cout << " TAU Not a number z= " << pos[2] << " t= " << pos[3] << " wz= " << w[2] << " en = " << p[3] << " pz= " << p[2] << "\n";
             std::cout << " Id= " << id << std::endl;
             exit(1);
@@ -181,13 +180,13 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
         double eta = 1. / 2. * log((pos[3] + pos[2]) / (pos[3] - pos[2]));
         if (eta != eta && tau > 0.) {
             std::cout << " Eta is NaN= " << eta << " t= " << pos[3] << " z= " << pos[2] << std::endl;
-            eta = 0.;
+            exit(1);
         }
 
         int will_hot = 0;  // Advance variable (to reach hot zones)
         double vx = 0.;
         double vy = 0.;
-        if (tau >= tau0h) {  // Smooth profile starting time
+        if (tau >= tau0h) {  // Hydro profile starting time
             std::vector<double> v;
             vx = call_gT(tau, pos[0], pos[1], 1);
             vy = call_gT(tau, pos[0], pos[1], 2);
@@ -213,14 +212,9 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
                 f_lore = 0.;
             }
             double f_step = step * sqrt(f_lore);
-            f_dist += step * sqrt(f_lore);
+            f_dist += f_step;
 
-            double temp;
-            if (ebe_hydro_ == 0) {
-                temp = call_gT(tau, pos[0], pos[1], 0);
-            } else {
-                temp = call_gT(tau, pos[0], pos[1], 0);
-            }
+            double temp = call_gT(tau, pos[0], pos[1], 0);
             
             if (temp > Tc) {
                 // In-medium distance tracked here (for potential future use)
@@ -234,18 +228,13 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
                     if (tpos[3] > tot) break;
                     tau = sqrt(tpos[3] * tpos[3] - tpos[2] * tpos[2]);
                     eta = 1. / 2. * log((tpos[3] + tpos[2]) / (tpos[3] - tpos[2]));
-                    double ctemp;
-                    if (ebe_hydro_ == 0) {
-                        ctemp = call_gT(tau, pos[0], pos[1], 0);
-                    } else {
-                        ctemp = call_gT(tau, tpos[0], tpos[1], 0);
-                    }
-                    if (ctemp > Tc) {
+                    double ctemp = call_gT(tau, tpos[0], tpos[1], 0);
+                    if (ctemp > Tc) { //It will get to hot
                         will_hot = int(j);
                         break;
                     }
                 }
-                if (will_hot == 0) {
+                if (will_hot == 0) { // It will not get to hot
                     pos += w * (tot - pos[3]);
                     marker = 1;
                 }
@@ -297,6 +286,7 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
             }
         }
 
+        //This is to check travelled distance, not used
         if (tof < 1000000) {
             double vz = pos[2] / std::max(pos[3], 0.000001);
             double v2 = vz * vz;
@@ -334,7 +324,7 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
         }
 
 #ifdef DO_SOURCE
-        // Fill source file
+        // Fill source file, for new wake purposes
         if (p[3] != p_prev[3]) {
             // Get tau ev, x_f, y_f and vx_f and vy_f for source file
             double tau_ev, x_f, y_f, vx_f, vy_f;
@@ -349,6 +339,7 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
 
     } while (marker == 0);
 
+    //Just to check the distance travelled, not used
     if (virt_f_dist == 0.) virt_f_dist = -1;
 }
 

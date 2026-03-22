@@ -33,10 +33,17 @@ HYBRID::HYBRID(const Config &cfg) :
     hjt_file_.open(out_base + "_Hadrons.out", std::ios_base::app);
     pjt_file_.open(out_base + "_Partons.out", std::ios_base::app);
 
+    if (cfg.getBoolOr("use_trigger", false)) {
+        tree_gen_->setTrigger(
+            cfg.getDoubleOr("trigger_pt", 0.0),
+            cfg.getDoubleOr("trigger_eta", 2.4),
+            cfg.getIntOr("trigger_id", 22));
+    }
+
     if (do_quench_) {
         if (ebe_hydro_ == 0) read_nuclear();
         else Ncollsize_ = read_nuclear_ipsat();
-        read_hydro_ipsat();
+        read_hydro();
     }
 }
 
@@ -62,8 +69,9 @@ void HYBRID::run() {
         double weight = 0.;
         double cross = 0.;
         double cross_err = 0.;
-        do_tree(partons, weight, cross, cross_err);
-
+        while (true) {
+          if (do_tree(partons, weight, cross, cross_err)) break;
+        }
         // Create vector of quenched partons initially equal to vacuum partons
         quenched.clear();
         quenched.reserve(partons.size());
@@ -193,7 +201,7 @@ int HYBRID::read_nuclear_ipsat() {
     return glauber_model_->readNuclearIPSAT(0, cent_);
 }
 
-void HYBRID::read_hydro_ipsat() {
+void HYBRID::read_hydro() {
     hydro_profile_->loadHydro(ebe_hydro_, cent_);
 }
 
@@ -201,9 +209,8 @@ void HYBRID::init_tree() {
     tree_gen_->init(njob_);
 }
 
-void HYBRID::do_tree(std::vector<Parton> &partons, double &weight, double &cross, double &cross_err) {
-    bool have_trigger;
-    tree_gen_->nextEvent(partons, weight, cross, cross_err, have_trigger);
+bool HYBRID::do_tree(std::vector<Parton> &partons, double &weight, double &cross, double &cross_err) {
+    return tree_gen_->nextEvent(partons, weight, cross, cross_err);
 }
 
 void HYBRID::gxy(double &x, double &y) {

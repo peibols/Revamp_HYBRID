@@ -23,7 +23,7 @@ private:
     // Configuration flags
     bool do_quench_;
     bool do_wake_;
-    bool do_source_;  // from the define
+    bool do_source_;
 
     // Parameters
     int njob_;
@@ -56,10 +56,10 @@ private:
     // Private methods for each step
     void read_nuclear();
     int read_nuclear_ipsat();
-    void read_hydro_ipsat();
+    void read_hydro();
 
     void init_tree();
-    void do_tree(std::vector<Parton> &partons, double &weight, double &cross, double &cross_err);
+    bool do_tree(std::vector<Parton> &partons, double &weight, double &cross, double &cross_err);
 
     void gxy(double &x, double &y);
     void gxy_ipsat(double &x, double &y, int randNcoll);

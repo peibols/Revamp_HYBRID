@@ -27,3 +27,13 @@ ebe_hydro = 0
 
 # Output base name (files will be <output_base>_Hadrons.out and <output_base>_Partons.out)
 output_base = HYBRID
+
+# Trigger options
+# use_trigger: if true, only accept events containing the trigger particle
+# trigger_id:  PDG id of trigger particle (e.g. 22 = photon, 23 = Z)
+# trigger_pt:  minimum pT of trigger particle (GeV)
+# trigger_eta: maximum |eta| of trigger particle
+#use_trigger = false
+#trigger_id = 22
+#trigger_pt = 20.0
+#trigger_eta = 2.4

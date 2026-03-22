@@ -9,7 +9,6 @@ test/main
 test/*.out
 test/*.log
 test/*.sh
-test/plot_*.py
 test/hydroinfo*.dat
 test/hydro_test.input
 
