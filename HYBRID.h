@@ -34,6 +34,10 @@ private:
     int tmethod_;
     int mode_;
     int ebe_hydro_;
+    int seed_base_;
+    int shower_seed_;
+    int hybrid_seed_;
+    int lund_seed_;
 
     // Random number generator
     numrand nr_;
@@ -62,7 +66,7 @@ private:
     bool do_tree(std::vector<Parton> &partons, double &weight, double &cross, double &cross_err);
 
     void gxy(double &x, double &y);
-    void gxy_ipsat(double &x, double &y, int randNcoll);
+    void gxy_ipsat(double &x, double &y);
 
     void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double x, double y);
 

@@ -16,8 +16,8 @@ public:
     TreeGenerator();
     ~TreeGenerator();
 
-    // Initialize Pythia with a given random seed offset and command file.
-    void init(int njob, const std::string &cmndFile = "setup_pythia.cmnd");
+    // Initialize Pythia with an explicit random seed and command file.
+    void init(int seed, const std::string &cmndFile = "setup_pythia.cmnd");
 
     // Set trigger options (optional)
     void setTrigger(double pt, double eta, int id);

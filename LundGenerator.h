@@ -12,8 +12,8 @@ public:
     LundGenerator();
     ~LundGenerator();
 
-    // Initialize Pythia for hadronization
-    void init();
+    // Initialize Pythia for hadronization with an explicit random seed.
+    void init(int seed);
 
     // Hadronize vacuum partons
     void hadronizeVacuum(const std::vector<Parton> &partons, 

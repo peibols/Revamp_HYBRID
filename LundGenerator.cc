@@ -5,6 +5,7 @@
 
 #include <iostream>
 #include <cmath>
+#include <string>
 
 using namespace Pythia8;
 using std::vector;
@@ -25,13 +26,15 @@ LundGenerator::~LundGenerator() {
     delete pimpl_;
 }
 
-void LundGenerator::init() {
+void LundGenerator::init(int seed) {
     if (!pimpl_ || !pimpl_->pythia) return;
     
     Pythia8::Pythia *pythia = pimpl_->pythia;
     
     // Hadronization-only mode: skip hard process and parton shower,
     // run string fragmentation on manually inserted partons.
+    pythia->readString("Random:setSeed = on");
+    pythia->readString("Random:seed = " + std::to_string(seed));
     pythia->readString("ProcessLevel:all = off");
     pythia->init();
 }
