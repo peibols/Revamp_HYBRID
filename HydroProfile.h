@@ -25,6 +25,8 @@ public:
     double temperature(double tau, double x, double y) const;
     double velocityX(double tau, double x, double y) const;
     double velocityY(double tau, double x, double y) const;
+    // Combined lookup: fills all three fields in one interpolation pass.
+    void getValues(double tau, double x, double y, double &temp, double &vx, double &vy) const;
 
 private:
     int mode_ = 1;  // 0 = event-averaged (plaintext), 1 = event-by-event (IPSAT binary)

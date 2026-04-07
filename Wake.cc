@@ -9,7 +9,7 @@ Wake::Wake()
 
 }
 
-Wake::Wake(vector<double> p, double mass, int charge, int id, double status)
+Wake::Wake(std::array<double,4> p, double mass, int charge, int id, double status)
 {
   _p=p;
   
@@ -34,11 +34,11 @@ void Wake::display() const
   std::cout << " id= " << _id << " status= " << _status << std::endl;
 }
 
-void Wake::vSetP(vector<double> p)
+void Wake::vSetP(const std::array<double,4>& p)
 {
   _p=p;
 }
-vector<double> Wake::vGetP() const
+const std::array<double,4>& Wake::vGetP() const
 {
   return _p;
 }

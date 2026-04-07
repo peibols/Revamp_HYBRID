@@ -1,5 +1,6 @@
 #include "HydroProfile.h"
 
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -231,10 +232,7 @@ double HydroProfile::getValue(const std::vector<double> &data, double tau, doubl
 
     auto fetch = [&](int dt_i, int dy_i, int dx_i) {
         size_t idx = base + dt_i * strideT + dy_i * strideY + dx_i;
-        if (idx >= data.size()) {
-            std::cerr << "ERROR: fetch idx out of bounds! " << idx << " >= " << data.size() << std::endl;
-            return 0.0;
-        }
+        assert(idx < data.size());
         return data[idx];
     };
 
@@ -261,4 +259,57 @@ double HydroProfile::velocityX(double tau, double x, double y) const {
 
 double HydroProfile::velocityY(double tau, double x, double y) const {
     return getValue(hydroy_, tau, x, y);
+}
+
+void HydroProfile::getValues(double tau, double x, double y, double &temp, double &vx, double &vy) const {
+    if (tau >= hydroTauMax_ || tau < hydroTau0_) {
+        temp = vx = vy = 0.0;
+        return;
+    }
+
+    int it = static_cast<int>(std::floor((tau - hydroTau0_) / hydroDtau_));
+    it = clampIndex(it, itaumax_);
+    double dt = fracFromIndex(tau, hydroTau0_, hydroDtau_, it);
+
+    double xgrid = (hydroXmax_ + x) / hydroDx_;
+    int ix = static_cast<int>(std::floor(xgrid));
+    ix = clampIndex(ix, ixmax_);
+    double dx = xgrid - static_cast<double>(ix);
+
+    double ygrid = (hydroXmax_ + y) / hydroDx_;
+    int iy = static_cast<int>(std::floor(ygrid));
+    iy = clampIndex(iy, ietamax_);
+    double dy = ygrid - static_cast<double>(iy);
+
+    size_t base = index(it, iy, ix, ietamax_, ixmax_);
+    size_t strideY = static_cast<size_t>(ixmax_);
+    size_t strideT = static_cast<size_t>(ietamax_) * static_cast<size_t>(ixmax_);
+
+    // Compute the 8 interpolation weights once
+    double w000 = (1.-dt)*(1.-dx)*(1.-dy);
+    double w100 = dt    *(1.-dx)*(1.-dy);
+    double w010 = (1.-dt)*dx    *(1.-dy);
+    double w001 = (1.-dt)*(1.-dx)*dy;
+    double w110 = dt    *dx    *(1.-dy);
+    double w011 = (1.-dt)*dx    *dy;
+    double w101 = dt    *(1.-dx)*dy;
+    double w111 = dt    *dx    *dy;
+
+    size_t i000 = base;
+    size_t i100 = base + strideT;
+    size_t i010 = base + 1;
+    size_t i001 = base + strideY;
+    size_t i110 = base + strideT + 1;
+    size_t i011 = base + strideY + 1;
+    size_t i101 = base + strideT + strideY;
+    size_t i111 = base + strideT + strideY + 1;
+
+    assert(i111 < hydrot_.size());
+
+    temp = (hydrot_[i000]*w000 + hydrot_[i100]*w100 + hydrot_[i010]*w010 + hydrot_[i001]*w001 +
+            hydrot_[i110]*w110 + hydrot_[i011]*w011 + hydrot_[i101]*w101 + hydrot_[i111]*w111) * tempScalingFactor_;
+    vx   =  hydrox_[i000]*w000 + hydrox_[i100]*w100 + hydrox_[i010]*w010 + hydrox_[i001]*w001 +
+            hydrox_[i110]*w110 + hydrox_[i011]*w011 + hydrox_[i101]*w101 + hydrox_[i111]*w111;
+    vy   =  hydroy_[i000]*w000 + hydroy_[i100]*w100 + hydroy_[i010]*w010 + hydroy_[i001]*w001 +
+            hydroy_[i110]*w110 + hydroy_[i011]*w011 + hydroy_[i101]*w101 + hydroy_[i111]*w111;
 }

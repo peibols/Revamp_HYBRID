@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <vector>
 
 #include "Parton.h"
@@ -10,8 +11,8 @@ class Hadron : public Parton
 {
   private:
     //Keep position information in case one wants to do hadron rescattering
-    vector<double> _ri;
-    vector<double> _rf;
+    std::array<double,4> _ri;
+    std::array<double,4> _rf;
 
     double _charge;
     double _width;
@@ -26,12 +27,12 @@ class Hadron : public Parton
     virtual void display() const;
 
     void SetRi(double xi, double yi, double zi, double ti);
-    void vSetRi(vector<double> ri);
-    vector<double> GetRi() const;
+    void vSetRi(const std::array<double,4>& ri);
+    const std::array<double,4>& GetRi() const;
 
     void SetRf(double xf, double yf, double zf, double tf);
-    void vSetRf(vector<double> rf);
-    vector<double> GetRf() const;
+    void vSetRf(const std::array<double,4>& rf);
+    const std::array<double,4>& GetRf() const;
 
     void SetCharge(double charge);
     double GetCharge() const;

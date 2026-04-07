@@ -1,4 +1,5 @@
 #include "EnergyLoss.h"
+#include <array>
 #include <vector>
 #include <iostream>
 #include <algorithm>
@@ -6,9 +7,6 @@
 #include <cmath>
 #include <iomanip>
 #include "vector_operators.h"
-
-// Forward declarations for global functions that remain
-void quenched_sons(std::vector<double> p, std::vector<double> qp, std::vector<double> &d1, std::vector<double> &d2);
 
 EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int mode, int ebe_hydro, const HydroProfile &hydro_profile)
     : nr_(nr), kappa_(kappa), alpha_(alpha), tmethod_(tmethod), mode_(mode), ebe_hydro_(ebe_hydro), hydro_profile_(hydro_profile) {
@@ -76,11 +74,11 @@ void EnergyLoss::do_eloss_impl(const std::vector<Parton> &partons, std::vector<Q
                 }
                 break;
             }
-            std::vector<double> p = quenched[tp].vGetP();
+            auto p = quenched[tp].vGetP();
             double q = quenched[tp].GetQ();
-            std::vector<double> pos = quenched[tp].GetRi();
+            auto pos = quenched[tp].GetRi();
             // Time of flight (from formation time argument)
-            double tof = 0.2 * 2. * p[3] / pow(q, 2.); // in fm
+            double tof = 0.2 * 2. * p[3] / (q * q); // in fm
             // If final particle, fly arbitrarily far
             if (w == 1) tof = 10000000000.;
             double length = 0.; // length in QGP
@@ -114,9 +112,9 @@ void EnergyLoss::do_eloss_impl(const std::vector<Parton> &partons, std::vector<Q
                 if (quenched[tp].GetD1() == d1) d2 = quenched[tp].GetD2();
                 else d2 = quenched[tp].GetD1();
                 // Find new momenta for sons: rotate and quench tri-momentum, quench energy
-                std::vector<double> m_p = partons[tp].vGetP();
-                std::vector<double> d1_p = partons[d1].vGetP();
-                std::vector<double> d2_p = partons[d2].vGetP();
+                auto m_p = partons[tp].vGetP();
+                auto d1_p = partons[d1].vGetP();
+                auto d2_p = partons[d2].vGetP();
                 quenched_sons(m_p, p, d1_p, d2_p);
                 // Propagate momenta and positions
                 quenched[d1].vSetP(d1_p);
@@ -134,7 +132,7 @@ void EnergyLoss::do_eloss_impl(const std::vector<Parton> &partons, std::vector<Q
     FinId.clear();
 }
 
-void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, double tof, int id, double &length, double &tlength) {
+void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, double tof, int id, double &length, double &tlength) {
     double Tc;
     if (tmethod_ == 0) Tc = 0.170;
     else Tc = 0.145;
@@ -159,11 +157,13 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
     int marker = 0;    // If one, exit loop
     double step = 0.1;  // Time step in LAB frame
 
-    std::vector<double> w = p / p[3];  // 4-velocity
+    auto w = p / p[3];  // 4-velocity
 
     do {
+#ifdef DO_SOURCE
         // Keep 4momentum before applying quenching this step
-        std::vector<double> p_prev = p;
+        auto p_prev = p;
+#endif
 
         if (pos[3] == tot) marker = 1;
         if (pos[3] > tot) std::cout << " Warning: Went beyond tot= " << tot << " t= " << pos[3] << std::endl;
@@ -187,22 +187,18 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
         double vx = 0.;
         double vy = 0.;
         if (tau >= tau0h) {  // Hydro profile starting time
-            std::vector<double> v;
-            vx = call_gT(tau, pos[0], pos[1], 1);
-            vy = call_gT(tau, pos[0], pos[1], 2);
+            double temp = 0.;
+            hydro_profile_.getValues(tau, pos[0], pos[1], temp, vx, vy);
 
             double vz = pos[2] / pos[3];
             double frap = atanh(vz);
             vx /= cosh(frap);
             vy /= cosh(frap);
 
-            v.push_back(vx);
-            v.push_back(vy);
-            v.push_back(vz);
-            v.push_back(1.);
+            std::array<double,4> v = {vx, vy, vz, 1.};
 
-            double v2 = pow(v[0], 2.) + pow(v[1], 2.) + pow(v[2], 2.);
-            double w2 = pow(w[0], 2.) + pow(w[1], 2.) + pow(w[2], 2.);
+            double v2 = v[0]*v[0] + v[1]*v[1] + v[2]*v[2];
+            double w2 = w[0]*w[0] + w[1]*w[1] + w[2]*w[2];
             double vscalw = v[0] * w[0] + v[1] * w[1] + v[2] * w[2];
             if (v2 >= 1.) v2 = 0.999999999;
             double lore = 1. / sqrt(1. - v2);
@@ -214,7 +210,7 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
             double f_step = step * sqrt(f_lore);
             f_dist += f_step;
 
-            double temp = call_gT(tau, pos[0], pos[1], 0);
+            // temp is already available from getValues
             
             if (temp > Tc) {
                 // In-medium distance tracked here (for potential future use)
@@ -224,11 +220,15 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
             if (temp < Tc) {
                 // Check whether temperature increases in its way
                 for (unsigned int j = 1; j < 1000; j++) {
-                    std::vector<double> tpos = pos + w * step * double(j);
-                    if (tpos[3] > tot) break;
-                    tau = sqrt(tpos[3] * tpos[3] - tpos[2] * tpos[2]);
-                    eta = 1. / 2. * log((tpos[3] + tpos[2]) / (tpos[3] - tpos[2]));
-                    double ctemp = call_gT(tau, tpos[0], tpos[1], 0);
+                    double step_j = step * double(j);
+                    double tpos0 = pos[0] + w[0]*step_j;
+                    double tpos1 = pos[1] + w[1]*step_j;
+                    double tpos2 = pos[2] + w[2]*step_j;
+                    double tpos3 = pos[3] + w[3]*step_j;
+                    if (tpos3 > tot) break;
+                    tau = sqrt(tpos3*tpos3 - tpos2*tpos2);
+                    eta = 1. / 2. * log((tpos3 + tpos2) / (tpos3 - tpos2));
+                    double ctemp = call_gT(tau, tpos0, tpos1, 0);
                     if (ctemp > Tc) { //It will get to hot
                         will_hot = int(j);
                         break;
@@ -247,7 +247,7 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
                     tlength += temp / 0.2 * f_step;
                 } else {
                     length += f_step;
-                    tlength += pow(temp / 0.2, 2.) * f_step;
+                    tlength += (temp/0.2)*(temp/0.2) * f_step;
                 }
 
                 // Broadening
@@ -290,7 +290,7 @@ void EnergyLoss::loss_rate(std::vector<double> &p, std::vector<double> &pos, dou
         if (tof < 1000000) {
             double vz = pos[2] / std::max(pos[3], 0.000001);
             double v2 = vz * vz;
-            double w2 = pow(w[0], 2.) + pow(w[1], 2.) + pow(w[2], 2.);
+            double w2 = w[0]*w[0] + w[1]*w[1] + w[2]*w[2];
             double vscalw = vz * w[2];
             if (v2 >= 1.) v2 = 0.999999999;
             double lore = 1. / sqrt(1. - v2);
@@ -385,10 +385,10 @@ void EnergyLoss::get_source_evol(double &tau_ev, double& x_f, double& y_f, doubl
     vy_f = vy_f_local;
 }
 
-void EnergyLoss::trans_kick(const std::vector<double> &w, double w2, const std::vector<double> &v, std::vector<double> &p, double temp, double vscalw, double lore, double step, double kappa) {
+void EnergyLoss::trans_kick(const std::array<double,4> &w, double w2, const std::array<double,4> &v, std::array<double,4> &p, double temp, double vscalw, double lore, double step, double kappa) {
     if (vscalw == 1.) return;
 
-    std::vector<double> e1 = vec_prod(w, v);
+    auto e1 = vec_prod(w, v);
     double Ne1 = normalise(e1);
     if (Ne1 == 0.) {
         double b = 0.5;
@@ -399,25 +399,26 @@ void EnergyLoss::trans_kick(const std::vector<double> &w, double w2, const std::
     }
 
     double Nw = sqrt(w2);
-    std::vector<double> l = vec_prod(w, e1) / Nw;
+    auto l = vec_prod(w, e1) / Nw;
 
     double uscalW = lore * (1. - vscalw);
     double uscall = lore * (-v[0] * l[0] - v[1] * l[1] - v[2] * l[2]);
     double W2 = 1. - w2;
 
-    std::vector<double> Wp = w - v * lore * W2 / uscalW;
+    auto Wp = w - v * (lore * W2 / uscalW);
 
-    double Nalpha = -uscall * uscalW / (pow(uscalW, 2.) - W2);
+    double Nalpha = -uscall * uscalW / (uscalW*uscalW - W2);
     if (Nalpha != Nalpha || std::isinf(Nalpha)) return;
-    double NN = 1. + W2 * pow(uscall, 2.) / (-pow(uscalW, 2.) + W2);
+    double NN = 1. + W2 * uscall*uscall / (-(uscalW*uscalW) + W2);
     // In some rare situations, this norm squared can be negative. Only do kick otherwise
     if (sqrt(NN) != sqrt(NN)) std::cout << " negative NN " << std::endl;
     else {
-        std::vector<double> e2 = (l + Wp * Nalpha) / sqrt(NN);
+        auto e2 = (l + Wp * Nalpha) / sqrt(NN);
 
         double Ef = p[3] * lore * (1. - vscalw);
-        double wf2 = 1. - W2 / pow(lore * (1. - vscalw), 2.);
-        double DelQ2 = kappa * pow(temp, 3.) * lore * (1. - vscalw) * step * 5.;
+        double lore_1mv = lore * (1. - vscalw);
+        double wf2 = 1. - W2 / (lore_1mv * lore_1mv);
+        double DelQ2 = kappa * temp*temp*temp * lore * (1. - vscalw) * step * 5.;
 
         double qfac = 0.;
         // Only do kick if energy is greater than temperature
@@ -438,9 +439,9 @@ void EnergyLoss::trans_kick(const std::vector<double> &w, double w2, const std::
 
         double qphi = 2. * 3.141592654 * nr_.rando();
 
-        std::vector<double> e = e1 * cos(qphi) + e2 * sin(qphi);
+        auto e = e1 * cos(qphi) + e2 * sin(qphi);
 
-        std::vector<double> Wt = (w - v * uscalW * lore) / lore / (1. - vscalw);
+        auto Wt = (w - v * (uscalW * lore)) / lore / (1. - vscalw);
 
         // Update 4momentum
         if (lore == 1.) {
@@ -465,24 +466,27 @@ void EnergyLoss::trans_kick(const std::vector<double> &w, double w2, const std::
     }
 }
 
-void EnergyLoss::quenched_sons(const std::vector<double> &p, const std::vector<double> &qp, std::vector<double> &d1, std::vector<double> &d2) {
+void EnergyLoss::quenched_sons(const std::array<double,4> &p, const std::array<double,4> &qp, std::array<double,4> &d1, std::array<double,4> &d2) {
+    // Mutable local copies for normalisation
+    std::array<double,4> p_n = p;
+    std::array<double,4> qp_n = qp;
     // Normalise 3-momentum
-    double qmod = normalise(const_cast<std::vector<double>&>(qp));
-    double modmom = normalise(const_cast<std::vector<double>&>(p));
+    double qmod = normalise(qp_n);
+    double modmom = normalise(p_n);
     double modthis = normalise(d1);
     double modoson = normalise(d2);
     // Define transverse axis for rotation and normalise
-    std::vector<double> axis = vec_prod(p, qp);
+    auto axis = vec_prod(p_n, qp_n);
     normalise(axis);
     // Find angle in plane
     double angle = 0.;
-    if (p[0] * qp[0] + p[1] * qp[1] + p[2] * qp[2] >= 1.) angle = 0.;
-    else angle = acos(p[0] * qp[0] + p[1] * qp[1] + p[2] * qp[2]);
+    if (p_n[0]*qp_n[0] + p_n[1]*qp_n[1] + p_n[2]*qp_n[2] >= 1.) angle = 0.;
+    else angle = acos(p_n[0]*qp_n[0] + p_n[1]*qp_n[1] + p_n[2]*qp_n[2]);
     // Perform Rodrigues rotation
-    double thisscal = axis[0] * d1[0] + axis[1] * d1[1] + axis[2] * d1[2];
-    std::vector<double> use = d1 * cos(angle) + vec_prod(axis, d1) * sin(angle) + axis * thisscal * (1. - cos(angle));
-    double oscal = axis[0] * d2[0] + axis[1] * d2[1] + axis[2] * d2[2];
-    std::vector<double> ouse = d2 * cos(angle) + vec_prod(axis, d2) * sin(angle) + axis * oscal * (1. - cos(angle));
+    double thisscal = axis[0]*d1[0] + axis[1]*d1[1] + axis[2]*d1[2];
+    auto use = d1 * cos(angle) + vec_prod(axis, d1) * sin(angle) + axis * (thisscal * (1. - cos(angle)));
+    double oscal = axis[0]*d2[0] + axis[1]*d2[1] + axis[2]*d2[2];
+    auto ouse = d2 * cos(angle) + vec_prod(axis, d2) * sin(angle) + axis * (oscal * (1. - cos(angle)));
     // Update momenta
     double lamp = qmod / modmom;
     double lambda = qp[3] / p[3];
@@ -494,8 +498,8 @@ void EnergyLoss::quenched_sons(const std::vector<double> &p, const std::vector<d
     d2[3] *= lambda;
 }
 
-double EnergyLoss::normalise(std::vector<double> &p) {
-    double norm = sqrt(pow(p[0], 2.) + pow(p[1], 2.) + pow(p[2], 2.));
+double EnergyLoss::normalise(std::array<double,4> &p) {
+    double norm = sqrt(p[0]*p[0] + p[1]*p[1] + p[2]*p[2]);
     if (norm == 0.) return norm;
     p[0] /= norm;
     p[1] /= norm;
@@ -503,11 +507,6 @@ double EnergyLoss::normalise(std::vector<double> &p) {
     return norm;
 }
 
-std::vector<double> EnergyLoss::vec_prod(const std::vector<double> &a, const std::vector<double> &b) {
-    std::vector<double> rot(4, 0.);
-    rot[0] = a[1] * b[2] - a[2] * b[1];
-    rot[1] = a[2] * b[0] - a[0] * b[2];
-    rot[2] = a[0] * b[1] - a[1] * b[0];
-    rot[3] = 0.;
-    return rot;
+std::array<double,4> EnergyLoss::vec_prod(const std::array<double,4> &a, const std::array<double,4> &b) {
+    return {a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0], 0.};
 }

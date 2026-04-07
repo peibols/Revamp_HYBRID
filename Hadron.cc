@@ -10,7 +10,7 @@ Hadron::Hadron()
 
 Hadron::Hadron(Parton partons) : Parton(partons)
 {
-  for (int i = 0; i < 4; i++) _ri.push_back(0.), _rf.push_back(0.);
+  _ri.fill(0.); _rf.fill(0.);
   
   _charge=0.;
   _width=0.;
@@ -21,7 +21,7 @@ Hadron::Hadron(Parton partons) : Parton(partons)
 //Preferred constructor for now
 Hadron::Hadron(Parton partons, double charge, double width) : Parton(partons)
 {
-  for (int i = 0; i < 4; i++) _ri.push_back(0.), _rf.push_back(0.);
+  _ri.fill(0.); _rf.fill(0.);
 
   _charge=charge;
   _width=width;
@@ -29,15 +29,8 @@ Hadron::Hadron(Parton partons, double charge, double width) : Parton(partons)
 
 Hadron::Hadron(Parton partons, double xi, double yi, double zi, double ti, double xf, double yf, double zf, double tf, double charge, double width) : Parton(partons)
 {
-  _ri.push_back(xi);
-  _ri.push_back(yi);
-  _ri.push_back(zi);
-  _ri.push_back(ti);
-
-  _rf.push_back(xf);
-  _rf.push_back(yf);
-  _rf.push_back(zf);
-  _rf.push_back(tf);
+  _ri = {xi, yi, zi, ti};
+  _rf = {xf, yf, zf, tf};
   
   _isdone=false;
 
@@ -76,7 +69,7 @@ double Hadron::GetWidth() const
   return _width;
 }
 
-void Hadron::vSetRi(vector<double> ri)
+void Hadron::vSetRi(const std::array<double,4>& ri)
 {
   _ri=ri;
 }
@@ -87,12 +80,12 @@ void Hadron::SetRi(double xi, double yi, double zi, double ti)
   _ri[2]=zi;
   _ri[3]=ti;
 }
-vector<double> Hadron::GetRi() const
+const std::array<double,4>& Hadron::GetRi() const
 {
   return _ri;
 }
 
-void Hadron::vSetRf(vector<double> rf)
+void Hadron::vSetRf(const std::array<double,4>& rf)
 {
   _rf=rf;
 }
@@ -103,7 +96,7 @@ void Hadron::SetRf(double xf, double yf, double zf, double tf)
   _rf[2]=zf;
   _rf[3]=tf;
 }
-vector<double> Hadron::GetRf() const
+const std::array<double,4>& Hadron::GetRf() const
 {
   return _rf;
 }

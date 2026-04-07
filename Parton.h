@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <vector>
 #include <string>
 
@@ -8,12 +9,12 @@ using std::vector;
 class Parton
 {
   protected:
-    vector<double> _p;
+    std::array<double,4> _p;
 
     double _q;
     double _mass;
   
-    vector<double> _ri;
+    std::array<double,4> _ri;
 
     int _mom;
     int _d1;
@@ -33,6 +34,7 @@ class Parton
   public:
     Parton();
     Parton(vector<double> p, double q, double mass, int mom, int d1, int d2, int id, std::string orig, int col, int acol, bool isdone);
+    Parton(std::array<double,4> p, double q, double mass, int mom, int d1, int d2, int id, std::string orig, int col, int acol, bool isdone);
     virtual ~Parton();
 
     virtual void display() const;
@@ -41,9 +43,10 @@ class Parton
     double length() { return _length; }
     double tlength() { return _tlength; }
 
-    void vSetP(vector<double> p);
+    void vSetP(const std::array<double,4>& p);
+    void vSetP(const vector<double>& p);
     void SetP(double px, double py, double pz, double en);
-    vector<double> vGetP() const;
+    const std::array<double,4>& vGetP() const;
 
     double GetPt() const;
 
@@ -67,8 +70,8 @@ class Parton
     void SetId(int id);
     int GetId() const;
 
-    void vSetRi(vector<double> ri);
-    vector<double> GetRi() const;
+    void vSetRi(const std::array<double,4>& ri);
+    const std::array<double,4>& GetRi() const;
 
     void SetOrig(std::string orig);
     std::string GetOrig() const;

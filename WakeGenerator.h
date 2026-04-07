@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <vector>
 #include "Parton.h"
 #include "Quench.h"
@@ -59,7 +60,7 @@ private:
     double rapid(double pt, double pz) const;
     int set_charge(int spe, numrand &nr) const;
     double thermal(int spe, double ptrand) const;
-    void one_body(std::vector<Wake> &wake, std::vector<double> delta, std::vector<double> momback, 
+    void one_body(std::vector<Wake> &wake, const std::array<double,4>& delta, const std::array<double,4>& momback, 
                   double ptlost, double mtlost, double raplost, numrand &nr, int spe, int mode);
-    std::vector<double> vec_abs(std::vector<double> p) const;
+    std::array<double,4> vec_abs(const std::array<double,4>& p) const;
 };

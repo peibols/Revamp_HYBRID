@@ -126,12 +126,13 @@ bool TreeGenerator::nextEvent(std::vector<Parton> &partons, double &weight, doub
                     if (partons[i].GetMom() == partons[j].GetMom() && i != j && !partons[j].GetIsDone()) {
                         int mom = partons[i].GetMom();
 
-                        std::vector<double> p = partons[i].vGetP();
-                        const std::vector<double> &p_j = partons[j].vGetP();
-                        for (size_t k = 0; k < p.size() && k < p_j.size(); ++k) {
+                        auto p = partons[i].vGetP();
+                        const auto &p_j = partons[j].vGetP();
+                        for (size_t k = 0; k < 4; ++k) {
                             p[k] += p_j[k];
                         }
-                        double virt = sqrt(std::abs(pow(p[3], 2.) - pow(p[0], 2.) - pow(p[1], 2.) - pow(p[2], 2.) - pow(pythia_->event[mom].m(), 2.)));
+                        double e_sq = p[3]*p[3]; double p0sq = p[0]*p[0]; double p1sq = p[1]*p[1]; double p2sq = p[2]*p[2];
+                        double virt = sqrt(std::abs(e_sq - p0sq - p1sq - p2sq - pow(pythia_->event[mom].m(), 2.)));
 
                         int use = mom;
                         int m1 = 0;
