@@ -1,0 +1,12 @@
+# Compiled binaries
+hadronizer
+photelsen
+plasma
+plasma_debug
+pythielsen
+wake
+*.o
+*.dSYM/
+
+# macOS
+.DS_Store
