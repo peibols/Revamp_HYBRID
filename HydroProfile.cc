@@ -68,11 +68,12 @@ void HydroProfile::loadIpsatBinary(const std::string &cent, const std::string &f
     int itau_max = 0;
     double maxtemp = 0.0;
 
-    // Pre-allocate with at least one element in each dimension.
+    // Pre-allocate storage for the first time slice so itau=0 writes are valid.
     itaumax_ = 1;
-    hydrot_.clear();
-    hydrox_.clear();
-    hydroy_.clear();
+    size_t totalSize = static_cast<size_t>(itaumax_) * static_cast<size_t>(ietamax_) * static_cast<size_t>(ixmax_);
+    hydrot_.assign(totalSize, 0.0);
+    hydrox_.assign(totalSize, 0.0);
+    hydroy_.assign(totalSize, 0.0);
 
     while (true) {
         status = std::fread(&cell_info, sizeof(float), 16, hydro);
