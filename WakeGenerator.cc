@@ -3,10 +3,17 @@
 #include <array>
 #include <cmath>
 #include <iostream>
-#include <ctime>
 #include "vector_operators.h"
 
 using std::vector;
+
+namespace {
+// The old wake Metropolis loop used wall-clock time to trigger restarts,
+// which made same-seed runs diverge under different machine load.
+constexpr int kProposalBudgetBase = 200000;
+constexpr int kProposalBudgetStep = 20000;
+constexpr int kMaxProposalRestarts = 100;
+}
 
 WakeGenerator::WakeGenerator()
     : transcut_(0.),
@@ -122,6 +129,34 @@ void WakeGenerator::one_body(vector<Wake> &wake,
     wake.emplace_back(p, masstra_[spe], charge, spe, status);
 }
 
+bool WakeGenerator::tryAddResidualWake(std::vector<Wake> &wake,
+                                       const std::array<double,4>& delta,
+                                       std::array<double,4>& momback,
+                                       numrand &nr) const {
+    double difx = -momback[0] + delta[0];
+    double dify = -momback[1] + delta[1];
+    double difz = -momback[2] + delta[2];
+    double dife = -momback[3] + delta[3];
+    double remass2 = dife*dife - difx*difx - dify*dify - difz*difz;
+
+    if (!(fabs(difx) < 3. * tole_ && fabs(dify) < 3. * tole_ && fabs(difz) < 8. * tole_ && remass2 > 0.)) {
+        return false;
+    }
+
+    int spe = 0;
+    if (fabs(remass2 - masstra_[0] * masstra_[0]) >= fabs(remass2 - masstra_[1] * masstra_[1])) {
+        spe = 1;
+    }
+
+    int charge = set_charge(spe, nr);
+    double stat = (dife < 0.) ? -1. : 1.;
+    double tdife = sqrt(difx*difx + dify*dify + difz*difz + masstra_[spe]*masstra_[spe]);
+    std::array<double,4> p = {stat * difx, stat * dify, stat * difz, tdife};
+    wake.push_back(Wake(p, masstra_[spe], charge, spe, stat));
+    momback += wake.back().vGetP() * stat;
+    return true;
+}
+
 void WakeGenerator::generate(const std::vector<Quench> &quenched, 
                              const std::vector<Parton> &partons, 
                              std::vector<Wake> &wake, 
@@ -153,18 +188,17 @@ void WakeGenerator::generate(const std::vector<Quench> &quenched,
             int spe, mode;
             int runi, encallao;
             int numenc = 0;
-            double clocklim = 0.1;
-            int tooclock = 0;
             bool restart_metropolis = true;
+            int restart_count = 0;
 
             while (restart_metropolis) {
                 restart_metropolis = false;
-                clock_t startClock = clock();
 
                 pwake.clear();
                 momback = {};
                 runi = 0; encallao = 0;
-                int clock_step = 0;
+                int proposal_count = 0;
+                const int proposal_budget = kProposalBudgetBase + restart_count * kProposalBudgetStep;
 
                 do {
                     if (nr.rando() <= 0.05) spe = 1;
@@ -220,41 +254,20 @@ void WakeGenerator::generate(const std::vector<Quench> &quenched,
                         break;
                     }
 
-                    // Check clock only every 1000 iterations to avoid syscall overhead
-                    ++clock_step;
-                    if (clock_step % 1000 == 0) {
-                        clock_t endClock = clock();
-                        if (double((endClock - startClock)) / CLOCKS_PER_SEC > clocklim) {
-                            clocklim += 0.02;
-                            tooclock += 1;
-
-                            double difx = -momback[0] + delta[0];
-                            double dify = -momback[1] + delta[1];
-                            double difz = -momback[2] + delta[2];
-                            double dife = -momback[3] + delta[3];
-                            double remass2 = dife*dife - difx*difx - dify*dify - difz*difz;
-
-                            if (fabs(difx) < 3.*tole_ && fabs(dify) < 3.*tole_ && fabs(difz) < 8.*tole_ && remass2 > 0.) {
-                                if (fabs(remass2 - masstra_[0]*masstra_[0]) < fabs(remass2 - masstra_[1]*masstra_[1])) spe = 0;
-                                else spe = 1;
-
-                                int charge = set_charge(spe, nr);
-                                double stat = (dife < 0.) ? -1. : 1.;
-                                double tdife = sqrt(difx*difx + dify*dify + difz*difz + masstra_[spe]*masstra_[spe]);
-                                std::array<double,4> p = {stat*difx, stat*dify, stat*difz, tdife};
-                                pwake.push_back(Wake(p, masstra_[spe], charge, spe, stat));
-                                momback += pwake.back().vGetP() * stat;
-                                dif = vec_abs(delta - momback);
-                                break;
-                            }
-
-                            if (tooclock > 100) {
-                                toomuch_ += 1;
-                                break;
-                            }
-                            restart_metropolis = true;
+                    ++proposal_count;
+                    if (proposal_count >= proposal_budget) {
+                        if (tryAddResidualWake(pwake, delta, momback, nr)) {
+                            dif = vec_abs(delta - momback);
                             break;
                         }
+
+                        ++restart_count;
+                        if (restart_count > kMaxProposalRestarts) {
+                            toomuch_ += 1;
+                            break;
+                        }
+                        restart_metropolis = true;
+                        break;
                     }
 
                 } while (runi < Nrun_ && (dif[0] > tole_ || dif[1] > tole_ || dif[2] > tole_ || dif[3] > tole_));
@@ -263,21 +276,7 @@ void WakeGenerator::generate(const std::vector<Quench> &quenched,
                     if (runi >= Nrun_) toomuch_ += 1;
 
                     if (dif[0] != 0.) {
-                        double difx = -momback[0] + delta[0];
-                        double dify = -momback[1] + delta[1];
-                        double difz = -momback[2] + delta[2];
-                        double dife = -momback[3] + delta[3];
-                        double remass2 = dife*dife - difx*difx - dify*dify - difz*difz;
-
-                        if (fabs(remass2 - masstra_[0]*masstra_[0]) < fabs(remass2 - masstra_[1]*masstra_[1])) spe = 0;
-                        else spe = 1;
-
-                        int charge = set_charge(spe, nr);
-                        double stat = (dife < 0.) ? -1. : 1.;
-                        double tdife = sqrt(difx*difx + dify*dify + difz*difz + masstra_[spe]*masstra_[spe]);
-                        std::array<double,4> p = {stat*difx, stat*dify, stat*difz, tdife};
-                        pwake.push_back(Wake(p, masstra_[spe], charge, spe, stat));
-                        momback += pwake.back().vGetP() * stat;
+                        tryAddResidualWake(pwake, delta, momback, nr);
                         dif = vec_abs(delta - momback);
                     }
 

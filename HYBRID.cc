@@ -8,6 +8,16 @@
 #include <sstream>
 #include "vector_operators.h"
 
+namespace {
+constexpr int kShowerSeedOffset = 33;
+constexpr int kHybridSeedOffset = 1346;
+constexpr int kLundSeedOffset = 2337;
+
+int getSeedBase(const Config &cfg) {
+    return cfg.getIntOr("seed_base", cfg.getIntOr("njob", 0));
+}
+}
+
 HYBRID::HYBRID(const Config &cfg) :
       do_quench_(cfg.getBoolOr("do_quench", true)),
       do_wake_(cfg.getBoolOr("do_wake", true)),
@@ -20,7 +30,11 @@ HYBRID::HYBRID(const Config &cfg) :
       tmethod_(cfg.getIntOr("tmethod", 0)),
       mode_(cfg.getIntOr("mode", 0)),
       ebe_hydro_(cfg.getIntOr("ebe_hydro", 0)),
-      nr_(1346 + cfg.getIntOr("njob", 0)),
+      seed_base_(getSeedBase(cfg)),
+      shower_seed_(seed_base_ + kShowerSeedOffset),
+      hybrid_seed_(seed_base_ + kHybridSeedOffset),
+      lund_seed_(seed_base_ + kLundSeedOffset),
+      nr_(hybrid_seed_),
       tree_gen_(std::make_unique<TreeGenerator>()),
       hydro_profile_(std::make_unique<HydroProfile>()),
       wake_gen_(std::make_unique<WakeGenerator>()),
@@ -32,6 +46,11 @@ HYBRID::HYBRID(const Config &cfg) :
     const std::string out_base = cfg.getStringOr("output_base", "HYBRID");
     hjt_file_.open(out_base + "_Hadrons.out", std::ios_base::app);
     pjt_file_.open(out_base + "_Partons.out", std::ios_base::app);
+
+    std::cout << "Seed base= " << seed_base_
+              << " shower= " << shower_seed_
+              << " hybrid= " << hybrid_seed_
+              << " lund= " << lund_seed_ << std::endl;
 
     if (cfg.getBoolOr("use_trigger", false)) {
         tree_gen_->setTrigger(
@@ -85,9 +104,7 @@ void HYBRID::run() {
             if (ebe_hydro_ == 0) {
                 gxy(x, y);
             } else {
-                int randNcoll = int(Ncollsize_ * double(rand()) / double(RAND_MAX));
-                if (randNcoll == Ncollsize_) randNcoll = Ncollsize_ - 1;
-                gxy_ipsat(x, y, randNcoll);
+                gxy_ipsat(x, y);
             }
             std::cout << " xcre= " << x << " ycre= " << y << std::endl;
 
@@ -206,7 +223,7 @@ void HYBRID::read_hydro() {
 }
 
 void HYBRID::init_tree() {
-    tree_gen_->init(njob_);
+    tree_gen_->init(shower_seed_);
 }
 
 bool HYBRID::do_tree(std::vector<Parton> &partons, double &weight, double &cross, double &cross_err) {
@@ -217,8 +234,8 @@ void HYBRID::gxy(double &x, double &y) {
     glauber_model_->sampleXY(x, y, nr_);
 }
 
-void HYBRID::gxy_ipsat(double &x, double &y, int randNcoll) {
-    glauber_model_->sampleXYIPSAT(x, y, randNcoll, nr_);
+void HYBRID::gxy_ipsat(double &x, double &y) {
+    glauber_model_->sampleXYIPSAT(x, y, Ncollsize_, nr_);
 }
 
 void HYBRID::do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double x, double y) {
@@ -230,7 +247,7 @@ void HYBRID::do_wake(const std::vector<Quench> &quenched, const std::vector<Part
 }
 
 void HYBRID::init_lund() {
-    lund_gen_->init();
+    lund_gen_->init(lund_seed_);
 }
 
 void HYBRID::do_lund(const std::vector<Parton> &partons, const std::vector<Quench> &quenched, std::vector<Hadron> &vhadrons, std::vector<Hadron> &qhadrons) {

@@ -62,5 +62,9 @@ private:
     double thermal(int spe, double ptrand) const;
     void one_body(std::vector<Wake> &wake, const std::array<double,4>& delta, const std::array<double,4>& momback, 
                   double ptlost, double mtlost, double raplost, numrand &nr, int spe, int mode);
+    bool tryAddResidualWake(std::vector<Wake> &wake,
+                            const std::array<double,4>& delta,
+                            std::array<double,4>& momback,
+                            numrand &nr) const;
     std::array<double,4> vec_abs(const std::array<double,4>& p) const;
 };

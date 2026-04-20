@@ -13,7 +13,7 @@ TreeGenerator::~TreeGenerator() {
     delete pythia_;
 }
 
-void TreeGenerator::init(int njob, const std::string &cmndFile) {
+void TreeGenerator::init(int seed, const std::string &cmndFile) {
     if (pythia_) {
         delete pythia_;
         pythia_ = nullptr;
@@ -25,7 +25,6 @@ void TreeGenerator::init(int njob, const std::string &cmndFile) {
     pythiaset << cmndFile;
     pythia_->readFile(pythiaset.str());
 
-    int seed = 33 + njob;
     std::ostringstream seedstring;
     seedstring << "Random:seed = " << seed;
     pythia_->readString(seedstring.str().c_str());

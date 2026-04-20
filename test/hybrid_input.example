@@ -3,6 +3,8 @@
 
 # Simulation control
 njob = 0
+# Optional explicit seed base. If omitted, njob is used as the base.
+# seed_base = 0
 Nev = 10
 cent = 0-5
 
