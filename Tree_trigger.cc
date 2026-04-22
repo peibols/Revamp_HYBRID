@@ -18,7 +18,7 @@ void do_tree(vector<Parton>&, double&, double&, double&, bool&, double, double, 
 
 Pythia pythia;
 
-void init_tree(int njob)
+void init_tree(int seed)
 {
   //Read cmnd file
   ostringstream pythiaset;
@@ -27,7 +27,7 @@ void init_tree(int njob)
   pythia.readFile(pythiaset.str());
 
   //Set Random Seed
-  int seed=33+njob;
+  pythia.readString("Random:setSeed = on");
   ostringstream seedstring;
   seedstring << "Random:seed = " << seed;
   pythia.readString(seedstring.str().c_str());

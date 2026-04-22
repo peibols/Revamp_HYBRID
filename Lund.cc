@@ -14,14 +14,16 @@ using namespace Pythia8;
 
 void do_lund_vac(vector<Parton> partons, vector<Hadron> &vhadrons, int hadro_type);
 bool do_lund_med(vector<Quench> quenched, vector<Hadron> &qhadrons, int hadro_type);
-void init_lund();
+void init_lund(int seed);
 
 Pythia hpythia;
 
-void init_lund()
+void init_lund(int seed)
 {
   hpythia.readString("Random:setSeed = on");
-  hpythia.readString("Random:seed = 0");
+  ostringstream seedstring;
+  seedstring << "Random:seed = " << seed;
+  hpythia.readString(seedstring.str().c_str());
 
   hpythia.readString("Print:quiet = off");
   hpythia.readString("111:mayDecay = off");

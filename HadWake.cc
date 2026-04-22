@@ -12,6 +12,12 @@
 using std::vector;
 using namespace std;
 
+namespace {
+constexpr int kProposalBudgetBase = 200000;
+constexpr int kProposalBudgetStep = 20000;
+constexpr int kMaxProposalRestarts = 100;
+}
+
 double transcut=0.;		//Lower threshold for transverse mass for back-reaction
 double basesig=0.65;		//Starting gaussian width for pass function in Metropolis
 int Nrun=800000;	        //Maximum iterations of Metropolis
@@ -36,6 +42,7 @@ int set_charge(int spe, numrand &nr);
 double thermal(int spe, double ptrand);
 void one_body(vector<Wake> &wake, vector<double> delta, vector<double> momback, double ptlost, double mtlost, double raplost, numrand &nr, int spe, int mode);
 vector<double> vec_abs(vector<double> p);
+bool try_add_residual_wake(vector<Wake> &wake, const vector<double> &delta, vector<double> &momback, numrand &nr, vector<double> &dif, int &spe);
 
 void do_wake(vector<Quench> quenched, vector<Parton> partons, vector<Wake> &wake, numrand &nr, vector<vector<double>> all_wakes)
 {
@@ -104,14 +111,14 @@ void do_wake(vector<Quench> quenched, vector<Parton> partons, vector<Wake> &wake
       int spe, mode;
       int runi, encallao;
       int numenc=0;
-      double clocklim=0.1;
-      int tooclock=0;
+      int restart_count=0;
 		
       //GoTo flag
       thisis:
-      clock_t startClock = clock();
 		
       pwake.clear();
+      int proposal_count=0;
+      int proposal_budget=kProposalBudgetBase+restart_count*kProposalBudgetStep;
       for (unsigned int j=0; j<4; j++) momback[j]=0.;
       runi=0, encallao=0;
 		
@@ -195,49 +202,12 @@ void do_wake(vector<Quench> quenched, vector<Parton> partons, vector<Wake> &wake
 	  goto thisis;
 	}
 		
-        //If time spent surpasses clocklim, start over, and wait longer for next attempt.
-	clock_t endClock = clock();
-	if (double((endClock - startClock)) / CLOCKS_PER_SEC>clocklim)
+        ++proposal_count;
+        if (proposal_count>=proposal_budget)
 	{
-	  //cout << " CLOCK !!! \n";
-	  clocklim+=0.02;
-	  tooclock+=1;
-		  			
-	  double difx=-momback[0]+delta[0];
-	  double dify=-momback[1]+delta[1];
-	  double difz=-momback[2]+delta[2];
-          double dife=-momback[3]+delta[3];
-          double remass2=dife*dife-difx*difx-dify*dify-difz*difz;
-					
-	  //cout << " Got to= " << " DifX= " << difx << " DifY= " << dify << " DifZ= " << difz << " DifE= " << dife << endl;
-	  if (fabs(difx)<3.*tole && fabs(dify)<3.*tole && fabs(difz)<8.*tole && remass2>0.) {
-	    //Add extra particle with remnant momentum
-	    //cout << " OUTSIDE TOLERANCE \n";
-	    //cout << " remnant mass= " << remass2 << " " << sqrt(remass2) << endl;
-
-	    if (fabs(remass2-masstra[0]*masstra[0])<fabs(remass2-masstra[1]*masstra[1])) spe=0;
-	    else spe=1;
-	    //cout << " spe= " << spe << endl;
-					  
-	    //if (nr.rando()<=0.05) spe=1;    //is proton
-            //else spe=0;                     //is pion
-					 
-	    int charge=set_charge(spe, nr);
- 
-	    double stat;
-	    if (dife<0.) stat=-1.;
-	    else stat=1.;
-					
-	    vector<double> p;
-	    double tdife=sqrt(difx*difx+dify*dify+difz*difz+masstra[spe]*masstra[spe]);
-	    p.push_back(stat*difx), p.push_back(stat*dify), p.push_back(stat*difz), p.push_back(tdife);
-	    pwake.push_back( Wake ( p, masstra[spe], charge, spe, stat ) );
-	    momback+=pwake[pwake.size()-1].vGetP()*stat;
-	    dif=vec_abs(delta-momback);
-	    break; 
-	  }
-				
-	  if (tooclock>100) {toomuch+=1; break;}
+	  if (try_add_residual_wake(pwake, delta, momback, nr, dif, spe)) break;
+	  restart_count+=1;
+	  if (restart_count>kMaxProposalRestarts) {toomuch+=1; break;}
           goto thisis;
 	}
 
@@ -314,6 +284,34 @@ void do_wake(vector<Quench> quenched, vector<Parton> partons, vector<Wake> &wake
   outfile << total_injected << endl;
 
 
+}
+
+bool try_add_residual_wake(vector<Wake> &wake, const vector<double> &delta, vector<double> &momback, numrand &nr, vector<double> &dif, int &spe)
+{
+  double difx=-momback[0]+delta[0];
+  double dify=-momback[1]+delta[1];
+  double difz=-momback[2]+delta[2];
+  double dife=-momback[3]+delta[3];
+  double remass2=dife*dife-difx*difx-dify*dify-difz*difz;
+
+  if (!(fabs(difx)<3.*tole && fabs(dify)<3.*tole && fabs(difz)<8.*tole && remass2>0.)) return false;
+
+  if (fabs(remass2-masstra[0]*masstra[0])<fabs(remass2-masstra[1]*masstra[1])) spe=0;
+  else spe=1;
+
+  int charge=set_charge(spe, nr);
+
+  double stat;
+  if (dife<0.) stat=-1.;
+  else stat=1.;
+
+  vector<double> p;
+  double tdife=sqrt(difx*difx+dify*dify+difz*difz+masstra[spe]*masstra[spe]);
+  p.push_back(stat*difx), p.push_back(stat*dify), p.push_back(stat*difz), p.push_back(tdife);
+  wake.push_back( Wake ( p, masstra[spe], charge, spe, stat ) );
+  momback+=wake[wake.size()-1].vGetP()*stat;
+  dif=vec_abs(delta-momback);
+  return true;
 }
 
 void one_body(vector<Wake> &wake, vector<double> delta, vector<double> momback, double ptlost, double mtlost, double raplost, numrand &nr, int spe, int mode)

@@ -18,13 +18,21 @@
 #define DO_WAKE
 #define DO_LUND
 
+char Sfile[100];        //Source File name: one file per event
+
 using std::vector;
 using namespace std;
+
+namespace {
+constexpr int kShowerSeedOffset = 33;
+constexpr int kHybridSeedOffset = 1346;
+constexpr int kLundSeedOffset = 2337;
+}
 
 void read_nuclear(int, std::string);
 void read_hydro(int, std::string);
 
-void init_tree(int njob);
+void init_tree(int seed);
 void do_tree(vector<Parton> &partons, double &weight, double &cross, double &cross_err);
 
 void gxy(double &, double &, numrand &);
@@ -33,13 +41,16 @@ void do_eloss(vector<Parton>, vector<Quench> &, double, double, numrand &, doubl
 
 void do_wake(vector<Quench> quenched, vector<Parton> partons, vector<Wake> &wake, numrand &nr);
 
-void init_lund();
+void init_lund(int seed);
 void do_lund(vector<Parton> partons, vector<Quench> quenched, vector<Quench> recoiled, vector<Hadron> &vhadrons, vector<Hadron> &qhadrons, int hadro_type);
 
 int main(int argc, char** argv)
 {
   
-  assert(argc==10);
+  if (argc != 10 && argc != 11) {
+    cout << "Usage: " << argv[0] << " njob Nev cent kappa alpha tmethod do_quench model hadro_type [seed_base]" << endl;
+    return 1;
+  }
   
   int njob=atoi(argv[1]);
   int Nev=atoi(argv[2]);
@@ -52,8 +63,16 @@ int main(int argc, char** argv)
   if (!(ss >> std::boolalpha >> do_quench)) { cout << " Wrong bool variable for do_quench "; exit(0); }
   int model=atoi(argv[8]);
   int hadro_type=atoi(argv[9]);
+  bool use_explicit_seed_base = (argc == 11);
+  int seed_base = use_explicit_seed_base ? atoi(argv[10]) : njob;
+  int shower_seed = seed_base + kShowerSeedOffset;
+  int hybrid_seed = seed_base + kHybridSeedOffset;
+  int lund_seed = use_explicit_seed_base ? (seed_base + kLundSeedOffset) : 0;
 	
   cout << " njob= " << njob << " N= " << Nev << " cent= " << cent << " kappa= " << kappa << " alpha= " << alpha << " tmethod= " << tmethod << endl;
+  cout << " seed_base= " << seed_base << " shower= " << shower_seed << " hybrid= " << hybrid_seed << " lund= " << lund_seed;
+  if (!use_explicit_seed_base) cout << " (legacy default)";
+  cout << endl;
 
 #ifdef DO_LUND
   char JToutHad[100];
@@ -68,7 +87,7 @@ int main(int argc, char** argv)
   pjt_file.open (JToutPart);
 
   //Initialize Random Seed
-  numrand nr(1346+njob);
+  numrand nr(hybrid_seed);
   //cout << " rando= " << nr.rando() << endl;
 
   if (do_quench) {	
@@ -87,7 +106,7 @@ int main(int argc, char** argv)
     //Generate PYTHIA tree
     //Declare partons vector
     vector<Parton> partons;
-    if (count==0) init_tree(njob);
+    if (count==0) init_tree(shower_seed);
     double weight, cross, cross_err;
     bool gotc=0;
     int ntry=0;
@@ -142,7 +161,7 @@ int main(int argc, char** argv)
   #ifdef DO_LUND
     //Hadronize in pythia, return a vector of pythia hadrons
     vector<Hadron> vhadrons, qhadrons;
-    if (count==0) init_lund();
+    if (count==0) init_lund(lund_seed);
     do_lund(partons,quenched,recoiled,vhadrons,qhadrons,hadro_type);
     cout << " Vac Hadron size= " << vhadrons.size() << " Med Hadron size= " << qhadrons.size() << endl;
   #endif	
