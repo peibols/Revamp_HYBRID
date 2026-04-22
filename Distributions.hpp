@@ -1831,6 +1831,13 @@ double do_interp(int iX, double x, double pin, int g, int d, int n, int particle
     //x=1.; //CHECK
   }
 
+  if (pin < pin_min || pin > pin_max) {
+    std::cout << " pin out of interpolation range in mIx, pin = " << pin
+              << " pin_min = " << pin_min
+              << " pin_max = " << pin_max << std::endl;
+    exit(1);
+  }
+
   int ux = int(x/step_x);
   double dux = (x - double(ux)*step_x)/step_x;
   int fux = 1;
@@ -1863,6 +1870,11 @@ double do_interp(int iX, double x, double pin, int g, int d, int n, int particle
 
   return result;
 
+}
+
+inline bool can_use_mx_tables(double pin)
+{
+    return use_tables && pin >= pin_min && pin <= pin_max;
 }
 
 /*
@@ -1910,7 +1922,7 @@ double m1x(double x,double pin,double g,double d, double particleA, double n,gsl
 
     //std::cout << " n= " << n << std::endl;
 
-    if (use_tables && pin<=1500. && pin>0.) return do_interp(1, x, pin, int(g), int(d), int(n), int(particleA));
+    if (can_use_mx_tables(pin)) return do_interp(1, x, pin, int(g), int(d), int(n), int(particleA));
 
     gsl_function F;
     struct max_params params = {pin,g,d, particleA, n,1,wdk,wkcm};
@@ -1959,7 +1971,7 @@ double m2x(double x,double pin,double g,double d, double particleA, double n,gsl
 {
     if (x==0) return 0;
     
-    if (use_tables && pin<=1500. && pin>0.) return do_interp(2, x, pin, int(g), int(d), int(n), int(particleA));
+    if (can_use_mx_tables(pin)) return do_interp(2, x, pin, int(g), int(d), int(n), int(particleA));
     
     gsl_function F;
     struct max_params params = {pin,g,d, particleA, n,2,wdk,wkcm};
@@ -2003,7 +2015,7 @@ double m3x(double x,double pin,double g,double d, double particleA, double n,gsl
 {
     if (x==0) return 0;
 
-    if (use_tables && pin<=1500. && pin>0.) return do_interp(3, x, pin, int(g), int(d), int(n), int(particleA));
+    if (can_use_mx_tables(pin)) return do_interp(3, x, pin, int(g), int(d), int(n), int(particleA));
   
     gsl_function F;
     struct max_params params = {pin,g,d, particleA, n,3,wdk,wkcm};
@@ -2047,7 +2059,7 @@ double m4x(double x,double pin,double g,double d, double particleA, double n,gsl
 {
     if (x==0) return 0;
 
-    if (use_tables && pin<=1500. && pin>0.) return do_interp(4, x, pin, int(g), int(d), int(n), int(particleA));
+    if (can_use_mx_tables(pin)) return do_interp(4, x, pin, int(g), int(d), int(n), int(particleA));
    
     gsl_function F;
     struct max_params params = {pin,g,d, particleA, n,4,wdk,wkcm};
@@ -2091,7 +2103,7 @@ double m5x(double x,double pin,double g,double d, double particleA, double n,gsl
 {
     if (x==0) return 0;
     
-    if (use_tables && pin<=1500. && pin>0.) return do_interp(5, x, pin, int(g), int(d), int(n), int(particleA));
+    if (can_use_mx_tables(pin)) return do_interp(5, x, pin, int(g), int(d), int(n), int(particleA));
     
     gsl_function F;
     struct max_params params = {pin,g,d, particleA, n,5,wdk,wkcm};
@@ -2136,7 +2148,7 @@ double m6x(double x,double pin,double g,double d, double particleA, double n,gsl
 {
     if (x==0) return 0;
     
-    if (use_tables && pin<=1500. && pin>0.) return do_interp(6, x, pin, int(g), int(d), int(n), int(particleA));
+    if (can_use_mx_tables(pin)) return do_interp(6, x, pin, int(g), int(d), int(n), int(particleA));
     
     gsl_function F;
     struct max_params params = {pin,g,d, particleA, n,6,wdk,wkcm};
@@ -2180,7 +2192,7 @@ double m7x(double x,double pin,double g,double d, double particleA, double n,gsl
 {
     if (x==0) return 0;
 
-    if (use_tables && pin<=1500. && pin>0.) return do_interp(7, x, pin, int(g), int(d), int(n), int(particleA));
+    if (can_use_mx_tables(pin)) return do_interp(7, x, pin, int(g), int(d), int(n), int(particleA));
 
     gsl_function F;
     struct max_params params = {pin,g,d, particleA, n,7,wdk,wkcm};
