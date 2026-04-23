@@ -1,13 +1,14 @@
-#include <vector>
+#include <algorithm>
+#include <array>
 #include <cmath>
-#include <iostream>
 #include <fstream>
+#include <iostream>
+#include <vector>
 
-#include "Random.h"
+#include "Parton.h"
 #include "Quench.h"
+#include "Random.h"
 #include "Wake.h"
-
-#include "vector_operators.h"
 
 using std::vector;
 using namespace std;
@@ -16,413 +17,327 @@ namespace {
 constexpr int kProposalBudgetBase = 200000;
 constexpr int kProposalBudgetStep = 20000;
 constexpr int kMaxProposalRestarts = 100;
+using Four = std::array<double,4>;
+
+double transcut = 0.;
+double basesig = 0.65;
+int Nrun = 800000;
+double maxptsq = 3.5 * 3.5;
+double maxrap = 2.5;
+double tole = 0.25;
+double masspi = 0.1396;
+double masspro = 0.938;
+double masstra[2] = {masspi, masspro};
+double normcoop[2] = {30., 30.};
+double maxcooper[2] = {0., 0.};
+int toomuch = 0;
+
+Four to_array(const vector<double> &p) {
+  return {p[0], p[1], p[2], p[3]};
 }
 
-double transcut=0.;		//Lower threshold for transverse mass for back-reaction
-double basesig=0.65;		//Starting gaussian width for pass function in Metropolis
-int Nrun=800000;	        //Maximum iterations of Metropolis
-double maxptsq=pow(3.5,2.);	//Maximum squared pt for MC
-double maxrap=2.5;		//Maximum absolute rapidity for MC
-double tole=0.25;		//Non-conservation tolerance in GeV
-double masspi=0.1396;		//Pion mass
-double masspro=0.938;		//Proton mass
-double masstra[2]={masspi,masspro};
+vector<double> to_vector(const Four &p) {
+  return {p[0], p[1], p[2], p[3]};
+}
 
-double normcoop[2]={30.,30.};		//Norm for OneBody MC, adaptable 
+Four wake_array(const Wake &w) {
+  return to_array(w.vGetP());
+}
 
-double maxcooper[2]={0.,0.};		//Record highest value of OneBody MC
+Four add(const Four &a, const Four &b) {
+  return {a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]};
+}
 
-int toomuch=0;			//How many times we gave up in Metropolis
+Four sub(const Four &a, const Four &b) {
+  return {a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]};
+}
 
-int totalsave=0;
+Four scale(const Four &a, double c) {
+  return {a[0] * c, a[1] * c, a[2] * c, a[3] * c};
+}
 
-void do_wake(vector<Quench> quenched, vector<Parton> partons, vector<Wake> &wake, numrand &nr, vector<vector<double>> all_wakes);
-double rapid(double pt, double pz);
-int set_charge(int spe, numrand &nr);
-double thermal(int spe, double ptrand);
-void one_body(vector<Wake> &wake, vector<double> delta, vector<double> momback, double ptlost, double mtlost, double raplost, numrand &nr, int spe, int mode);
-vector<double> vec_abs(vector<double> p);
-bool try_add_residual_wake(vector<Wake> &wake, const vector<double> &delta, vector<double> &momback, numrand &nr, vector<double> &dif, int &spe);
+void add_inplace(Four &a, const Four &b) {
+  a[0] += b[0];
+  a[1] += b[1];
+  a[2] += b[2];
+  a[3] += b[3];
+}
 
-void do_wake(vector<Quench> quenched, vector<Parton> partons, vector<Wake> &wake, numrand &nr, vector<vector<double>> all_wakes)
-{
+double rapid(double pt, double pz) {
+  if (pt == 0.) return 0.;
+  return atanh(pz / sqrt(pt * pt + pz * pz));
+}
 
-  double total_injected=0.;
-  for (unsigned int i=0; i<all_wakes.size(); i++)
-  //for (unsigned int i=0; i<quenched.size(); i++)
-  {
-    //if (quenched[i].GetD1()!=-1) continue;
-    //vector<double> delta(4,0.);
-    //for (int oo=0; oo<4; oo++) delta[oo]=partons[i].vGetP()[oo]-quenched[i].vGetP()[oo];
-    vector<double> delta=all_wakes[i];
-    //cout << "wake " << i << endl;
-    for (int oo=0; oo<4; oo++) {
-      if (delta[oo]!=delta[oo]) {
-        cout << "NAN delta= " << oo << " " << delta[oo] << endl;
-	exit(1);
-      }
-      //cout << "delta = " << oo << " = " << delta[oo] << endl;
+int set_charge(int spe, numrand &nr) {
+  if (spe == 0) {
+    double r = nr.rando();
+    if (r < 0.5) return 0;
+    else if (r < 0.75) return 1;
+    else return -1;
+  } else {
+    double r = nr.rando();
+    if (r < 0.5) return 1;
+    else return -1;
+  }
+}
+
+double thermal(int spe, double ptrand) {
+  double temp;
+  if (spe == 0) {
+    temp = 0.211501 * pow(ptrand, 0.275362);
+    if (temp > 0.4) temp = 0.4;
+    if (temp < 0.19) temp = 0.19;
+  } else {
+    temp = 0.33 * pow(ptrand, 0.3);
+    if (temp > 0.4) temp = 0.4;
+    if (temp < 0.15) temp = 0.15;
+  }
+  return temp;
+}
+
+Four vec_abs(const Four &p) {
+  return {std::fabs(p[0]), std::fabs(p[1]), std::fabs(p[2]), std::fabs(p[3])};
+}
+
+void one_body(vector<Wake> &wake,
+              const Four &delta,
+              const Four &momback,
+              double ptlost,
+              double mtlost,
+              double raplost,
+              numrand &nr,
+              int spe,
+              int mode) {
+  double mc = 0.;
+  double cooper = 0.;
+  double randian = 1.;
+  double pxrand, pyrand, raprand, ptrand;
+  double phirand, mtrand, phidif, rapdif;
+
+  do {
+    ptrand = std::max(sqrt(maxptsq * nr.rando()), 0.000001);
+    phirand = 2. * 3.141592654 * nr.rando();
+    raprand = maxrap * (-1. + 2. * nr.rando());
+    pxrand = ptrand * cos(phirand);
+    pyrand = ptrand * sin(phirand);
+    mtrand = sqrt(ptrand * ptrand + masstra[spe] * masstra[spe]);
+
+    double inang = (delta[0] * pxrand + delta[1] * pyrand) / (ptlost * ptrand);
+    if (inang > 1.) inang = 1.;
+    if (inang < -1.) inang = -1.;
+    phidif = acos(inang);
+    rapdif = raprand;
+
+    double Temp = thermal(spe, ptrand);
+    double cosh_rad = cosh(rapdif);
+    double T5 = Temp * Temp * Temp * Temp * Temp;
+    cooper = exp(-mtrand / Temp * cosh_rad) * mtrand / T5 * cosh_rad *
+             (ptrand * 3. * ptlost / mtlost * cos(phidif) + mtrand * cosh_rad) /
+             normcoop[spe];
+
+    if (cooper != cooper) cooper = 0.;
+
+    if (fabs(cooper) > maxcooper[spe]) maxcooper[spe] = fabs(cooper);
+    if (fabs(cooper) > 1.) {
+      normcoop[spe] *= (fabs(cooper) + 0.0001);
     }
-    //cout << endl;
-    //cout << "Orig= " << quenched[i].GetOrig() << " delta= " << delta[3] << endl;
-    if (delta[3]==0.) continue;				//Swiftly skip guys who didn't lose energy
-    //Can lead to some non EM conservation when broadening on...
-    if (delta[3]<0.) {
-      cout << "negative delta3= " << delta[3] << endl;
-      //continue;
-    }
 
-    //cout << " Doing wake with delta_px = " << delta[0] << " delta py= " << delta[1] << " delta pz= " << delta[2] << " delta e= " << delta[3] << endl;
-    //double wake_virt_two = delta[3]*delta[3]-delta[0]*delta[0]-delta[1]*delta[1]-delta[2]*delta[2];
-    //cout << " Has virt two= " << wake_virt_two << endl;
+    if (mode == -1) mc = fabs(cooper);
+    else mc = cooper * wake[mode].GetStatus();
 
-    //REally sppeds-ip, small em non-conservation
-    //if (delta[3]>0.) delta[3]=sqrt(delta[0]*delta[0]+delta[1]*delta[1]+delta[2]*delta[2]); //put on-shell...
-    //else delta[3]=-sqrt(delta[0]*delta[0]+delta[1]*delta[1]+delta[2]*delta[2]); //put on-shell...
-    delta[3]=sqrt(delta[0]*delta[0]+delta[1]*delta[1]+delta[2]*delta[2]); //put on-shell...
+    randian = nr.rando();
+  } while (mc < randian);
 
-    //cout << " After on-shell, has en= " << delta[3] << endl;
+  double pt_cosh = ptrand * cosh(raprand + raplost);
+  Four p = {pxrand, pyrand,
+            ptrand * sinh(raprand + raplost),
+            sqrt(pt_cosh * pt_cosh + masstra[spe] * masstra[spe])};
+
+  int charge = set_charge(spe, nr);
+  double status = (cooper > 0.) ? 1. : -1.;
+  wake.emplace_back(to_vector(p), masstra[spe], charge, spe, status);
+}
+
+bool try_add_residual_wake(vector<Wake> &wake,
+                           const Four &delta,
+                           Four &momback,
+                           numrand &nr) {
+  double difx = -momback[0] + delta[0];
+  double dify = -momback[1] + delta[1];
+  double difz = -momback[2] + delta[2];
+  double dife = -momback[3] + delta[3];
+  double remass2 = dife * dife - difx * difx - dify * dify - difz * difz;
+
+  if (!(fabs(difx) < 3. * tole && fabs(dify) < 3. * tole && fabs(difz) < 8. * tole && remass2 > 0.)) {
+    return false;
+  }
+
+  int spe = 0;
+  if (fabs(remass2 - masstra[0] * masstra[0]) >= fabs(remass2 - masstra[1] * masstra[1])) {
+    spe = 1;
+  }
+
+  int charge = set_charge(spe, nr);
+  double stat = (dife < 0.) ? -1. : 1.;
+  double tdife = sqrt(difx * difx + dify * dify + difz * difz + masstra[spe] * masstra[spe]);
+  Four p = {stat * difx, stat * dify, stat * difz, tdife};
+  wake.emplace_back(to_vector(p), masstra[spe], charge, spe, stat);
+  add_inplace(momback, scale(wake_array(wake.back()), stat));
+  return true;
+}
+}  // namespace
+
+void do_wake(vector<Quench> quenched,
+             vector<Parton> partons,
+             vector<Wake> &wake,
+             numrand &nr,
+             vector<vector<double>> all_wakes) {
+  (void)all_wakes;
+
+  double total_injected = 0.;
+  int wake_source_idx = 0;
+  for (size_t i = 0; i < quenched.size(); ++i) {
+    if (partons[i].GetD1() != -1) continue;
+    Four delta = sub(to_array(partons[i].vGetP()), to_array(quenched[i].vGetP()));
 
     total_injected += delta[3];
 
-    double ptlost=sqrt(pow(delta[0],2.)+pow(delta[1],2.));	//Lost Pt
-    if (ptlost<=0.) {
-      cout << " ptlost= " << ptlost << " elost= " << delta[3] << endl;
+    double ptlost = sqrt(delta[0] * delta[0] + delta[1] * delta[1]);
+    if (ptlost <= 0.) {
+      ++wake_source_idx;
       continue;
     }
-    double raplost=rapid(ptlost,delta[2]);	//Want this or pseudorapidity?
-    if (raplost!=raplost) {cout << " RapLost NaN: Dx= " << delta[0] << " Dy= " << delta[1] << " Dz= " << delta[2] << " De= " << delta[3] << endl; continue;}
-    //double mtlost=fabs(delta[3])/cosh(raplost);			//Lost transverse mass
-    double mtlost=delta[3]/cosh(raplost);			//Lost transverse mass
-		
-    //Reasonable conditions to do back-reaction
-    //if (delta[3]>=0. && delta[3]<3000. && mtlost>transcut && fabs(raplost)<3.5)
-    if (fabs(delta[3])>=0. && delta[3]<10000000. && fabs(mtlost)>transcut)
-    {
-      //Declare wake vector for this particle
-      vector<Wake> pwake;
-      //Declare variables here because of the goto:
-      vector<double> momback (4,0.);
-      vector<double> pmomback (4,0.);
-      vector<double> dif (4,0.);
-      vector<double> old_dif(4,0.);
+    double raplost = rapid(ptlost, delta[2]);
+    if (raplost != raplost) {
+      std::cout << " RapLost NaN: Dx= " << delta[0] << " Dy= " << delta[1] << " Dz= " << delta[2] << " De= " << delta[3] << std::endl;
+      ++wake_source_idx;
+      continue;
+    }
+    double mtlost = delta[3] / cosh(raplost);
+
+    if (fabs(delta[3]) >= 0. && delta[3] < 10000000. && fabs(mtlost) > transcut) {
+      std::vector<Wake> pwake;
+      Four momback = {};
+      Four pmomback = {};
+      Four dif = {};
       double msigma, pass, newpass;
-      //double passrand;
       int spe, mode;
       int runi, encallao;
-      int numenc=0;
-      int restart_count=0;
-		
-      //GoTo flag
-      thisis:
-		
-      pwake.clear();
-      int proposal_count=0;
-      int proposal_budget=kProposalBudgetBase+restart_count*kProposalBudgetStep;
-      for (unsigned int j=0; j<4; j++) momback[j]=0.;
-      runi=0, encallao=0;
-		
-      //Initial List of Hadrons, approximately satisfy energy conservation
-      do
-      {
-        //Proton or Pion
-        if (nr.rando()<=0.05) spe=1;    //is proton
-        else spe=0;                     //is pion
-	//OneBody Dist: last arg=-1 because it is creation of initial list
-	one_body(pwake, delta, momback, ptlost, mtlost, raplost, nr, spe, -1);
-	momback+=pwake[pwake.size()-1].vGetP()*pwake[pwake.size()-1].GetStatus();
-      } while(fabs(momback[3])<fabs(delta[3]));
+      int numenc = 0;
+      bool restart_metropolis = true;
+      int restart_count = 0;
 
-      //Absolute difference wrt Wake Momentum
-      dif=vec_abs(delta-momback);
-			
-      //Select random particle, flip it and see whether it improves conservation
-      msigma=sqrt(pow(dif[0],2.)+pow(dif[1],2.)+pow(dif[2],2.)+pow(dif[3],2.))/sqrt(log(2.));
-			
-      do
-      {
-        //Select random particle
-	mode=int(double(pwake.size())*nr.rando());
-			
-	//Get the species it was
-	spe=pwake[mode].GetId();
-			
-	//Generate new particle, same species and status than selected
-	one_body(pwake, delta, momback, ptlost, mtlost, raplost, nr, spe, mode);
-			
-	//Define pass function	
-	pass=exp((-pow(dif[0],2.)-pow(dif[1],2.)-pow(dif[2],2.)-pow(dif[3],2.))/pow(msigma,2.));
-				
-	//Update sum of 4momentum: remove previous particle, add new particle
-	pmomback=momback+(pwake[pwake.size()-1].vGetP()-pwake[mode].vGetP())*pwake[mode].GetStatus();
-				
-	//Update difference wrt Lost Momentum
-	dif=vec_abs(delta-pmomback);
-				
-	//Compute new pass function
-	newpass=exp((-pow(dif[0],2.)-pow(dif[1],2.)-pow(dif[2],2.)-pow(dif[3],2.))/pow(msigma,2.));
-		
-	//If conservation improved, accept substitution
-	if (newpass>pass)
-	{
-	  pwake.erase(pwake.begin()+mode);
-	  runi+=1;
-	  encallao=0;
-	  momback=pmomback;
-	  //cout << " changed! " << endl;
-	}
-	else
-	{
-	  /*
-	  //If conservation not improved, accept with probability newpass/pass
-	  passrand=nr.rando();
-	  if (newpass/pass > passrand)
-	  //if (pass/newpass > passrand)
-	  {
-	    pwake.erase(pwake.begin()+mode);
-	    runi+=1;
-	    encallao=0;
-	    momback=pmomback;
-	  }
-	  else
-	  */
-	  {
-	    pwake.erase(pwake.begin()+pwake.size()-1);
-	    dif=vec_abs(delta-momback);
-	    encallao+=1;
-	  }
-	}
-			
-        //If truly stuck, start over. If 5 times truly stuck, give up
-        if (encallao>50000)
-	{
-	  cout << " ENCALLAO !!!! \n \n";
-	  numenc+=1;
-	  if (numenc>5) {toomuch+=1; break;}
-	  goto thisis;
-	}
-		
-        ++proposal_count;
-        if (proposal_count>=proposal_budget)
-	{
-	  if (try_add_residual_wake(pwake, delta, momback, nr, dif, spe)) break;
-	  restart_count+=1;
-	  if (restart_count>kMaxProposalRestarts) {toomuch+=1; break;}
-          goto thisis;
-	}
+      while (restart_metropolis) {
+        restart_metropolis = false;
 
-      } while(runi<Nrun && (dif[0]>tole || dif[1]>tole || dif[2]>tole || dif[3]>tole));
-			
-      if (runi>=Nrun) toomuch+=1;
-		
-      //cout << " Final difference= " << dif[0] << " " << dif[1] << " " << dif[2] << " " << dif[3] << endl;
+        pwake.clear();
+        momback = {};
+        runi = 0; encallao = 0;
+        int proposal_count = 0;
+        const int proposal_budget = kProposalBudgetBase + restart_count * kProposalBudgetStep;
 
-      //If outside tolerance
-      if (dif[0]!=0.) {
+        do {
+          if (nr.rando() <= 0.05) spe = 1;
+          else spe = 0;
+          one_body(pwake, delta, momback, ptlost, mtlost, raplost, nr, spe, -1);
+          add_inplace(momback, scale(wake_array(pwake.back()), pwake.back().GetStatus()));
+        } while (fabs(momback[3]) < fabs(delta[3]));
 
-        double difx=-momback[0]+delta[0];
-        double dify=-momback[1]+delta[1];
-	double difz=-momback[2]+delta[2];
-	double dife=-momback[3]+delta[3];
-        double remass2=dife*dife-difx*difx-dify*dify-difz*difz;
-        		
-	//cout << " WITHIN TOLERANCE \n";
-	//cout << " remnant mass= " << remass2 << " " << sqrt(remass2) << endl;
-	if (fabs(remass2-masstra[0]*masstra[0])<fabs(remass2-masstra[1]*masstra[1])) spe=0;
-	else spe=1;
-	//cout << " spe= " << spe << endl;
-			  
-	//if (nr.rando()<=0.05) spe=1;    //is proton
-        //else spe=0;                     //is pion
-					 
-	int charge=set_charge(spe, nr);
- 
-        double stat;
-	if (dife<0.) stat=-1.;
-	else stat=1.;
-			  
-	vector<double> p;
-        double tdife=sqrt(difx*difx+dify*dify+difz*difz+masstra[spe]*masstra[spe]);
-	p.push_back(stat*difx), p.push_back(stat*dify), p.push_back(stat*difz), p.push_back(tdife);
-	pwake.push_back( Wake ( p, masstra[spe], charge, spe, stat ) );
-	momback+=pwake[pwake.size()-1].vGetP()*stat;
-	dif=vec_abs(delta-momback);
+        dif = vec_abs(sub(delta, momback));
 
+        double dif_sq = dif[0]*dif[0] + dif[1]*dif[1] + dif[2]*dif[2] + dif[3]*dif[3];
+        msigma = sqrt(dif_sq) / sqrt(log(2.));
+        double msigma2 = msigma * msigma;
+
+        do {
+          mode = int(double(pwake.size()) * nr.rando());
+          spe = pwake[mode].GetId();
+
+          one_body(pwake, delta, momback, ptlost, mtlost, raplost, nr, spe, mode);
+
+          pass = exp(-dif_sq / msigma2);
+
+          pmomback = add(momback, scale(sub(wake_array(pwake.back()), wake_array(pwake[mode])), pwake[mode].GetStatus()));
+
+          dif = vec_abs(sub(delta, pmomback));
+          dif_sq = dif[0]*dif[0] + dif[1]*dif[1] + dif[2]*dif[2] + dif[3]*dif[3];
+
+          newpass = exp(-dif_sq / msigma2);
+
+          if (newpass > pass) {
+            std::swap(pwake[mode], pwake.back());
+            pwake.pop_back();
+            runi += 1;
+            encallao = 0;
+            momback = pmomback;
+          } else {
+            pwake.pop_back();
+            dif = vec_abs(sub(delta, momback));
+            dif_sq = dif[0]*dif[0] + dif[1]*dif[1] + dif[2]*dif[2] + dif[3]*dif[3];
+            encallao += 1;
+          }
+
+          if (encallao > 50000) {
+            std::cout << " ENCALLAO !!!! \n \n";
+            numenc += 1;
+            if (numenc > 5) {
+              toomuch += 1;
+              break;
+            }
+            restart_metropolis = true;
+            break;
+          }
+
+          ++proposal_count;
+          if (proposal_count >= proposal_budget) {
+            if (try_add_residual_wake(pwake, delta, momback, nr)) {
+              dif = vec_abs(sub(delta, momback));
+              break;
+            }
+
+            ++restart_count;
+            if (restart_count > kMaxProposalRestarts) {
+              toomuch += 1;
+              break;
+            }
+            restart_metropolis = true;
+            break;
+          }
+
+        } while (runi < Nrun && (dif[0] > tole || dif[1] > tole || dif[2] > tole || dif[3] > tole));
+
+        if (!restart_metropolis) {
+          if (runi >= Nrun) toomuch += 1;
+
+          if (dif[0] != 0.) {
+            try_add_residual_wake(pwake, delta, momback, nr);
+            dif = vec_abs(sub(delta, momback));
+          }
+
+          for (size_t k = 0; k < pwake.size(); ++k) {
+            pwake[k].SetMom(wake_source_idx);
+            int pdg = -1000;
+            double charge = pwake[k].GetCharge();
+            int particle_spe = pwake[k].GetId();
+            if (particle_spe == 0) {
+              if (charge == 0) pdg = 111;
+              else if (charge == 1.) pdg = 211;
+              else if (charge == -1.) pdg = -211;
+            } else if (particle_spe == 1) {
+              if (charge == 1.) pdg = 2212;
+              else if (charge == -1.) pdg = -2212;
+            }
+            pwake[k].SetId(pdg);
+            wake.push_back(pwake[k]);
+          }
+          pwake.clear();
+        }
       }
-			
-      //Fill total wake with pwake
-      int Npart=0;
-      double check_p[4]={0.};
-      for (unsigned int k=0; k<pwake.size(); k++)
-      {
-        pwake[k].SetMom(i);
-	int pdg=-1000;
-	double charge=pwake[k].GetCharge();
-	if (spe==0) {
-	  if (charge==0) pdg=111;
-	  else if (charge==1.) pdg=211;
-	  else if (charge==-1.) pdg=-211;
-	}
-	else if (spe==1) {
-	  if (charge==1.) pdg=2212;
-	  else if (charge==-1.) pdg=-2212;
-	}
-	pwake[k].SetId(pdg);
-	Npart+=int(1.*pwake[k].GetStatus());
-	wake.push_back ( pwake[k] );
-        for (int ip=0; ip<4; ip++) check_p[ip] += pwake[k].vGetP()[ip]*double(pwake[k].GetStatus());
-	//std::cout << " px= " << pwake[k].vGetP()[0] << " py= " << pwake[k].vGetP()[1] << " pz= " << pwake[k].vGetP()[2] << " en= " << pwake[k].vGetP()[3] << " status= " << pwake[k].GetStatus() << endl;
-      }
-      //cout << " Recheck difference sum of final p " << check_p[0] << " " << check_p[1] << " " << check_p[2] << " " << check_p[3] << endl;
-      //cout << " delta0= " << delta[0] << " delta1= " << delta[1] << " delta2= " << delta[2] << " delta3= " << delta[3] << endl;
-      pwake.clear();
     }
+    ++wake_source_idx;
   }
 
   std::ofstream outfile;
   outfile.open("Injected.dat", std::ios_base::app);
   outfile << total_injected << endl;
-
-
-}
-
-bool try_add_residual_wake(vector<Wake> &wake, const vector<double> &delta, vector<double> &momback, numrand &nr, vector<double> &dif, int &spe)
-{
-  double difx=-momback[0]+delta[0];
-  double dify=-momback[1]+delta[1];
-  double difz=-momback[2]+delta[2];
-  double dife=-momback[3]+delta[3];
-  double remass2=dife*dife-difx*difx-dify*dify-difz*difz;
-
-  if (!(fabs(difx)<3.*tole && fabs(dify)<3.*tole && fabs(difz)<8.*tole && remass2>0.)) return false;
-
-  if (fabs(remass2-masstra[0]*masstra[0])<fabs(remass2-masstra[1]*masstra[1])) spe=0;
-  else spe=1;
-
-  int charge=set_charge(spe, nr);
-
-  double stat;
-  if (dife<0.) stat=-1.;
-  else stat=1.;
-
-  vector<double> p;
-  double tdife=sqrt(difx*difx+dify*dify+difz*difz+masstra[spe]*masstra[spe]);
-  p.push_back(stat*difx), p.push_back(stat*dify), p.push_back(stat*difz), p.push_back(tdife);
-  wake.push_back( Wake ( p, masstra[spe], charge, spe, stat ) );
-  momback+=wake[wake.size()-1].vGetP()*stat;
-  dif=vec_abs(delta-momback);
-  return true;
-}
-
-void one_body(vector<Wake> &wake, vector<double> delta, vector<double> momback, double ptlost, double mtlost, double raplost, numrand &nr, int spe, int mode)
-{
-  double mc=0.;
-  double cooper=0.;
-  double randian=1.;
-  double pxrand, pyrand, raprand, ptrand;
-  double phirand, mtrand, phidif, rapdif;
-  do {
-    ptrand=max(sqrt(maxptsq*nr.rando()),0.000001);	
-    phirand=2.*3.141592*nr.rando();
-    raprand=maxrap*(-1.+2.*nr.rando());
-    pxrand=ptrand*cos(phirand);
-    pyrand=ptrand*sin(phirand);
-    mtrand=sqrt(pow(ptrand,2.)+pow(masstra[spe],2.));
-    double inang=(delta[0]*pxrand+delta[1]*pyrand)/(ptlost*ptrand);
-    if (inang>1.) inang=1.;
-    if (inang<-1.) inang=-1.;
-    phidif=acos(inang);
-    //rapdif=raplost-raprand;
-    rapdif=raprand;
-		
-    double Temp=thermal(spe,ptrand);
-
-    mtrand=sqrt(pow(ptrand,2.)+pow(masstra[spe],2.));
-
-    //Usual expression
-    cooper=exp(-mtrand/Temp*cosh(rapdif))*mtrand/pow(Temp,5.)*cosh(rapdif)*
-    (ptrand*3.*ptlost/mtlost*cos(phidif)+mtrand*cosh(rapdif))/normcoop[spe];
-
-    //Second order expression
-    //cooper=exp(-mtrand/Temp*cosh(rapdif))*mtrand/pow(Temp,5.)*cosh(rapdif)*
-    //(ptrand*3.*ptlost/mtlost*cos(phidif)+mtrand*cosh(rapdif)+pow(ptrand*ptlost/mtlost*cos(phidif),2.)*9./2./mtrand/cosh(rapdif))/normcoop[spe]
-    //
-    ///Resummed expression
-    //cooper=exp(-mtrand/Temp*cosh(rapdif))*pow(mtrand,2.)/pow(Temp,5.)*pow(cosh(rapdif),2.)*
-    //exp(ptrand*3.*ptlost/mtlost*cos(phidif)/mtrand/cosh(rapdif))/normcoop[spe];
-
-    if (cooper!=cooper) { 
-      cout << " Cooper NaN \n", cooper=0.; cout << " mtrand= " << mtrand << " Temp= " << Temp << " rapdif= " << rapdif << " phidif= " << phidif << " ptrand= " << ptrand << endl; 
-      cout << " pxrand= " << pxrand << " pyrand= " << pyrand << endl;
-      cout << " ptlost= " << ptlost << " elost= " << delta[3] << endl;
-      //exit(0);
-    }
-    //Check maximum value in situ
-    if (fabs(cooper)>maxcooper[spe]) maxcooper[spe]=fabs(cooper);
-    //Adapt normalization so that maximum cannot be greater than 1
-    if (fabs(cooper)>1.) 
-    {
-      normcoop[spe]*=(fabs(cooper)+0.0001);
-      cooper=0.;
-    }
-    if (mode==-1) mc=fabs(cooper);
-    else mc=cooper*wake[mode].GetStatus();
-		
-    randian=nr.rando();
-	
-  } while(mc<randian);
-	
-  //Set status
-  double status;
-  if (cooper>0.) status=1.;
-  else status=-1.;
-	
-  //Set charge
-  int charge=set_charge(spe, nr);
-	
-  //Fill wake vector with this hadron
-  vector<double> p;
-  p.push_back(pxrand), p.push_back(pyrand), p.push_back(ptrand*sinh(raprand+raplost)), p.push_back(sqrt(pow(ptrand*cosh(raprand+raplost),2.)+pow(masstra[spe],2.)));
-  wake.push_back( Wake ( p, masstra[spe], charge, spe, status ) );	
-
-}
-
-double thermal(int spe, double ptrand)
-{
-  double temp;
-  if (spe==0)
-  {
-    temp=0.211501*pow(ptrand,0.275362);
-    if (temp>0.4) temp=0.4;
-    if (temp<0.19) temp=0.19;
-  }
-  else {
-    temp=0.33*pow(ptrand,0.3);
-    if (temp>0.4) temp=0.4;
-    if (temp<0.15) temp=0.15;
-  }
-  return temp;
-}
-
-int set_charge(int spe, numrand &nr)
-{
-  double ranchar=nr.rando();
-  int charge;
-  if (spe==0)
-  {
-    if (ranchar>2./3.) charge=0;
-    else if (ranchar>1./3.) charge=1;
-    else charge=-1;
-  }
-  else
-  {
-    if (ranchar>1./2.) charge=1;
-    else charge=-1;
-  }
-  return charge;
-}
-
-double rapid(double pt, double pz)
-{
-  return 1./2.*log((sqrt(pow(pt,2.)+pow(pz,2.))+pz)/(sqrt(pow(pt,2.)+pow(pz,2.))-pz));
 }
