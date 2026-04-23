@@ -25,9 +25,6 @@ void init_lund(int seed)
   seedstring << "Random:seed = " << seed;
   hpythia.readString(seedstring.str().c_str());
 
-  hpythia.readString("Print:quiet = off");
-  hpythia.readString("111:mayDecay = off");
-  hpythia.readString("23:mayDecay = off");
 
   /*
   //Ezra decays
