@@ -24,6 +24,7 @@ private:
     bool do_quench_;
     bool do_wake_;
     bool do_source_;
+    bool do_elastic_;
 
     // Parameters
     int njob_;
@@ -34,10 +35,12 @@ private:
     int tmethod_;
     int mode_;
     int ebe_hydro_;
+    int hadro_type_;
     int seed_base_;
     int shower_seed_;
     int hybrid_seed_;
     int lund_seed_;
+    std::string tables_path_;
 
     // Random number generator
     numrand nr_;
@@ -68,14 +71,29 @@ private:
     void gxy(double &x, double &y);
     void gxy_ipsat(double &x, double &y);
 
-    void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double x, double y);
+    void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
+                  std::vector<Quench> &recoiled, double x, double y);
 
     void do_wake(const std::vector<Quench> &quenched, const std::vector<Parton> &partons, std::vector<Wake> &wake);
 
     void init_lund();
-    void do_lund(const std::vector<Parton> &partons, const std::vector<Quench> &quenched, std::vector<Hadron> &vhadrons, std::vector<Hadron> &qhadrons);
+    bool do_lund(const std::vector<Parton> &partons,
+                 const std::vector<Quench> &quenched,
+                 const std::vector<Quench> &recoiled,
+                 std::vector<Hadron> &vhadrons,
+                 std::vector<Hadron> &qhadrons);
 
-    void output_event(int count, const std::vector<Parton> &partons, const std::vector<Quench> &quenched, const std::vector<Hadron> &vhadrons, const std::vector<Hadron> &qhadrons, const std::vector<Wake> &wake, double weight, double cross, double x, double y);
+    void output_event(int count,
+                      const std::vector<Parton> &partons,
+                      const std::vector<Quench> &quenched,
+                      const std::vector<Quench> &recoiled,
+                      const std::vector<Hadron> &vhadrons,
+                      const std::vector<Hadron> &qhadrons,
+                      const std::vector<Wake> &wake,
+                      double weight,
+                      double cross,
+                      double x,
+                      double y);
 
 public:
     // Constructor

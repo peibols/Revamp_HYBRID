@@ -6,17 +6,29 @@
 #include <functional>
 #include <cmath>
 #include <iomanip>
+#include "MoliereTables.h"
 #include "vector_operators.h"
 
-EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int mode, int ebe_hydro, const HydroProfile &hydro_profile)
-    : nr_(nr), kappa_(kappa), alpha_(alpha), tmethod_(tmethod), mode_(mode), ebe_hydro_(ebe_hydro), hydro_profile_(hydro_profile) {
+EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int mode,
+                       int ebe_hydro, bool do_elastic, const std::string &tables_path,
+                       const HydroProfile &hydro_profile)
+    : nr_(nr), kappa_(kappa), alpha_(alpha), tmethod_(tmethod), mode_(mode),
+      ebe_hydro_(ebe_hydro), do_elastic_(do_elastic), tables_path_(tables_path),
+      hydro_profile_(hydro_profile) {
+    if (do_elastic_) {
+        MoliereTables::ensureLoaded(tables_path_);
+    }
 }
 
 EnergyLoss::~EnergyLoss() {
     // No special cleanup needed
 }
 
-void EnergyLoss::do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double x, double y) {
+void EnergyLoss::do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
+                          double x, double y, std::vector<Quench> *recoiled) {
+    if (recoiled != nullptr) {
+        recoiled->clear();
+    }
     do_eloss_impl(partons, quenched, x, y);
 }
 

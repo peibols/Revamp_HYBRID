@@ -18,15 +18,22 @@ fi
 
 PYTHIA_INC_FLAGS=""
 PYTHIA_LIB_FLAGS=""
+GSL_LIB_FLAGS=""
 if [[ -d "$PYTHIA_INCLUDE" ]]; then
   PYTHIA_INC_FLAGS="-I${PYTHIA_INCLUDE}"
 fi
 if [[ -d "$PYTHIA_LIB" ]]; then
   PYTHIA_LIB_FLAGS="-L${PYTHIA_LIB} -Wl,-rpath,${PYTHIA_LIB} -lpythia8 -ldl"
 fi
+if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists gsl; then
+  GSL_LIB_FLAGS="$(pkg-config --libs gsl)"
+else
+  GSL_LIB_FLAGS="-lgsl -lgslcblas -lm"
+fi
 
 $CXX $CXXFLAGS \
 	$1.cc TreeGenerator.cc Wake.cc Quench.cc Random.cc Parton.cc Hadron.cc \
 	HydroProfile.cc WakeGenerator.cc LundGenerator.cc GlauberModel.cc EnergyLoss.cc HYBRID.cc Config.cc \
+	MoliereTables.cc read_tables.cpp \
 	-o $1 \
-	$PYTHIA_INC_FLAGS $PYTHIA_LIB_FLAGS
+	$PYTHIA_INC_FLAGS $PYTHIA_LIB_FLAGS $GSL_LIB_FLAGS

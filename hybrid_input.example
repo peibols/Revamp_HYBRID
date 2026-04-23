@@ -17,13 +17,23 @@ mode = 0
 # do_quench: true/false
 # do_wake: true/false
 # do_source: true/false
+# do_elastic: true/false (Moliere elastic scattering integration path)
 
 do_quench = true
 #do_wake = true
 #do_source = false
+#do_elastic = false
 
 # Hydro mode: 0 = averaged hydro (Hydro_PbPb), 1 = event-by-event (ipsat)
 ebe_hydro = 0
+
+# Medium hadronization mode
+# hadro_type = 0 : direct PYTHIA hadronization with existing color tags
+# hadro_type = 1 : rebuild strings before hadronization (needed for elastic recoilers)
+#hadro_type = 0
+
+# Moliere table directory for elastic mode
+#tables_path = /raid5/data/yjlee/hybrid_dev/moliere_table_bundle/a10_tables/
 
 # Output base name (files will be <output_base>_Hadrons.out and <output_base>_Partons.out)
 output_base = HYBRID

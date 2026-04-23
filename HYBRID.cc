@@ -22,6 +22,7 @@ HYBRID::HYBRID(const Config &cfg) :
       do_quench_(cfg.getBoolOr("do_quench", true)),
       do_wake_(cfg.getBoolOr("do_wake", true)),
       do_source_(cfg.getBoolOr("do_source", false)),
+      do_elastic_(cfg.getBoolOr("do_elastic", false)),
       njob_(cfg.getIntOr("njob", 0)),
       Nev_(cfg.getIntOr("Nev", 1)),
       cent_(cfg.getStringOr("cent", "0-5")),
@@ -30,17 +31,21 @@ HYBRID::HYBRID(const Config &cfg) :
       tmethod_(cfg.getIntOr("tmethod", 0)),
       mode_(cfg.getIntOr("mode", 0)),
       ebe_hydro_(cfg.getIntOr("ebe_hydro", 0)),
+      hadro_type_(cfg.getIntOr("hadro_type", cfg.getBoolOr("do_elastic", false) ? 1 : 0)),
       seed_base_(getSeedBase(cfg)),
       shower_seed_(seed_base_ + kShowerSeedOffset),
       hybrid_seed_(seed_base_ + kHybridSeedOffset),
       lund_seed_(seed_base_ + kLundSeedOffset),
+      tables_path_(cfg.getStringOr("tables_path", "")),
       nr_(hybrid_seed_),
       tree_gen_(std::make_unique<TreeGenerator>()),
       hydro_profile_(std::make_unique<HydroProfile>()),
       wake_gen_(std::make_unique<WakeGenerator>()),
       lund_gen_(std::make_unique<LundGenerator>()),
       glauber_model_(std::make_unique<GlauberModel>()),
-      energy_loss_(std::make_unique<EnergyLoss>(nr_, kappa_, alpha_, tmethod_, mode_, ebe_hydro_, *hydro_profile_)) {
+      energy_loss_(std::make_unique<EnergyLoss>(nr_, kappa_, alpha_, tmethod_, mode_,
+                                                ebe_hydro_, do_elastic_, tables_path_,
+                                                *hydro_profile_)) {
 
     // Open output files
     const std::string out_base = cfg.getStringOr("output_base", "HYBRID");
@@ -51,6 +56,14 @@ HYBRID::HYBRID(const Config &cfg) :
               << " shower= " << shower_seed_
               << " hybrid= " << hybrid_seed_
               << " lund= " << lund_seed_ << std::endl;
+    if (do_elastic_) {
+        std::cout << "Elastic scattering requested"
+                  << " hadro_type= " << hadro_type_;
+        if (!tables_path_.empty()) {
+            std::cout << " tables_path= " << tables_path_;
+        }
+        std::cout << std::endl;
+    }
 
     if (cfg.getBoolOr("use_trigger", false)) {
         tree_gen_->setTrigger(
@@ -77,6 +90,7 @@ void HYBRID::run() {
 
     std::vector<Parton> partons;
     std::vector<Quench> quenched;
+    std::vector<Quench> recoiled;
     std::vector<Wake> wake;
     std::vector<Hadron> vhadrons;
     std::vector<Hadron> qhadrons;
@@ -97,6 +111,7 @@ void HYBRID::run() {
         for (const auto &parton : partons) {
             quenched.emplace_back(parton);
         }
+        recoiled.clear();
 
         double x = 0., y = 0.;
         if (do_quench_) {
@@ -121,7 +136,7 @@ void HYBRID::run() {
                 }
             }
 
-            do_eloss(partons, quenched, x, y);
+            do_eloss(partons, quenched, recoiled, x, y);
 
             if (do_source_) {
                 source_file << "end\n";
@@ -143,7 +158,10 @@ void HYBRID::run() {
 
         vhadrons.clear();
         qhadrons.clear();
-        do_lund(partons, quenched, vhadrons, qhadrons);
+        if (!do_lund(partons, quenched, recoiled, vhadrons, qhadrons)) {
+            std::cout << "Skipping event " << count << " after medium hadronization failure" << std::endl;
+            continue;
+        }
         std::cout << " Vac Hadron size= " << vhadrons.size() << " Med Hadron size= " << qhadrons.size() << std::endl;
 
         // 4-momentum conservation check
@@ -200,7 +218,7 @@ void HYBRID::run() {
         }
 
         // Output
-        output_event(count, partons, quenched, vhadrons, qhadrons, wake, weight, cross, x, y);
+        output_event(count, partons, quenched, recoiled, vhadrons, qhadrons, wake, weight, cross, x, y);
 
         ++count;
     }
@@ -238,8 +256,9 @@ void HYBRID::gxy_ipsat(double &x, double &y) {
     glauber_model_->sampleXYIPSAT(x, y, Ncollsize_, nr_);
 }
 
-void HYBRID::do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double x, double y) {
-    energy_loss_->do_eloss(partons, quenched, x, y);
+void HYBRID::do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
+                      std::vector<Quench> &recoiled, double x, double y) {
+    energy_loss_->do_eloss(partons, quenched, x, y, &recoiled);
 }
 
 void HYBRID::do_wake(const std::vector<Quench> &quenched, const std::vector<Parton> &partons, std::vector<Wake> &wake) {
@@ -250,14 +269,38 @@ void HYBRID::init_lund() {
     lund_gen_->init(lund_seed_);
 }
 
-void HYBRID::do_lund(const std::vector<Parton> &partons, const std::vector<Quench> &quenched, std::vector<Hadron> &vhadrons, std::vector<Hadron> &qhadrons) {
+bool HYBRID::do_lund(const std::vector<Parton> &partons,
+                     const std::vector<Quench> &quenched,
+                     const std::vector<Quench> &recoiled,
+                     std::vector<Hadron> &vhadrons,
+                     std::vector<Hadron> &qhadrons) {
     lund_gen_->hadronizeVacuum(partons, vhadrons);
-    lund_gen_->hadronizeMedium(quenched, qhadrons);
+    std::vector<Quench> quenchandrecoil = quenched;
+    if (do_elastic_) {
+        for (const auto &q : recoiled) {
+            if (q.GetOrig() == "recoiler") {
+                quenchandrecoil.push_back(q);
+            }
+        }
+    }
+    int had_counter = 0;
+    constexpr int had_counter_max = 5;
+    bool had_is_ok = false;
+    do {
+        qhadrons.clear();
+        had_is_ok = lund_gen_->hadronizeMedium(quenchandrecoil, qhadrons, hadro_type_);
+        had_counter += 1;
+    } while (!had_is_ok && had_counter < had_counter_max);
+    if (had_counter > 1) {
+        std::cout << "Had Counter = " << had_counter << " and had_is_ok= " << had_is_ok << std::endl;
+    }
+    return had_is_ok;
 }
 
 void HYBRID::output_event(int count,
                            const std::vector<Parton> &partons,
                            const std::vector<Quench> &quenched,
+                           const std::vector<Quench> &recoiled,
                            const std::vector<Hadron> &vhadrons,
                            const std::vector<Hadron> &qhadrons,
                            const std::vector<Wake> &wake,
@@ -279,7 +322,17 @@ void HYBRID::output_event(int count,
         for (const auto &q : quenched) {
             if (q.GetD1() == -1 && q.vGetP()[3] != 0.) {
                 auto qp = q.vGetP();
-                pjt_file_ << qp[0] << " " << qp[1] << " " << qp[2] << " " << q.GetMass() << " " << q.GetId() << " " << 0 << std::endl;
+                pjt_file_ << qp[0] << " " << qp[1] << " " << qp[2] << " " << q.GetMass() << " " << q.GetId() << " " << q.hadScattering() << std::endl;
+            }
+        }
+        for (const auto &q : recoiled) {
+            if (q.GetD1() == -1 && q.vGetP()[3] != 0.) {
+                int recid = -1000;
+                if (q.GetOrig() == "recoiler") recid = 3;
+                else if (q.GetOrig() == "hole") recid = 4;
+                else continue;
+                auto qp = q.vGetP();
+                pjt_file_ << qp[0] << " " << qp[1] << " " << qp[2] << " " << q.GetMass() << " " << q.GetId() << " " << recid << std::endl;
             }
         }
     } else {
