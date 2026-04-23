@@ -71,14 +71,11 @@ void do_tree(vector<Parton> &partons, double &weight, double &cross, double &cro
         if (m1==m2) use = m1;
       } while (m1==m2);
 		
-      //Compute virtuality
-      //double virt=sqrt(abs(pow(pythia.event[i].e(),2.)-pow(pythia.event[i].px(),2.)-pow(pythia.event[i].py(),2.)-pow(pythia.event[i].pz(),2.)-pythia.event[i].m2()));
-      double tf = 100000000.;
-      //cout << " virt= " << virt << endl;	
-      //cout << " virt2= " << pow(pythia.event[i].e(),2.)-pow(pythia.event[i].px(),2.)-pow(pythia.event[i].py(),2.)-pow(pythia.event[i].pz(),2.)-pythia.event[i].m2() << endl;
+      //Compute virtuality and store it as the shower scale, matching main.
+      double virt=sqrt(abs(pow(pythia.event[i].e(),2.)-pow(pythia.event[i].px(),2.)-pow(pythia.event[i].py(),2.)-pow(pythia.event[i].pz(),2.)-pythia.event[i].m2()));
 	
       //Add it to partons array
-      partons.push_back ( Parton ( p, tf, pythia.event[i].m(), m1, -1, -1, pythia.event[i].id(), "ps", pythia.event[i].col(), pythia.event[i].acol(), false ) );
+      partons.push_back ( Parton ( p, virt, pythia.event[i].m(), m1, -1, -1, pythia.event[i].id(), "ps", pythia.event[i].col(), pythia.event[i].acol(), false ) );
 	
       //If mother is ISR initiator, say mother is -1
       if (pythia.event[m1].status()==-41)
@@ -115,9 +112,15 @@ void do_tree(vector<Parton> &partons, double &weight, double &cross, double &cro
 	  {
 	    int mom=partons[i].GetMom();
 		
-            //Set mother momentum and virtuality
-            vector<double> p=partons[i].vGetP()+partons[j].vGetP();
-	    double virt=sqrt(abs(pow(p[3],2.)-pow(p[0],2.)-pow(p[1],2.)-pow(p[2],2.)-pow(pythia.event[mom].m(),2.)));
+            //Set mother momentum and virtuality, matching main's reconstruction.
+            vector<double> p = partons[i].vGetP();
+            vector<double> p_j = partons[j].vGetP();
+            for (unsigned int k = 0; k < 4; ++k) p[k] += p_j[k];
+	    double e_sq = p[3]*p[3];
+	    double p0sq = p[0]*p[0];
+	    double p1sq = p[1]*p[1];
+	    double p2sq = p[2]*p[2];
+	    double virt=sqrt(abs(e_sq - p0sq - p1sq - p2sq - pow(pythia.event[mom].m(),2.)));
 		
             //Find first non-trivial mother of the mother
             int use = mom;
@@ -129,9 +132,9 @@ void do_tree(vector<Parton> &partons, double &weight, double &cross, double &cro
               if (m1==m2) use = m1;
             } while (m1==m2);
 		
-	    //Fill it in partons array
-	    double tf = 2.*p[3]/virt/virt*0.2;
-	    partons.push_back ( Parton ( p, tf, pythia.event[mom].m(), m1, i, j, pythia.event[mom].id(), "ps", pythia.event[mom].col(), pythia.event[mom].acol(), false ) );
+	    //Fill it in partons array, storing the shower virtuality to match main.
+	    double q = virt;
+	    partons.push_back ( Parton ( p, q, pythia.event[mom].m(), m1, i, j, pythia.event[mom].id(), "ps", pythia.event[mom].col(), pythia.event[mom].acol(), false ) );
 
 	    //Update mother of daughters to point to position in partons array instead of pythia list, and declare as done
 	    partons[i].SetMom(partons.size()-1);
@@ -164,11 +167,7 @@ void do_tree(vector<Parton> &partons, double &weight, double &cross, double &cro
   } while (changes==0);
   //cout << " Partons size= " << partons.size() << endl;
 
-  //Set on-shell, assuming massless
-  for (unsigned int ip=0; ip<partons.size(); ip++) {
-    vector<double> p = partons[ip].vGetP();
-    partons[ip].SetP(p[0],p[1],p[2],sqrt(p[0]*p[0]+p[1]*p[1]+p[2]*p[2]));
-  }
+  //Keep PYTHIA shower four-momenta unchanged for main-aligned baseline comparison.
 
   //Extract weight and cross section of the event
   weight=pythia.info.weight();

@@ -263,7 +263,7 @@ double gT(double tau, double x, double y, double eta)
         gete+=hydrot[it+1][ieta+1][iy+1][ix]*(1.-dx)*dt*dy*deta;
         gete+=hydrot[it+1][ieta+1][iy+1][ix+1]*dx*dt*dy*deta;
 
-	return gete*0.2;
+	return gete*0.197327;
 }
 
 double gVx(double tau, double x, double y, double eta)

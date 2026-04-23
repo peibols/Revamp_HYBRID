@@ -83,10 +83,15 @@ void do_eloss(vector<Parton> partons, vector<Quench> &quenched, double xcre, dou
       }
       vector<double> p = quenched[tp].vGetP();
       vector<double> pos=quenched[tp].GetRi();
-      //Time of flight (from formation time argument)
+      //Time of flight. For shower partons, match main by deriving it from the
+      // current inherited energy and the stored virtuality.
       double tof = quenched[tp].GetTf();
+      if (quenched[tp].GetOrig()=="ps") {
+        double q = quenched[tp].GetTf();
+        if (q>0.) tof = 0.2 * 2. * p[3] / (q * q);
+      }
       //If final particle, fly arbitrarily far
-      if (w==1) tof = 100000000.;
+      if (w==1) tof = 10000000000.;
       //If colored particle
       int had_scattering=quenched[tp].had_scattering();
       vector<double> orient=quenched[tp].orient();
