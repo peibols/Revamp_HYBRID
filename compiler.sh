@@ -34,6 +34,6 @@ fi
 $CXX $CXXFLAGS \
 	$1.cc TreeGenerator.cc Wake.cc Quench.cc Random.cc Parton.cc Hadron.cc \
 	HydroProfile.cc WakeGenerator.cc LundGenerator.cc GlauberModel.cc EnergyLoss.cc HYBRID.cc Config.cc \
-	MoliereTables.cc read_tables.cpp \
+	MoliereTables.cc MoliereElastic.cc read_tables.cpp \
 	-o $1 \
 	$PYTHIA_INC_FLAGS $PYTHIA_LIB_FLAGS $GSL_LIB_FLAGS

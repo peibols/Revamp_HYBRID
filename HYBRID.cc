@@ -94,6 +94,7 @@ void HYBRID::run() {
     std::vector<Wake> wake;
     std::vector<Hadron> vhadrons;
     std::vector<Hadron> qhadrons;
+    std::vector<Hadron> hhadrons;
 
     while (count < Nev_) {
         // Generate PYTHIA tree
@@ -158,7 +159,8 @@ void HYBRID::run() {
 
         vhadrons.clear();
         qhadrons.clear();
-        if (!do_lund(partons, quenched, recoiled, vhadrons, qhadrons)) {
+        hhadrons.clear();
+        if (!do_lund(partons, quenched, recoiled, vhadrons, qhadrons, hhadrons)) {
             std::cout << "Skipping event " << count << " after medium hadronization failure" << std::endl;
             continue;
         }
@@ -184,6 +186,15 @@ void HYBRID::run() {
                     for (int j = 0; j < 4; j++) sum_med_partons[j] += qp[j];
                 }
             }
+            for (const auto &q : recoiled) {
+                if (q.GetD1() != -1 || q.vGetP()[3] == 0.) continue;
+                auto qp = q.vGetP();
+                if (q.GetOrig() == "recoiler") {
+                    for (int j = 0; j < 4; j++) sum_med_partons[j] += qp[j];
+                } else if (q.GetOrig() == "hole") {
+                    for (int j = 0; j < 4; j++) sum_med_partons[j] -= qp[j];
+                }
+            }
             for (const auto &h : vhadrons) {
                 auto hp = h.vGetP();
                 for (int j = 0; j < 4; j++) sum_vac_hadrons[j] += hp[j];
@@ -191,6 +202,10 @@ void HYBRID::run() {
             for (const auto &h : qhadrons) {
                 auto hp = h.vGetP();
                 for (int j = 0; j < 4; j++) sum_med_hadrons[j] += hp[j];
+            }
+            for (const auto &h : hhadrons) {
+                auto hp = h.vGetP();
+                for (int j = 0; j < 4; j++) sum_med_hadrons[j] -= hp[j];
             }
             sum_med_hadrons_wake = sum_med_hadrons;
             for (const auto &w : wake) {
@@ -218,7 +233,7 @@ void HYBRID::run() {
         }
 
         // Output
-        output_event(count, partons, quenched, recoiled, vhadrons, qhadrons, wake, weight, cross, x, y);
+        output_event(count, partons, quenched, recoiled, vhadrons, qhadrons, hhadrons, wake, weight, cross, x, y);
 
         ++count;
     }
@@ -273,13 +288,17 @@ bool HYBRID::do_lund(const std::vector<Parton> &partons,
                      const std::vector<Quench> &quenched,
                      const std::vector<Quench> &recoiled,
                      std::vector<Hadron> &vhadrons,
-                     std::vector<Hadron> &qhadrons) {
+                     std::vector<Hadron> &qhadrons,
+                     std::vector<Hadron> &hhadrons) {
     lund_gen_->hadronizeVacuum(partons, vhadrons);
     std::vector<Quench> quenchandrecoil = quenched;
+    std::vector<Quench> holes;
     if (do_elastic_) {
         for (const auto &q : recoiled) {
             if (q.GetOrig() == "recoiler") {
                 quenchandrecoil.push_back(q);
+            } else if (q.GetOrig() == "hole") {
+                holes.push_back(q);
             }
         }
     }
@@ -294,6 +313,10 @@ bool HYBRID::do_lund(const std::vector<Parton> &partons,
     if (had_counter > 1) {
         std::cout << "Had Counter = " << had_counter << " and had_is_ok= " << had_is_ok << std::endl;
     }
+    if (had_is_ok && !holes.empty()) {
+        hhadrons.clear();
+        lund_gen_->hadronizeMedium(holes, hhadrons, hadro_type_);
+    }
     return had_is_ok;
 }
 
@@ -303,6 +326,7 @@ void HYBRID::output_event(int count,
                            const std::vector<Quench> &recoiled,
                            const std::vector<Hadron> &vhadrons,
                            const std::vector<Hadron> &qhadrons,
+                           const std::vector<Hadron> &hhadrons,
                            const std::vector<Wake> &wake,
                            double weight,
                            double cross,
@@ -359,6 +383,10 @@ void HYBRID::output_event(int count,
         for (const auto &h : qhadrons) {
             auto hp = h.vGetP();
             hjt_file_ << hp[0] << " " << hp[1] << " " << hp[2] << " " << h.GetMass() << " " << h.GetId() << " " << 0 << std::endl;
+        }
+        for (const auto &h : hhadrons) {
+            auto hp = h.vGetP();
+            hjt_file_ << hp[0] << " " << hp[1] << " " << hp[2] << " " << h.GetMass() << " " << h.GetId() << " " << 3 << std::endl;
         }
 
         if (do_wake_) {

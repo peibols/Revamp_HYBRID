@@ -7,6 +7,7 @@
 #include <cmath>
 #include <iomanip>
 #include "MoliereTables.h"
+#include "MoliereElastic.h"
 #include "vector_operators.h"
 
 EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int mode,
@@ -28,6 +29,17 @@ void EnergyLoss::do_eloss(const std::vector<Parton> &partons, std::vector<Quench
                           double x, double y, std::vector<Quench> *recoiled) {
     if (recoiled != nullptr) {
         recoiled->clear();
+    }
+    if (do_elastic_) {
+        if (recoiled == nullptr) {
+            std::vector<Quench> local_recoiled;
+            moliere::do_eloss(partons, quenched, x, y, nr_, kappa_, alpha_, tmethod_, mode_,
+                              ebe_hydro_, hydro_profile_, local_recoiled);
+        } else {
+            moliere::do_eloss(partons, quenched, x, y, nr_, kappa_, alpha_, tmethod_, mode_,
+                              ebe_hydro_, hydro_profile_, *recoiled);
+        }
+        return;
     }
     do_eloss_impl(partons, quenched, x, y);
 }

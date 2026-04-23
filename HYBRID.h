@@ -81,7 +81,8 @@ private:
                  const std::vector<Quench> &quenched,
                  const std::vector<Quench> &recoiled,
                  std::vector<Hadron> &vhadrons,
-                 std::vector<Hadron> &qhadrons);
+                 std::vector<Hadron> &qhadrons,
+                 std::vector<Hadron> &hhadrons);
 
     void output_event(int count,
                       const std::vector<Parton> &partons,
@@ -89,6 +90,7 @@ private:
                       const std::vector<Quench> &recoiled,
                       const std::vector<Hadron> &vhadrons,
                       const std::vector<Hadron> &qhadrons,
+                      const std::vector<Hadron> &hhadrons,
                       const std::vector<Wake> &wake,
                       double weight,
                       double cross,
