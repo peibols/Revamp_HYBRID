@@ -146,10 +146,9 @@ double gTAA(double x, double y, double b)
         il=int(rho2/step);
         rho2=pow(x-b/2.,2.)+y*y;
         irr=int(rho2/step);
-        use=0.;
-        if(il<4000 && irr<4000) {
-                use=TA[il]*TA[irr]/norm;
-        }
+        if (il >= 4000) il = 3999;
+        if (irr >= 4000) irr = 3999;
+        use=TA[il]*TA[irr]/TA[0];
         return use;
 }
 
