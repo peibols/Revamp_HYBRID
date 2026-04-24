@@ -25,6 +25,10 @@ public:
     double temperature(double tau, double x, double y) const;
     double velocityX(double tau, double x, double y) const;
     double velocityY(double tau, double x, double y) const;
+    // Exact legacy averaged-hydro accessors for Moliere elastic validation.
+    double temperatureElasticLegacy(double tau, double x, double y, double eta) const;
+    double velocityXElasticLegacy(double tau, double x, double y, double eta) const;
+    double velocityYElasticLegacy(double tau, double x, double y, double eta) const;
     // Combined lookup: fills all three fields in one interpolation pass.
     void getValues(double tau, double x, double y, double &temp, double &vx, double &vy) const;
 

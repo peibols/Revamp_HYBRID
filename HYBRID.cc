@@ -49,8 +49,10 @@ HYBRID::HYBRID(const Config &cfg) :
 
     // Open output files
     const std::string out_base = cfg.getStringOr("output_base", "HYBRID");
-    hjt_file_.open(out_base + "_Hadrons.out", std::ios_base::app);
-    pjt_file_.open(out_base + "_Partons.out", std::ios_base::app);
+    // Match the legacy executables: each run owns a fresh output file.
+    // Appending across reruns in the same directory can duplicate event blocks.
+    hjt_file_.open(out_base + "_Hadrons.out", std::ios_base::out | std::ios_base::trunc);
+    pjt_file_.open(out_base + "_Partons.out", std::ios_base::out | std::ios_base::trunc);
 
     std::cout << "Seed base= " << seed_base_
               << " shower= " << shower_seed_

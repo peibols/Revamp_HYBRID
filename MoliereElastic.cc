@@ -38,6 +38,18 @@ double gVy(const HydroProfile &hydro_profile, double tau, double x, double y) {
     return hydro_profile.velocityY(tau, x, y);
 }
 
+double gT_legacy_elastic(const HydroProfile &hydro_profile, double tau, double x, double y, double eta) {
+    return hydro_profile.temperatureElasticLegacy(tau, x, y, eta);
+}
+
+double gVx_legacy_elastic(const HydroProfile &hydro_profile, double tau, double x, double y, double eta) {
+    return hydro_profile.velocityXElasticLegacy(tau, x, y, eta);
+}
+
+double gVy_legacy_elastic(const HydroProfile &hydro_profile, double tau, double x, double y, double eta) {
+    return hydro_profile.velocityYElasticLegacy(tau, x, y, eta);
+}
+
 double normalise(vector<double> &p) {
     double norm = std::sqrt(p[0]*p[0] + p[1]*p[1] + p[2]*p[2]);
     if (norm == 0.) return norm;
@@ -238,8 +250,8 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
         double tau0h = (ebe_hydro == 1) ? 0.4 : 0.6;
         if (tau >= tau0h) {
             vector<double> v;
-            vx = gVx(hydro_profile, tau, pos[0], pos[1]);
-            vy = gVy(hydro_profile, tau, pos[0], pos[1]);
+            vx = gVx_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta);
+            vy = gVy_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta);
             vz = pos[2]/pos[3];
             double frap = std::atanh(vz);
             vx /= std::cosh(frap);
@@ -252,7 +264,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
             if (v2 >= 1.) v2 = 0.999999999;
             double lore = 1./std::sqrt(1.-v2);
 
-            double temp = gT(hydro_profile, tau, pos[0], pos[1]);
+            double temp = gT_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta);
 
             l_dist += step;
             double f_lore = w2 + lore*lore*(v2 - 2.*vscalw + vscalw*vscalw);
@@ -266,7 +278,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                     if (tpos[3] > tot) break;
                     tau = std::sqrt(tpos[3]*tpos[3]-tpos[2]*tpos[2]);
                     eta = 0.5*std::log((tpos[3]+tpos[2])/(tpos[3]-tpos[2]));
-                    if (gT(hydro_profile, tau, tpos[0], tpos[1]) > Tc) {
+                    if (gT_legacy_elastic(hydro_profile, tau, tpos[0], tpos[1], eta) > Tc) {
                         will_hot = int(j);
                         break;
                     }

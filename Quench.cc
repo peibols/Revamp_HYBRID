@@ -83,15 +83,11 @@ const std::array<double,4>& Quench::origEn() const
 
 double Quench::delta_R(const Quench& other_parton) const
 {
+  // Match the legacy Moliere hadro_type=1 string-assignment metric exactly.
   double delta_eta = GetEta() - other_parton.GetEta();
-  double this_pt = GetPt();
-  double other_pt = other_parton.GetPt();
-  double delta_phi = 0.;
-  if (this_pt > 0. && other_pt > 0.) {
-    double cos_dphi = (_p[0] * other_parton.vGetP()[0] + _p[1] * other_parton.vGetP()[1]) / this_pt / other_pt;
-    cos_dphi = std::max(-1.0, std::min(1.0, cos_dphi));
-    delta_phi = std::acos(cos_dphi);
-  }
+  double delta_phi = std::acos((_p[0] * other_parton.vGetP()[0] +
+                                _p[1] * other_parton.vGetP()[1]) /
+                               GetPt() / other_parton.GetPt());
   return std::sqrt(delta_phi * delta_phi + delta_eta * delta_eta);
 }
 

@@ -62,7 +62,6 @@ void LundGenerator::hadronizeVacuum(const std::vector<Parton> &partons,
         int col = partons[i].GetCol();
         int acol = partons[i].GetAcol();
         double ee = sqrt(px * px + py * py + pz * pz + mm * mm);
-        
         // Insert into Pythia event record
         pythia->event.append(ide, 23, col, acol, px, py, pz, ee, mm);
         
@@ -76,15 +75,14 @@ void LundGenerator::hadronizeVacuum(const std::vector<Parton> &partons,
         
         for (int i = 0; i < pythia->event.size(); ++i) {
             if (!pythia->event[i].isFinal()) continue;
-            
+
+            // Preserve the legacy Moliere extraction path exactly.
             vector<double> hp;
-            hp.push_back(pythia->event[i].px());
-            hp.push_back(pythia->event[i].py());
-            hp.push_back(pythia->event[i].pz());
-            hp.push_back(pythia->event[i].e());
-            
+            for (unsigned int j = 1; j < 4; ++j) hp.push_back(pythia->event[i].p()[j]);
+            hp.push_back(pythia->event[i].p()[0]);
+
             vhadrons.emplace_back(
-                Parton(hp, 0., pythia->event[i].m(), 0, -1, -1, 
+                Parton(hp, 0., pythia->event[i].m(), 0, -1, -1,
                        pythia->event[i].id(), "lund", 0, 0, true),
                 pythia->event[i].charge(),
                 -1
@@ -108,10 +106,8 @@ bool LundGenerator::hadronizeMedium(const std::vector<Quench> &quenched,
             if (!pythia->event[i].isFinal()) continue;
 
             vector<double> hp;
-            hp.push_back(pythia->event[i].px());
-            hp.push_back(pythia->event[i].py());
-            hp.push_back(pythia->event[i].pz());
-            hp.push_back(pythia->event[i].e());
+            for (unsigned int j = 1; j < 4; ++j) hp.push_back(pythia->event[i].p()[j]);
+            hp.push_back(pythia->event[i].p()[0]);
 
             qhadrons.emplace_back(
                 Parton(hp, 0., pythia->event[i].m(), 0, -1, -1,
