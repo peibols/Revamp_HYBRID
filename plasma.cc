@@ -54,6 +54,11 @@ int qmethod; //1 Coll, 2 Radiative, 3 Strong
 int tmethod;
 double rpower;
 double tquench=0.6;
+
+namespace {
+constexpr int kHybridSeedOffset = 1346;
+}
+
 //ARGUMENTS: File, Alpha, Kappa, N, Model, Tmethod, Cent, Rpower, Rand, sqrts
 int main (int argc, char** argv)
 {
@@ -66,8 +71,11 @@ int main (int argc, char** argv)
 	tmethod=atoi(argv[6]);
 	std::string Cent=argv[7];
 	rpower=atof(argv[8]);
-	cout << " rpower= " << rpower << " frand= " << atoi(argv[9]) << endl;
-	ir=atoi(argv[9]);
+	int seed_base = atoi(argv[9]);
+	ir = seed_base + kHybridSeedOffset;
+	cout << " rpower= " << rpower
+	     << " seed_base= " << seed_base
+	     << " hybrid= " << ir << endl;
 	sprintf(outFile,"./%s.out",argv[1]);
 	sprintf(sorFile,"./sor_%s.out",argv[1]);
 	sprintf(inpFile,"./tree_%s.txt",argv[1]);

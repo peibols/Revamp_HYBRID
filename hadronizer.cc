@@ -10,15 +10,21 @@
 using namespace std;
 using namespace Pythia8;
 
+namespace {
+constexpr int kLundSeedOffset = 2337;
+}
+
 int main(int argc, char** argv) {
 
-  assert(argc==3);
+  assert(argc==3 || argc==4);
 
   int core=atoi(argv[1]);
   int nEvent=atoi(argv[2]);
+  int seed_base=(argc==4) ? atoi(argv[3]) : core;
+  int lund_seed=seed_base + kLundSeedOffset;
 
   Rndm randa;
-  randa.init(0);
+  randa.init(lund_seed);
 
   //Input Files
   char InpF[100];
@@ -38,10 +44,13 @@ int main(int argc, char** argv) {
   ParticleData& pdt = pythia.particleData;
 
   pythia.readString("Print:quiet = on");
+  pythia.readString("Random:setSeed = on");
+  pythia.readString("Random:seed = " + std::to_string(lund_seed));
   pythia.readString("111:mayDecay = off");
   pythia.readString("ProcessLevel:all = off");
 
   pythia.init();
+  cout << " seed_base= " << seed_base << " lund= " << lund_seed << endl;
 
   for (int iEvent = 0; iEvent < nEvent; ++iEvent) {
 

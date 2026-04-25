@@ -9,7 +9,11 @@
 using namespace std;
 using namespace Pythia8;
 
-//Args: N, seed, sqrts (in GeV)
+namespace {
+constexpr int kShowerSeedOffset = 33;
+}
+
+//Args: N, seed_base, sqrts (in GeV), trigger_pt, trigger_eta, trigger_id
 int main(int argc, char** argv) {
 
 assert(argc==7);
@@ -30,11 +34,14 @@ Event& event = pythia.event;
 //#Events
 int N=atoi(argv[1]);
 
-//Seed
+// Seed: photelsen is the trigger-filtered shower frontend, so use the same
+// main-style shower offset as pythielsen while keeping the CLI unchanged.
+int seed_base = atoi(argv[2]);
+int shower_seed = seed_base + kShowerSeedOffset;
 ostringstream seedstring;
-double see=733+atoi(argv[2]);
-seedstring << "Random:seed = " << see; 
+seedstring << "Random:seed = " << shower_seed;
 pythia.readString(seedstring.str().c_str());
+cout << " seed_base= " << seed_base << " shower= " << shower_seed << endl;
 
 ostringstream pythiaset;
 pythiaset << "setup_pythia.cmnd";
@@ -190,7 +197,6 @@ pythia.stat();
 return 0;
 
 } //End Program
-
 
 
 

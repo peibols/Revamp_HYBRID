@@ -16,7 +16,11 @@ int ir;
 double rando(int*);
 double factorial(int);
 
-//Args: File, Seed, N
+namespace {
+constexpr int kHybridSeedOffset = 1346;
+}
+
+//Args: File, seed_base, N
 int main (int argc, char** argv) {
 	printf(" inpargc=%d inpFile=%s\n",argc,argv[1]);
 	assert(argc==4);
@@ -24,7 +28,9 @@ int main (int argc, char** argv) {
 	sprintf(inpFile,"./sor_%s.out",argv[1]);
 	sprintf(outFile,"./wake_%s.out",argv[1]);
 	printf(" inp=%s  out=%s\n",inpFile, outFile);
-	ir=1346+atoi(argv[2]);
+	int seed_base = atoi(argv[2]);
+	ir = kHybridSeedOffset + seed_base;
+	printf(" seed_base=%d hybrid=%d\n", seed_base, ir);
 
 #ifdef DO_PRINT
 	//BackFiles

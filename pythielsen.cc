@@ -9,7 +9,11 @@
 using namespace std;
 using namespace Pythia8;
 
-//Args: N, seed, sqrts (in GeV)
+namespace {
+constexpr int kShowerSeedOffset = 33;
+}
+
+//Args: N, seed_base, sqrts (in GeV)
 int main(int argc, char** argv) {
 
 assert(argc==4);
@@ -25,11 +29,14 @@ Event& event = pythia.event;
 //#Events
 int N=atoi(argv[1]);
 
-//Seed
+// Seed: keep the CLI unchanged but interpret argv[2] as the explicit base seed,
+// matching main's seed-base contract.
+int seed_base = atoi(argv[2]);
+int shower_seed = seed_base + kShowerSeedOffset;
 ostringstream seedstring;
-double see=333+atoi(argv[2]);
-seedstring << "Random:seed = " << see; 
+seedstring << "Random:seed = " << shower_seed;
 pythia.readString(seedstring.str().c_str());
+cout << " seed_base= " << seed_base << " shower= " << shower_seed << endl;
 
 ostringstream pythiaset;
 pythiaset << "setup_pythia.cmnd";
@@ -177,7 +184,6 @@ pythia.stat();
 return 0;
 
 } //End Program
-
 
 
 
