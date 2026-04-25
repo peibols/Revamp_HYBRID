@@ -211,11 +211,14 @@ int main (int argc, char** argv) {
 				double pass, newpass, passrand, sign, ppxback, ppyback, ppzback, peneback;
 				int runi, encallao, you;
 				int numenc=0;
+				// The legacy clock-based bailout makes wake generation depend on
+				// machine timing rather than the explicit random seed.
+				const bool use_runtime_timeout=false;
 				//Nrun=4000;
 				double clocklim=0.1;
 				int tooclock=0;
 				thisis:
-				clock_t startClock = clock();
+				clock_t startClock = use_runtime_timeout ? clock() : 0;
 				kk=0;
 				eneback=0.;
 				pxback=0.;
@@ -411,8 +414,8 @@ int main (int argc, char** argv) {
 						//cout << " runi encalla= " << runi << "\n";
 						goto thisis;
 					}
-					clock_t endClock = clock();
-					if (double((endClock - startClock)) / CLOCKS_PER_SEC>clocklim) {
+					clock_t endClock = use_runtime_timeout ? clock() : 0;
+					if (use_runtime_timeout && double((endClock - startClock)) / CLOCKS_PER_SEC>clocklim) {
 						//cout << " CLOCK !!! \n";
 						clocklim+=0.02;
 						tooclock+=1;
