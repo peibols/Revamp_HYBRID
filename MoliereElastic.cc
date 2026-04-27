@@ -18,6 +18,31 @@ using namespace std;
 namespace moliere {
 namespace {
 
+struct GslIntegrationWorkspaces {
+    GslIntegrationWorkspaces()
+        : wdk(gsl_integration_workspace_alloc(100000)),
+          wkcm(gsl_integration_workspace_alloc(100000)),
+          wx(gsl_integration_workspace_alloc(100000)) {}
+
+    ~GslIntegrationWorkspaces() {
+        gsl_integration_workspace_free(wdk);
+        gsl_integration_workspace_free(wkcm);
+        gsl_integration_workspace_free(wx);
+    }
+
+    GslIntegrationWorkspaces(const GslIntegrationWorkspaces&) = delete;
+    GslIntegrationWorkspaces& operator=(const GslIntegrationWorkspaces&) = delete;
+
+    gsl_integration_workspace *wdk;
+    gsl_integration_workspace *wkcm;
+    gsl_integration_workspace *wx;
+};
+
+GslIntegrationWorkspaces &integration_workspaces() {
+    static thread_local GslIntegrationWorkspaces workspaces;
+    return workspaces;
+}
+
 vector<double> to_vec(const std::array<double,4> &a) {
     return {a[0], a[1], a[2], a[3]};
 }
@@ -200,9 +225,10 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                double alpha, int tmethod, int model, int ebe_hydro,
                const HydroProfile &hydro_profile, vector<Quench> &new_particles,
                int &had_scattering, vector<double> &orient) {
-    gsl_integration_workspace *wdk = gsl_integration_workspace_alloc(100000);
-    gsl_integration_workspace *wkcm = gsl_integration_workspace_alloc(100000);
-    gsl_integration_workspace *wx = gsl_integration_workspace_alloc(100000);
+    auto &workspaces = integration_workspaces();
+    gsl_integration_workspace *wdk = workspaces.wdk;
+    gsl_integration_workspace *wkcm = workspaces.wkcm;
+    gsl_integration_workspace *wx = workspaces.wx;
 
     double Tc = (tmethod == 0) ? 0.170 : 0.145;
     double charm_mass = 1.25;
@@ -432,10 +458,6 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
             if (marker != 1) pos += w*tstep;
         }
     } while (marker == 0);
-
-    gsl_integration_workspace_free(wdk);
-    gsl_integration_workspace_free(wx);
-    gsl_integration_workspace_free(wkcm);
 
     double scalpprev = orient[0]*o_in[0] + orient[1]*o_in[1] + orient[2]*o_in[2];
     if (scalpprev > 1.) scalpprev = 1.;
