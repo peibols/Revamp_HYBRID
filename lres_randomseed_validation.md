@@ -31,3 +31,18 @@ This rule applies to:
 - `hadronizer`
 
 The goal is to avoid mixing validated physics results with random build environments.
+
+## Trigger Workflow
+
+`lres` trigger validation is a staged workflow, not a `main_trigger` executable. The branch trigger runner in [`test/run_it_trigger.sh`](/raid5/data/yjlee/hybrid_dev/Revamp_HYBRID/test/run_it_trigger.sh) should execute:
+
+1. `photelsen`
+2. `plasma_lund`
+3. `wake`
+4. `hadronizer`
+
+The branch test directory must also contain:
+
+- `setup_pythia.cmnd`
+- `hydroinfoPlaintxtHuichaoFormat.dat`
+- `TAb2LL.dat`

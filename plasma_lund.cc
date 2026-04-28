@@ -29,6 +29,7 @@ double getGrid(double, double, double, double *, double *, double *, int *, int 
 double gQ(double);
 double fuckedN=0.;
 double totalN=0.;
+ofstream source;
 
 ofstream lundfile("Lundplane.dat");
 ofstream plundfile("PLundplane.dat");
@@ -48,7 +49,7 @@ constexpr int kHybridSeedOffset = 1346;
 int main (int argc, char** argv)
 {
 	assert(argc==11);
-	char outFile[200], inpFile[200];
+	char outFile[200], inpFile[200], sorFile[200];
 	alpha=atof(argv[2]);
 	kappa=atof(argv[3]);
 	int N=atoi(argv[4]);
@@ -62,11 +63,13 @@ int main (int argc, char** argv)
 	     << " seed_base= " << seed_base
 	     << " hybrid= " << ir << endl;
 	sprintf(outFile,"./%s.out",argv[1]);
+	sprintf(sorFile,"./sor_%s.out",argv[1]);
 	sprintf(inpFile,"./tree_%s.txt",argv[1]);
 	
 	//Output
 	ofstream check;
 	check.open (outFile);
+	source.open (sorFile);
 	//Input
 	std::ifstream infile1(inpFile);
 	assert(!infile1.fail());
@@ -680,6 +683,7 @@ for (int zb=0; zb<1000; zb++)
 //----------------------------------------------------------------------------
 
 		if (k!=0) check << "NEXT" << " " << " 0. " << " " << " 0. " << " " << xcre << " " << ycre << " " << b << " " << " 0. " << " " << count << " " << " 0. " << " " << cross << " " << weight << "\n";
+		if (k!=0) source << "NEXT" << " " << " 0. " << " " << " 0. " << " " << xcre << " " << ycre << " " << b << " " << " 0. " << " " << count << " " << " 0. " << " " << cross << " " << weight << "\n";
 	
 		count+=1;
                 int mult=int(double(count)/(ene*100.));
@@ -697,6 +701,7 @@ for (int zb=0; zb<1000; zb++)
 	infile1 >> snum >> sigmaGen >> weightSum;
 	if (snum!="END") { cout << " Problem reading file! "; exit(0); }
 	check << snum << std::setprecision(9) << " " << sigmaGen << " " << weightSum;
+	source << snum << std::setprecision(9) << " " << sigmaGen << " " << weightSum;
 
 	clock_t endClock = clock();
 	cout << " Time= ";
@@ -704,6 +709,7 @@ for (int zb=0; zb<1000; zb++)
 	cout  << " #FuckedN= " << fuckedN/totalN << " ";
 	cout << " #Events= " << event << " ";
 
+	source.close();
 	check.close();
 //End Program
 }
@@ -739,6 +745,13 @@ double gdE(double E, double M, double t, double t0, double *x, double *y, double
 	
         //DEBUG
 	t0=max(t0,tquench);
+
+	// Keep the trigger-side source handoff aligned with plasma.cc so wake can
+	// consume sor_<seed>.out directly without an external rename/copy step.
+	double inipx=*pexe;
+	double inipy=*peye;
+	double inipz=*peze;
+	double inie=Ev;
 
 	tot=t0+t;//final time
 	int noproblem=1;
@@ -972,6 +985,12 @@ double gdE(double E, double M, double t, double t0, double *x, double *y, double
 	//cout << " xfin= " << *x << " yfin= " << *y << " zfin= " << *z <<" Temp fin= " << (Temp+Temph)/2. << "\n";
 	//cout << " DistLab= " << distlab << " DistFluid= " << dist << "\n";
 	//cout << " dE= " << gede << " ";
+	if (inie!=Ev) {
+	  source << inipx << " " << inipy << " " << inipz << " " << inie << " ";
+	  source << *pexe << " " << *peye << " " << *peze << " " << Ev << " ";
+	  source << 0 << " " << 0 << " " << 0 << endl;
+	}
+
 	return gede;
 }
 
