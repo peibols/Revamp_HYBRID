@@ -40,9 +40,17 @@ int qmethod; //1 Coll, 2 Radiative, 3 Strong
 int tmethod;
 double rpower;
 double tquench=0.6;
+bool no_quench_reference_mode=false;
 
 namespace {
 constexpr int kHybridSeedOffset = 1346;
+
+int normalizeQMethod(int raw_qmethod, bool no_quench_reference) {
+    // External lres scripts use 0=strong. The legacy plasma kernel uses 3=strong.
+    if (no_quench_reference) return raw_qmethod;
+    if (raw_qmethod == 0) return 3;
+    return raw_qmethod;
+}
 }
 
 //ARGUMENTS: File, Alpha, Kappa, N, Model, Tmethod, Cent, Rpower, Rand, sqrts
@@ -53,15 +61,21 @@ int main (int argc, char** argv)
 	alpha=atof(argv[2]);
 	kappa=atof(argv[3]);
 	int N=atoi(argv[4]);
-	qmethod=atoi(argv[5]);
+	int raw_qmethod=atoi(argv[5]);
 	tmethod=atoi(argv[6]);
 	std::string Cent=argv[7];
 	rpower=atof(argv[8]);
 	int seed_base = atoi(argv[9]);
+	no_quench_reference_mode = (std::abs(alpha) < 1e-15 && std::abs(kappa) < 1e-15);
+	qmethod = normalizeQMethod(raw_qmethod, no_quench_reference_mode);
 	ir = seed_base + kHybridSeedOffset;
 	cout << " rpower= " << rpower
 	     << " seed_base= " << seed_base
-	     << " hybrid= " << ir << endl;
+	     << " hybrid= " << ir
+	     << " qmethod_raw= " << raw_qmethod
+	     << " qmethod= " << qmethod;
+	if (no_quench_reference_mode) cout << " no_quench_reference= 1";
+	cout << endl;
 	sprintf(outFile,"./%s.out",argv[1]);
 	sprintf(sorFile,"./sor_%s.out",argv[1]);
 	sprintf(inpFile,"./tree_%s.txt",argv[1]);
@@ -181,7 +195,13 @@ int main (int argc, char** argv)
 	do
 	{
 		//Getting initial x, y and b
-		gxy(&x,&y,&b);//impact parameter is b
+		if (no_quench_reference_mode) {
+			x=0.;
+			y=0.;
+			b=0.;
+		} else {
+			gxy(&x,&y,&b);//impact parameter is b
+		}
 		//cout << " X= " << x << " Y= " << y << " B= " << b << "\n";
 		double xcre=x;//creation x
 		double ycre=y;//creation y
@@ -715,6 +735,11 @@ for (int zb=0; zb<1000; zb++)
 }
 //------------------gdE-----------------------------//
 double gdE(double E, double M, double t, double t0, double *x, double *y, double *z, double *pexe, double *peye, double *peze) {
+
+	if (no_quench_reference_mode) {
+		// For explicit vacuum-reference runs, preserve the staged parton momenta.
+		return 0.;
+	}
 
 	double ti, tih, tot;
 	double proper, properh;
