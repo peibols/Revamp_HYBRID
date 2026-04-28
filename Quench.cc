@@ -1,6 +1,7 @@
 #include "Quench.h"
 #include <iostream>
 #include <vector>
+#include <cmath>
 
 using std::vector;
 
@@ -10,17 +11,25 @@ Quench::Quench()
 
 Quench::Quench(Parton partons) : Parton(partons)
 {
-  _ri.fill(0.); _rf.fill(0.); _inh_p.fill(0.);
+  for (int i = 0; i < 4; i++) _ri.push_back(0.), _rf.push_back(0.), _inh_p.push_back(0.);
   _isdone=false;
 }
 
 //Do I actually use this constructor?
-Quench::Quench(Parton partons, double xi, double yi, double zi, double ti, double xf, double yf, double zf, double tf, vector<double> inh_p) : Parton(partons)
+Quench::Quench(Parton partons, double xi, double yi, double zi, double ti, double xf, double yf, double zf, double tf, vector<double> inh_p) : Parton(partons), _inh_p(inh_p)
 {
-  _ri = {xi, yi, zi, ti};
-  _rf = {xf, yf, zf, tf};
-  _inh_p[0]=inh_p[0]; _inh_p[1]=inh_p[1]; _inh_p[2]=inh_p[2]; _inh_p[3]=inh_p[3];
+  _ri.push_back(xi);
+  _ri.push_back(yi);
+  _ri.push_back(zi);
+  _ri.push_back(ti);
+
+  _rf.push_back(xf);
+  _rf.push_back(yf);
+  _rf.push_back(zf);
+  _rf.push_back(tf);
+  
   _isdone=false;
+  _freezoutcrosser=false;
 }
 
 Quench::~Quench()
@@ -36,16 +45,16 @@ void Quench::display() const
   std::cout << " xf= " << _rf[0] << " yf= " << _rf[1] << " zf= " << _rf[2] << " tf= " << _rf[3] << std::endl;
 }
 
-void Quench::vSetInhP(const std::array<double,4>& p)
+void Quench::vSetInhP(vector<double> p)
 {
   _inh_p=p;
 }
-const std::array<double,4>& Quench::GetInhP() const
+vector<double> Quench::GetInhP() const
 {
   return _inh_p; 
 }
 
-void Quench::vSetRi(const std::array<double,4>& ri)
+void Quench::vSetRi(vector<double> ri)
 {
   _ri=ri;
 }
@@ -56,12 +65,12 @@ void Quench::SetRi(double xi, double yi, double zi, double ti)
   _ri[2]=zi;
   _ri[3]=ti;
 }
-const std::array<double,4>& Quench::GetRi() const
+vector<double> Quench::GetRi() const
 {
   return _ri;
 }
 
-void Quench::vSetRf(const std::array<double,4>& rf)
+void Quench::vSetRf(vector<double> rf)
 {
   _rf=rf;
 }
@@ -72,7 +81,26 @@ void Quench::SetRf(double xf, double yf, double zf, double tf)
   _rf[2]=zf;
   _rf[3]=tf;
 }
-const std::array<double,4>& Quench::GetRf() const
+vector<double> Quench::GetRf() const
 {
   return _rf;
+}
+
+
+double Quench::delta_R(Quench other_parton)
+
+{
+
+    vector<double> op=other_parton.vGetP();
+
+    double delta_eta=this->GetEta()-other_parton.GetEta();
+
+    double delta_phi=std::acos((_p[0]*other_parton.vGetP()[0]+_p[1]*other_parton.vGetP()[1])/this->GetPt()/other_parton.GetPt());
+
+    //std::cout << " delta_phi= " << delta_phi << std::endl;
+
+    //std::cout << " delta_eta= " << delta_eta << std::endl;
+
+    return std::sqrt(delta_phi*delta_phi+delta_eta*delta_eta);
+
 }

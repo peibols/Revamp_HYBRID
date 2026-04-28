@@ -22,7 +22,7 @@ using namespace std;
 void read_nuclear(int, std::string);
 void read_hydro(int, std::string);
 
-void init_tree(int njob);
+void init_tree(int njob, string pythiafile);
 void do_tree(vector<Parton> &partons, double &weight, double &cross, double &cross_err, bool &have_trigger, double trigger_pt, double trigger_eta, int trigger_id);
 
 void gxy(double &, double &, numrand &);

@@ -10,9 +10,9 @@ Parton::Parton()
 
 }
 
-Parton::Parton(vector<double> p, double q, double mass, int mom, int d1, int d2, int id, std::string orig, int col, int acol, bool isdone)
+Parton::Parton(vector<double> p, double q, double mass, int mom, int d1, int d2, int id, std::string orig, int col, int acol, bool isdone, bool freezoutcrosser)
 {
-  _p[0]=p[0]; _p[1]=p[1]; _p[2]=p[2]; _p[3]=p[3];
+  _p=p;
 
   _q=q;
   _mass=mass;
@@ -28,36 +28,16 @@ Parton::Parton(vector<double> p, double q, double mass, int mom, int d1, int d2,
   _acol=acol;
 
   _isdone=isdone;
+  _freezoutcrosser=freezoutcrosser;
 
   _length=0.;
   _tlength=0.;
 
-  _ri.fill(-1.);
-}
+  _fluidvx=0.;
+  _fluidvy=0.;
+  _fluidvz=0.;
 
-Parton::Parton(std::array<double,4> p, double q, double mass, int mom, int d1, int d2, int id, std::string orig, int col, int acol, bool isdone)
-{
-  _p=p;
-
-  _q=q;
-  _mass=mass;
-
-  _mom=mom;
-  _d1=d1;
-  _d2=d2;
-
-  _id=id;
-  _orig=orig;
-
-  _col=col;
-  _acol=acol;
-
-  _isdone=isdone;
-
-  _length=0.;
-  _tlength=0.;
-
-  _ri.fill(-1.);
+  for (unsigned in=0; in<4; in++) _ri.push_back(-1.);
 }
 
 Parton::~Parton()
@@ -71,13 +51,9 @@ void Parton::display() const
   std::cout << " mom= " << _mom << " d1= " << _d1 << " d2= " << _d2 << " id= " << _id << " orig= " << _orig << " IsDone?= " << _isdone << std::endl;
 }
 
-void Parton::vSetP(const std::array<double,4>& p)
+void Parton::vSetP(vector<double> p)
 {
   _p=p;
-}
-void Parton::vSetP(const vector<double>& p)
-{
-  _p[0]=p[0]; _p[1]=p[1]; _p[2]=p[2]; _p[3]=p[3];
 }
 void Parton::SetP(double px, double py, double pz, double en)
 {
@@ -86,31 +62,30 @@ void Parton::SetP(double px, double py, double pz, double en)
   _p[2]=pz;
   _p[3]=en;
 }
-const std::array<double,4>& Parton::vGetP() const
+vector<double> Parton::vGetP() const
 {
   return _p;
 }
 
 double Parton::GetPt() const
 {
-  double pt=sqrt(_p[0]*_p[0]+_p[1]*_p[1]);
+  double pt=sqrt(pow(_p[0],2.)+pow(_p[1],2.));
   return pt;
 }
 
-void Parton::vSetRi(const std::array<double,4>& ri)
+void Parton::vSetRi(vector<double> ri)
 {
   _ri=ri;
 }
-const std::array<double,4>& Parton::GetRi() const
+vector<double> Parton::GetRi() const
 {
   return _ri;
 }
 
 double Parton::GetEta() const
 {
-  double pt=sqrt(_p[0]*_p[0]+_p[1]*_p[1]);
-  double p3m = sqrt(pt*pt+_p[2]*_p[2]);
-  double eta=1./2.*log((p3m+_p[2])/(p3m-_p[2]));
+  double pt=sqrt(pow(_p[0],2.)+pow(_p[1],2.));
+  double eta=1./2.*log((sqrt(pow(pt,2.)+pow(_p[2],2.))+_p[2])/(sqrt(pow(pt,2.)+pow(_p[2],2.))-_p[2]));
   return eta;
 }
 
@@ -202,4 +177,33 @@ void Parton::SetIsDone(bool isdone)
 bool Parton::GetIsDone() const
 {
   return _isdone;
+}
+
+void Parton::SetFreezoutCrosser(bool freezoutcrosser)
+{
+  _freezoutcrosser = freezoutcrosser;
+}
+
+bool Parton::GetFreezoutCrosser() const
+{
+  return _freezoutcrosser;
+}
+
+void Parton::SetFluidV(double fluidvx, double fluidvy, double fluidvz)
+{
+  _fluidvx=fluidvx;
+  _fluidvy=fluidvy;
+  _fluidvz=fluidvz;
+}
+double Parton::GetFluidVx() const
+{
+  return _fluidvx;
+}
+double Parton::GetFluidVy() const
+{
+  return _fluidvy;
+}
+double Parton::GetFluidVz() const
+{
+  return _fluidvz;
 }

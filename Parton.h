@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <vector>
 #include <string>
 
@@ -9,12 +8,12 @@ using std::vector;
 class Parton
 {
   protected:
-    std::array<double,4> _p;
+    vector<double> _p;
 
     double _q;
     double _mass;
   
-    std::array<double,4> _ri;
+    vector<double> _ri;
 
     int _mom;
     int _d1;
@@ -29,13 +28,17 @@ class Parton
     double _length;
     double _tlength;
 
+    double _fluidvx=0.;
+    double _fluidvy=0.;
+    double _fluidvz=0.;
+
     bool _isdone;
+    bool _freezoutcrosser;
 
   public:
     Parton();
-    Parton(vector<double> p, double q, double mass, int mom, int d1, int d2, int id, std::string orig, int col, int acol, bool isdone);
-    Parton(std::array<double,4> p, double q, double mass, int mom, int d1, int d2, int id, std::string orig, int col, int acol, bool isdone);
-    virtual ~Parton();
+    Parton(vector<double> p, double q, double mass, int mom, int d1, int d2, int id, std::string orig, int col, int acol, bool isdone, bool freezoutcrosser);
+    ~Parton();
 
     virtual void display() const;
 
@@ -43,10 +46,9 @@ class Parton
     double length() { return _length; }
     double tlength() { return _tlength; }
 
-    void vSetP(const std::array<double,4>& p);
-    void vSetP(const vector<double>& p);
+    void vSetP(vector<double> p);
     void SetP(double px, double py, double pz, double en);
-    const std::array<double,4>& vGetP() const;
+    vector<double> vGetP() const;
 
     double GetPt() const;
 
@@ -70,8 +72,8 @@ class Parton
     void SetId(int id);
     int GetId() const;
 
-    void vSetRi(const std::array<double,4>& ri);
-    const std::array<double,4>& GetRi() const;
+    void vSetRi(vector<double> ri);
+    vector<double> GetRi() const;
 
     void SetOrig(std::string orig);
     std::string GetOrig() const;
@@ -84,4 +86,13 @@ class Parton
 
     void SetIsDone(bool isdone);
     bool GetIsDone() const;
+
+    void SetFreezoutCrosser(bool freezoutcrosser);
+    bool GetFreezoutCrosser() const;
+
+    void SetFluidV(double fluidvx, double fluidvy, double fluidvz);
+    double GetFluidVx() const;
+    double GetFluidVy() const;
+    double GetFluidVz() const;
+
 };

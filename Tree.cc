@@ -12,8 +12,8 @@ using std::vector;
 using namespace std;
 using namespace Pythia8;
 
-void init_tree(int,string);
-void do_tree(vector<Parton>&, double&, double&, double&, bool&, double, double, int);
+void init_tree(int, string);
+bool do_tree(vector<Parton>&, double&, double&, double&, int);
 
 Pythia pythia;
 
@@ -34,27 +34,88 @@ void init_tree(int njob, string pythiafile)
   return;
 }
 
-void do_tree(vector<Parton> &partons, double &weight, double &cross, double &cross_err, bool &have_trigger, double trigger_pt, double trigger_eta, int trigger_id)
+bool do_tree(vector<Parton> &partons, double &weight, double &cross, double &cross_err, int biased_tree)
 {
-  Info& info = pythia.info;
-  
+  const Info& info = pythia.info; //Added const to fix error
+  // Info& info = pythia.info;
+  bool hasHard = pythia.settings.hasHardProc();
+
   if (!pythia.next()) {
-    return;
+    return false;
   }
-
-  //Look for trigger
-  have_trigger = 0;
-  for (int i = 0; i < pythia.event.size(); i++)
-  {
-    if (!pythia.event[i].isFinal()) continue;
-    if (pythia.event[i].id() != trigger_id) continue;
-    if (pythia.event[i].pT() < trigger_pt) continue;
-    if (fabs(pythia.event[i].eta()) > trigger_eta) continue;
-    have_trigger = 1;
-    break;
+  // /*
+  if (!hasHard){
+    double pTHat  = info.pTHat();
+    if (pTHat>20 && info.isNonDiffractive()){//Shouldn't be hardcoded forever
+      weight=info.weight();
+      cross=info.sigmaGen();
+      cross_err=info.sigmaErr();
+      return false;
+    }
   }
-  if (!have_trigger) return;
+  // */
 
+  if (biased_tree == 1) { //Biased towards b-quarks
+  bool has_b=false;
+    for (int i = 0; i < pythia.event.size(); i++)
+    {
+      if (pythia.event[i].isFinal())
+      {
+        //Chech for b-parton
+        if (abs(pythia.event[i].id())==5)
+        {
+          has_b=true;
+          break;
+        }
+      }
+    }
+    if (!has_b) {
+      weight=info.weight();
+      cross=info.sigmaGen();
+      cross_err=info.sigmaErr();
+      return false;
+    }
+  } else if (biased_tree == 2) { //Biased towards c-quarks
+  bool has_c=false;
+    for (int i = 0; i < pythia.event.size(); i++)
+    {
+      if (pythia.event[i].isFinal())
+      {
+        //Chech for c-parton
+        if (abs(pythia.event[i].id())==4)
+        {
+          has_c=true;
+          break;
+        }
+      }
+    }
+    if (!has_c) {
+      weight=info.weight();
+      cross=info.sigmaGen();
+      cross_err=info.sigmaErr();
+      return false;
+    }
+  } else if (biased_tree == 3) { //Biased towards b,c-quarks
+  bool has_bc=false;
+    for (int i = 0; i < pythia.event.size(); i++)
+    {
+      if (pythia.event[i].isFinal())
+      {
+        //Chech for c-parton
+        if (abs(pythia.event[i].id())==4 || abs(pythia.event[i].id())==5)
+        {
+          has_bc=true;
+          break;
+        }
+      }
+    }
+    if (!has_bc) {
+      weight=info.weight();
+      cross=info.sigmaGen();
+      cross_err=info.sigmaErr();
+      return false;
+    }
+  }
   //Find Final Particles
   for (int i = 0; i < pythia.event.size(); i++)
   {
@@ -67,7 +128,7 @@ void do_tree(vector<Parton> &partons, double &weight, double &cross, double &cro
       //Simply store remnants (virt 0, mother 0, daugthers -1)
       if (pythia.event[i].status() == 63)
       {
-        partons.push_back ( Parton ( p, 0., pythia.event[i].m(), 0, -1, -1, pythia.event[i].id(), "rem", pythia.event[i].col(), pythia.event[i].acol(), true ) );
+        partons.push_back ( Parton ( p, 0., pythia.event[i].m(), 0, -1, -1, pythia.event[i].id(), "rem", pythia.event[i].col(), pythia.event[i].acol(), true, false ) );
         continue;
       }
 
@@ -83,12 +144,15 @@ void do_tree(vector<Parton> &partons, double &weight, double &cross, double &cro
       } while (m1==m2);
 		
       //Compute virtuality
-      double virt=sqrt(abs(pow(pythia.event[i].e(),2.)-pow(pythia.event[i].px(),2.)-pow(pythia.event[i].py(),2.)-pow(pythia.event[i].pz(),2.)-pythia.event[i].m2()));
+      double virt=sqrt(fabs(pow(pythia.event[i].e(),2.)-pow(pythia.event[i].px(),2.)-pow(pythia.event[i].py(),2.)-pow(pythia.event[i].pz(),2.)-pythia.event[i].m2()));
       //cout << " virt= " << virt << endl;	
+      // if (pow(pythia.event[i].e(),2.)-pow(pythia.event[i].px(),2.)-pow(pythia.event[i].py(),2.)-pow(pythia.event[i].pz(),2.)-pythia.event[i].m2()<0) {
+      //   cout << " virt= " << virt << " signed virt= " << pow(pythia.event[i].e(),2.)-pow(pythia.event[i].px(),2.)-pow(pythia.event[i].py(),2.)-pow(pythia.event[i].pz(),2.)-pythia.event[i].m2() << " e= " << pythia.event[i].e() << " px= " << pythia.event[i].px() << " py= " << pythia.event[i].py() << " pz= " << pythia.event[i].pz() << " m2= " << pythia.event[i].m2() << " id= " << pythia.event[i].id() << endl;
+      // }
       //cout << " virt2= " << pow(pythia.event[i].e(),2.)-pow(pythia.event[i].px(),2.)-pow(pythia.event[i].py(),2.)-pow(pythia.event[i].pz(),2.)-pythia.event[i].m2() << endl;
 	
       //Add it to partons array
-      partons.push_back ( Parton ( p, virt, pythia.event[i].m(), m1, -1, -1, pythia.event[i].id(), "ps", pythia.event[i].col(), pythia.event[i].acol(), false ) );
+      partons.push_back ( Parton ( p, virt, pythia.event[i].m(), m1, -1, -1, pythia.event[i].id(), "ps", pythia.event[i].col(), pythia.event[i].acol(), false, false ) );
 	
       //If mother is ISR initiator, say mother is -1
       if (pythia.event[m1].status()==-41)
@@ -127,7 +191,10 @@ void do_tree(vector<Parton> &partons, double &weight, double &cross, double &cro
 		
             //Set mother momentum and virtuality
             vector<double> p=partons[i].vGetP()+partons[j].vGetP();
-	    double virt=sqrt(abs(pow(p[3],2.)-pow(p[0],2.)-pow(p[1],2.)-pow(p[2],2.)-pow(pythia.event[mom].m(),2.)));
+	    double virt=sqrt(fabs(pow(p[3],2.)-pow(p[0],2.)-pow(p[1],2.)-pow(p[2],2.)-pow(pythia.event[mom].m(),2.)));
+      // if (pow(p[3],2.)-pow(p[0],2.)-pow(p[1],2.)-pow(p[2],2.)-pow(pythia.event[mom].m(),2.)<0) {
+      //   cout << " virt= " << virt << " signed virt= " << pow(p[3],2.)-pow(p[0],2.)-pow(p[1],2.)-pow(p[2],2.)-pow(pythia.event[mom].m(),2.) << " e= " << p[3] << " px= " << p[0] << " py= " << p[1] << " pz= " << p[2] << " m2= " << pythia.event[mom].m() << " id= " << pythia.event[mom].id() << endl;
+      // }
 		
             //Find first non-trivial mother of the mother
             int use = mom;
@@ -140,7 +207,7 @@ void do_tree(vector<Parton> &partons, double &weight, double &cross, double &cro
             } while (m1==m2);
 		
 	    //Fill it in partons array
-	    partons.push_back ( Parton ( p, virt, pythia.event[mom].m(), m1, i, j, pythia.event[mom].id(), "ps", pythia.event[mom].col(), pythia.event[mom].acol(), false ) );
+	    partons.push_back ( Parton ( p, virt, pythia.event[mom].m(), m1, i, j, pythia.event[mom].id(), "ps", pythia.event[mom].col(), pythia.event[mom].acol(), false, false ) );
 
 	    //Update mother of daughters to point to position in partons array instead of pythia list, and declare as done
 	    partons[i].SetMom(partons.size()-1);
@@ -178,6 +245,5 @@ void do_tree(vector<Parton> &partons, double &weight, double &cross, double &cro
   cross=info.sigmaGen();
   cross_err=info.sigmaErr();
 
-  return;
-
+  return true;
 }

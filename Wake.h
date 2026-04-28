@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <vector>
 #include <string>
 
@@ -9,7 +8,7 @@ using std::vector;
 class Wake
 {
   private:
-    std::array<double,4> _p;
+    vector<double> _p;
     
     double _mass;
     int _charge;  
@@ -21,13 +20,13 @@ class Wake
 
   public:
     Wake();
-    Wake(std::array<double,4> p, double mass, int charge, int id, double status);
+    Wake(vector<double> p, double mass, int charge, int id, double status);
     ~Wake();
 
     void display() const;
 
-    void vSetP(const std::array<double,4>& p);
-    const std::array<double,4>& vGetP() const;
+    void vSetP(vector<double> p);
+    vector<double> vGetP() const;
 
     void SetMass(double mass);
     double GetMass() const;

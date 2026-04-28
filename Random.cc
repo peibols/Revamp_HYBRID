@@ -1,28 +1,35 @@
+#include <cmath>
 #include "Random.h"
 
 numrand::numrand()
-    : _ir(0), rng_(std::random_device{}()), dist_(0.0, 1.0)
 {
 }
 
-numrand::numrand(int ir)
-    : _ir(ir), rng_(static_cast<std::uint64_t>(ir)), dist_(0.0, 1.0)
+numrand::numrand(int ir) : _ir(ir)
 {
 }
 
-numrand::~numrand() = default;
+numrand::~numrand()
+{
+}
 
 double numrand::rando()
 {
-  return dist_(rng_);
+  double da=16807.;
+  double db=2147483647.;
+  double dc=2147483648.;
+  double usran;
+
+  int use = _ir;
+  _ir=int(fabs(fmod(da*use,db)+0.5));
+  usran=double(_ir)/dc;
+  return usran;
 }
 
 void numrand::SetIr(int ir)
 {
-  _ir = ir;
-  rng_.seed(static_cast<std::uint64_t>(ir));
+  _ir=ir;
 }
-
 int numrand::GetIr() const
 {
   return _ir;
