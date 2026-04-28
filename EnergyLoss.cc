@@ -160,6 +160,8 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
     double Tc;
     if (tmethod_ == 0) Tc = 0.170;
     else Tc = 0.145;
+    constexpr double charm_mass = 1.25;
+    constexpr double b_mass = 4.2;
 
     double tot = pos[3] + tof;    // Final time
 
@@ -188,6 +190,7 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
         // Keep 4momentum before applying quenching this step
         auto p_prev = p;
 #endif
+        auto p_pre_floor = p;
 
         if (pos[3] == tot) marker = 1;
         if (pos[3] > tot) std::cout << " Warning: Went beyond tot= " << tot << " t= " << pos[3] << std::endl;
@@ -279,8 +282,13 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
                     trans_kick(w, w2, v, p, temp, vscalw, lore, step, kappa_);
                 }
 
+                p_pre_floor = p;
+                bool doquench = true;
+                if (std::abs(id) == 4 && p[3] <= charm_mass) doquench = false;
+                if (std::abs(id) == 5 && p[3] <= b_mass) doquench = false;
+
                 // Strong coupling
-                if (alpha_ != 0. && mode_ == 0) {
+                if (alpha_ != 0. && mode_ == 0 && doquench) {
                     double Efs = ei * lore * (1. - vscalw);
                     double tstop = 0.2 * pow(Efs, 1. / 3.) / (2. * pow(temp, 4. / 3.) * alpha_) / CF;
                     double beta = tstop / f_dist;
@@ -308,6 +316,25 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
                 }
                 
             }
+        }
+
+        if (std::abs(id) == 4 && p[3] < charm_mass) {
+            p[3] = charm_mass;
+            double pmod = std::sqrt(p_pre_floor[0] * p_pre_floor[0] + p_pre_floor[1] * p_pre_floor[1] +
+                                    p_pre_floor[2] * p_pre_floor[2]);
+            if (pmod == 0.) pmod = 1.;
+            p[0] = p_pre_floor[0] / pmod * p[3];
+            p[1] = p_pre_floor[1] / pmod * p[3];
+            p[2] = p_pre_floor[2] / pmod * p[3];
+        }
+        if (std::abs(id) == 5 && p[3] < b_mass) {
+            p[3] = b_mass;
+            double pmod = std::sqrt(p_pre_floor[0] * p_pre_floor[0] + p_pre_floor[1] * p_pre_floor[1] +
+                                    p_pre_floor[2] * p_pre_floor[2]);
+            if (pmod == 0.) pmod = 1.;
+            p[0] = p_pre_floor[0] / pmod * p[3];
+            p[1] = p_pre_floor[1] / pmod * p[3];
+            p[2] = p_pre_floor[2] / pmod * p[3];
         }
 
         //This is to check travelled distance, not used
