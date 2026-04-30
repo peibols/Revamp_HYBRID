@@ -88,6 +88,34 @@ What this does not yet provide:
 - guaranteed documentation parity for the legacy trigger-oriented path
 - protection against output-file appending if the same `output_base` is reused
 
+## Current Validation Policy
+
+For the ongoing Moliere integration and exact-match regression tests, the default validation card is now run with:
+
+- `PartonLevel:ISR = off`
+
+This is an explicit policy choice, not an accident of the latest harness. The reason is practical and technical:
+
+- ISR materially increases shower multiplicity.
+- In the elastic Moliere path, that produces many more medium-propagated branches and recoiler rescatterings.
+- The result is a large runtime increase that makes interactive exact-match validation unnecessarily slow.
+
+So from this point forward, the standard regression gate for:
+
+- `main`
+- `moliere_code_randomseedFix`
+- `main_moliere_integration`
+
+uses ISR-off cards unless a test is specifically labeled otherwise.
+
+The recent elastic integration closure against `moliere_code_randomseedFix` was done under that ISR-off policy.
+
+What this means:
+
+- ISR-off is the default validation configuration.
+- ISR-on can still be tested later as a heavier production-style campaign.
+- ISR-on is not the default exact-match regression gate.
+
 ## Notes
 
 - Keep work on this branch unless explicitly told otherwise.

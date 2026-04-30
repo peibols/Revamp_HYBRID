@@ -50,28 +50,32 @@ std::vector<T>& operator-=(std::vector<T>& a, const std::vector<T>& c)
 template <typename T>
 std::vector<T> operator*(std::vector<T> a, const T& c)
 {
-  std::transform(a.begin(), a.end(), a.begin(), [c](const T &v) { return v * c; });
+  std::transform(a.begin(), a.end(), a.begin(),
+  std::bind1st(std::multiplies<T>(),c));
   return a;
 }
 
 template <typename T>
 std::vector<T> operator/(std::vector<T> a, const T& c)
 {
-  std::transform(a.begin(), a.end(), a.begin(), [c](const T &v) { return v / c; });
+  std::transform(a.begin(), a.end(), a.begin(),
+  std::bind2nd(std::divides<T>(),c));
   return a;
 }
 
 template <typename T>
 std::vector<T>& operator*=(std::vector<T>& a, const T& c)
 {
-  std::transform(a.begin(), a.end(), a.begin(), [c](const T &v) { return v * c; });
+  std::transform(a.begin(), a.end(), a.begin(),
+  std::bind1st(std::multiplies<T>(),c));
   return a;
 }
 
 template <typename T>
 std::vector<T>& operator/=(std::vector<T>& a, const T& c)
 {
-  std::transform(a.begin(), a.end(), a.begin(), [c](const T &v) { return v / c; });
+  std::transform(a.begin(), a.end(), a.begin(),
+  std::bind2nd(std::divides<T>(),c));
   return a;
 }
 

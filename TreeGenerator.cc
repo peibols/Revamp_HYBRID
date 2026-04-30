@@ -8,23 +8,21 @@
 
 using namespace Pythia8;
 
-TreeGenerator::TreeGenerator() = default;
-TreeGenerator::~TreeGenerator() {
-    delete pythia_;
+namespace {
+Pythia g_tree_pythia;
 }
 
-void TreeGenerator::init(int seed, const std::string &cmndFile) {
-    if (pythia_) {
-        delete pythia_;
-        pythia_ = nullptr;
-    }
+TreeGenerator::TreeGenerator() = default;
+TreeGenerator::~TreeGenerator() = default;
 
-    pythia_ = new Pythia();
+void TreeGenerator::init(int seed, const std::string &cmndFile) {
+    pythia_ = &g_tree_pythia;
 
     std::ostringstream pythiaset;
     pythiaset << cmndFile;
     pythia_->readFile(pythiaset.str());
 
+    pythia_->readString("Random:setSeed = on");
     std::ostringstream seedstring;
     seedstring << "Random:seed = " << seed;
     pythia_->readString(seedstring.str().c_str());

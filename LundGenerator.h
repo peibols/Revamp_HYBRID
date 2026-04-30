@@ -20,8 +20,9 @@ public:
                          std::vector<Hadron> &vhadrons);
 
     // Hadronize medium-modified partons
-    void hadronizeMedium(const std::vector<Quench> &quenched, 
-                         std::vector<Hadron> &qhadrons);
+    bool hadronizeMedium(const std::vector<Quench> &quenched, 
+                         std::vector<Hadron> &qhadrons,
+                         int hadro_type);
 
 private:
     class Pythia8Impl;
@@ -30,6 +31,7 @@ private:
     // Helper functions
     void processVacuumPartons(const std::vector<Parton> &partons, 
                               std::vector<Hadron> &vhadrons);
-    void processQuenchedPartons(const std::vector<Quench> &quenched, 
-                                std::vector<Hadron> &qhadrons);
+    bool processQuenchedPartons(const std::vector<Quench> &quenched, 
+                                std::vector<Hadron> &qhadrons,
+                                int hadro_type);
 };

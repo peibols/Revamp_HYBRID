@@ -8,6 +8,71 @@
 #include <iostream>
 #include <sstream>
 
+namespace {
+
+int legacyAxisIndex(double coord, double delta, int maxCount) {
+    if (coord >= 0.) {
+        return static_cast<int>(coord / delta) + maxCount / 2;
+    }
+    return static_cast<int>(coord / delta) + maxCount / 2 - 1;
+}
+
+template <typename FetchFn>
+double interpolateLegacyAveraged(double tau, double x, double y, double eta, FetchFn fetch) {
+    constexpr int kMaxX = 100;
+    constexpr int kMaxY = 100;
+    constexpr int kMaxEta = 64;
+    constexpr double kDeltaX = 0.3;
+    constexpr double kDeltaY = 0.3;
+    constexpr double kDeltaEta = 0.203125;
+    constexpr double kDeltaT = 0.1;
+    constexpr double kTau0 = 0.6;
+    constexpr double kTau1 = 18.5;
+    constexpr double kEta1 = 6.5;
+
+    if (tau >= kTau1 || std::abs(eta) >= kEta1 || tau < kTau0) {
+        return 0.0;
+    }
+
+    const int it = static_cast<int>((tau - kTau0) / kDeltaT);
+    const double dt = (tau - kTau0 - static_cast<double>(it) * kDeltaT) / kDeltaT;
+
+    const int ix = legacyAxisIndex(x, kDeltaX, kMaxX);
+    const double dx = (x - static_cast<double>(ix - kMaxX / 2) * kDeltaX) / kDeltaX;
+
+    const int iy = legacyAxisIndex(y, kDeltaY, kMaxY);
+    const double dy = (y - static_cast<double>(iy - kMaxY / 2) * kDeltaY) / kDeltaY;
+
+    int ieta;
+    double deta;
+    if (eta >= 0.) {
+        ieta = static_cast<int>(eta / kDeltaEta) + kMaxEta / 2;
+        deta = (eta - static_cast<double>(ieta - kMaxEta / 2) * kDeltaEta) / kDeltaEta;
+    } else {
+        ieta = static_cast<int>(eta / kDeltaEta) + kMaxEta / 2 - 1;
+        deta = (eta - static_cast<double>(ieta - kMaxEta / 2) * kDeltaEta) / kDeltaEta;
+    }
+
+    if (ix < 0 || ix >= kMaxX || iy < 0 || iy >= kMaxY || ieta < 0 || ieta >= kMaxEta - 1) {
+        return 0.0;
+    }
+
+    const double base =
+        fetch(it, iy, ix) * (1. - dt) * (1. - dx) * (1. - dy) +
+        fetch(it + 1, iy, ix) * dt * (1. - dx) * (1. - dy) +
+        fetch(it, iy, ix + 1) * (1. - dt) * dx * (1. - dy) +
+        fetch(it, iy + 1, ix) * (1. - dt) * (1. - dx) * dy +
+        fetch(it + 1, iy, ix + 1) * dt * dx * (1. - dy) +
+        fetch(it, iy + 1, ix + 1) * (1. - dt) * dx * dy +
+        fetch(it + 1, iy + 1, ix) * dt * (1. - dx) * dy +
+        fetch(it + 1, iy + 1, ix + 1) * dt * dx * dy;
+
+    (void)deta;
+    return base;
+}
+
+}
+
 HydroProfile::HydroProfile() = default;
 HydroProfile::~HydroProfile() = default;
 
@@ -260,6 +325,48 @@ double HydroProfile::velocityX(double tau, double x, double y) const {
 
 double HydroProfile::velocityY(double tau, double x, double y) const {
     return getValue(hydroy_, tau, x, y);
+}
+
+double HydroProfile::temperatureElasticLegacy(double tau, double x, double y, double eta) const {
+    if (mode_ != 0) return temperature(tau, x, y);
+    if (itaumax_ < 2 || ixmax_ < 101 || ietamax_ < 101) return 0.0;
+    return interpolateLegacyAveraged(
+        tau, x, y, eta,
+        [&](int it, int iy, int ix) {
+            if (it < 0 || it + 1 >= itaumax_ || iy < 0 || iy + 1 >= ietamax_ || ix < 0 || ix + 1 >= ixmax_) {
+                return 0.0;
+            }
+            return hydrot_[index(it, iy, ix, ietamax_, ixmax_)];
+        }
+    ) * tempScalingFactor_;
+}
+
+double HydroProfile::velocityXElasticLegacy(double tau, double x, double y, double eta) const {
+    if (mode_ != 0) return velocityX(tau, x, y);
+    if (itaumax_ < 2 || ixmax_ < 101 || ietamax_ < 101) return 0.0;
+    return interpolateLegacyAveraged(
+        tau, x, y, eta,
+        [&](int it, int iy, int ix) {
+            if (it < 0 || it + 1 >= itaumax_ || iy < 0 || iy + 1 >= ietamax_ || ix < 0 || ix + 1 >= ixmax_) {
+                return 0.0;
+            }
+            return hydrox_[index(it, iy, ix, ietamax_, ixmax_)];
+        }
+    );
+}
+
+double HydroProfile::velocityYElasticLegacy(double tau, double x, double y, double eta) const {
+    if (mode_ != 0) return velocityY(tau, x, y);
+    if (itaumax_ < 2 || ixmax_ < 101 || ietamax_ < 101) return 0.0;
+    return interpolateLegacyAveraged(
+        tau, x, y, eta,
+        [&](int it, int iy, int ix) {
+            if (it < 0 || it + 1 >= itaumax_ || iy < 0 || iy + 1 >= ietamax_ || ix < 0 || ix + 1 >= ixmax_) {
+                return 0.0;
+            }
+            return hydroy_[index(it, iy, ix, ietamax_, ixmax_)];
+        }
+    );
 }
 
 void HydroProfile::getValues(double tau, double x, double y, double &temp, double &vx, double &vy) const {

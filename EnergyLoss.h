@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <string>
 #include <vector>
 #include "Parton.h"
 #include "Quench.h"
@@ -9,11 +10,14 @@
 
 class EnergyLoss {
 public:
-    EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int mode, int ebe_hydro, const HydroProfile &hydro_profile);
+    EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int mode,
+               int ebe_hydro, bool do_elastic, const std::string &tables_path,
+               const HydroProfile &hydro_profile);
     ~EnergyLoss();
 
     // Perform energy loss on the given partons
-    void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double x, double y);
+    void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
+                  double x, double y, std::vector<Quench> *recoiled = nullptr);
 
 private:
     numrand &nr_;
@@ -22,6 +26,8 @@ private:
     int tmethod_;
     int mode_;
     int ebe_hydro_;
+    bool do_elastic_;
+    std::string tables_path_;
     const HydroProfile &hydro_profile_;
 
     // Private member functions for energy loss calculations
