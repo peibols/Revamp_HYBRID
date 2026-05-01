@@ -25,6 +25,9 @@ private:
     bool do_wake_;
     bool do_source_;
     bool do_elastic_;
+    bool do_lres_;
+    bool use_fixed_xy_;
+    bool compat_moliere_legacy_hydro_;
 
     // Parameters
     int njob_;
@@ -36,10 +39,13 @@ private:
     int mode_;
     int ebe_hydro_;
     int hadro_type_;
+    double lres_rpower_;
     int seed_base_;
     int shower_seed_;
     int hybrid_seed_;
     int lund_seed_;
+    double fixed_x_;
+    double fixed_y_;
     std::string tables_path_;
 
     // Random number generator
