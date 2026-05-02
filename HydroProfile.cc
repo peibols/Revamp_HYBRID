@@ -126,10 +126,25 @@ void HydroProfile::loadIpsatBinary(const std::string &cent, const std::string &f
     ixmax_ = static_cast<int>(header[2]);
     hydroDx_ = double(header[3]);
     hydroXmax_ = double(std::abs(header[4]));
-    ietamax_ = static_cast<int>(header[8]);
-    // header[9-10] are eta spacing / max, currently unused in this implementation
+    // The compact MMI storage is (tau, y, x). In the IP-Glasma/MUSIC binary
+    // header, slots 2/5 are nx/ny; slots 8-10 describe eta and are not used
+    // by the current mid-rapidity EBE lookup.
+    ietamax_ = static_cast<int>(header[5]);
+    const int inputEtaMax = static_cast<int>(header[8]);
+    if (inputEtaMax != 1) {
+        std::cerr << "[HydroProfile::loadIpsat]: ERROR: only neta=1 EBE hydro is supported; got "
+                  << inputEtaMax << std::endl;
+        std::exit(1);
+    }
 
-    float cell_info[16];
+    const int cellFieldCount = static_cast<int>(header[15]);
+    if (cellFieldCount < 11) {
+        std::cerr << "[HydroProfile::loadIpsat]: ERROR: expected at least 11 fields per hydro cell; got "
+                  << cellFieldCount << std::endl;
+        std::exit(1);
+    }
+
+    std::vector<float> cell_info(cellFieldCount);
     int itau_max = 0;
     double maxtemp = 0.0;
 
@@ -141,9 +156,9 @@ void HydroProfile::loadIpsatBinary(const std::string &cent, const std::string &f
     hydroy_.assign(totalSize, 0.0);
 
     while (true) {
-        status = std::fread(&cell_info, sizeof(float), 16, hydro);
+        status = std::fread(cell_info.data(), sizeof(float), cellFieldCount, hydro);
         if (status == 0) break;
-        if (status != 16) {
+        if (status != cellFieldCount) {
             std::cerr << "[HydroProfile::loadIpsat]: ERROR: the evolution file format is not correct" << std::endl;
             std::exit(1);
         }
@@ -152,6 +167,12 @@ void HydroProfile::loadIpsatBinary(const std::string &cent, const std::string &f
         int itau = static_cast<int>(cell_info[0]);
         int ix = static_cast<int>(cell_info[1]);
         int iy = static_cast<int>(cell_info[2]);
+        if (itau < 0 || ix < 0 || ix >= ixmax_ || iy < 0 || iy >= ietamax_) {
+            std::cerr << "[HydroProfile::loadIpsat]: ERROR: cell index out of range: "
+                      << "itau=" << itau << " ix=" << ix << " iy=" << iy
+                      << " ixmax=" << ixmax_ << " iymax=" << ietamax_ << std::endl;
+            std::exit(1);
+        }
 
         float temperature = cell_info[6];
         float ux = cell_info[8];
