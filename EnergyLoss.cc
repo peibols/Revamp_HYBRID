@@ -29,6 +29,11 @@ std::array<double,4> velocity(const std::array<double,4> &p) {
     return {p[0] / p[3], p[1] / p[3], p[2] / p[3], 1.};
 }
 
+std::array<double,4> orientationFor(const std::array<double,4> &p) {
+    if (p[3] == 0.) return {0., 0., 0., 1.};
+    return {p[0] / p[3], p[1] / p[3], p[2] / p[3], 1.};
+}
+
 struct LresLifetime {
     double resolve = 0.;
     double creation = 0.;
@@ -69,6 +74,12 @@ void EnergyLoss::do_eloss(const std::vector<Parton> &partons, std::vector<Quench
     if (recoiled != nullptr) {
         recoiled->clear();
     }
+    // Finite LRES must own the timeline. If elastic is also enabled, Moliere is
+    // applied to the currently resolved effective object inside this path.
+    if (do_lres_ && lres_rpower_ < 1.e9) {
+        do_lres_eloss_impl(partons, quenched, x, y, recoiled);
+        return;
+    }
     if (do_elastic_) {
         if (recoiled == nullptr) {
             std::vector<Quench> local_recoiled;
@@ -78,10 +89,6 @@ void EnergyLoss::do_eloss(const std::vector<Parton> &partons, std::vector<Quench
             moliere::do_eloss(partons, quenched, x, y, nr_, kappa_, alpha_, tmethod_, mode_,
                               ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, *recoiled);
         }
-        return;
-    }
-    if (do_lres_ && lres_rpower_ < 1.e9) {
-        do_lres_eloss_impl(partons, quenched, x, y);
         return;
     }
     do_eloss_impl(partons, quenched, x, y);
@@ -199,7 +206,8 @@ void EnergyLoss::do_eloss_impl(const std::vector<Parton> &partons, std::vector<Q
     FinId.clear();
 }
 
-void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double xcre, double ycre) {
+void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
+                                    double xcre, double ycre, std::vector<Quench> *recoiled) {
     const size_t n = quenched.size();
     if (n == 0) return;
 
@@ -366,6 +374,14 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
 
     std::vector<LresState> qstate(n);
     std::vector<bool> done(n, false);
+    std::vector<std::array<double,4>> qorient(n);
+    std::vector<int> qhad(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+        qorient[i] = quenched[i].orient();
+        qhad[i] = quenched[i].hadScattering();
+    }
+    std::vector<Quench> lres_moliere_particles;
+    std::vector<Quench> local_recoiled;
 
     for (int final_id : final_ids) {
         int ind = final_id;
@@ -380,6 +396,10 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                     const double parent_e = partons[mom].vGetP()[3];
                     const double frac = (parent_e != 0.) ? qstate[mom].p[3] / parent_e : 0.;
                     qstate[ind].p = partons[ind].vGetP() * frac;
+                    if (do_elastic_) {
+                        qorient[ind] = orientationFor(qstate[ind].p);
+                        if (qhad[mom] == 1 || qhad[mom] == 2) qhad[ind] = 2;
+                    }
                     const auto p = partons[ind].vGetP();
                     const double e = p[3];
                     const double dt = life[ind].effective_time - life[ind].creation;
@@ -400,6 +420,9 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
 
             qstate[ind].p = partons[ind].vGetP();
             qstate[ind].r = {xcre, ycre, 0., life[ind].effective_time};
+            if (do_elastic_) {
+                qorient[ind] = orientationFor(qstate[ind].p);
+            }
             break;
         }
 
@@ -433,7 +456,16 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
             double length = 0.;
             double tlength = 0.;
             if (isColored(partons[idx].GetId())) {
-                loss_rate(p, pos, tof, partons[idx].GetId(), length, tlength);
+                if (do_elastic_) {
+                    // LRES has already selected idx as the currently resolved
+                    // color object. Moliere scatters that object until its
+                    // finite-resolution lifetime ends; daughters enter later.
+                    moliere::propagate_segment(p, pos, tof, partons[idx].GetId(), nr_, kappa_, alpha_,
+                                               tmethod_, mode_, ebe_hydro_, compat_moliere_legacy_hydro_,
+                                               hydro_profile_, lres_moliere_particles, qhad[idx], qorient[idx]);
+                } else {
+                    loss_rate(p, pos, tof, partons[idx].GetId(), length, tlength);
+                }
             } else if (p[3] != 0.) {
                 pos += p / p[3] * tof;
             }
@@ -457,8 +489,18 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
             if (next_it != family.rend()) {
                 const int daughter = *next_it;
                 qstate[daughter].p = partons[daughter].vGetP() * frac;
+                if (do_elastic_) {
+                    qorient[daughter] = orientationFor(qstate[daughter].p);
+                    if (qhad[idx] == 1 || qhad[idx] == 2) qhad[daughter] = 2;
+                }
             }
         }
+    }
+
+    if (do_elastic_) {
+        std::vector<Quench> &recoiled_out = recoiled != nullptr ? *recoiled : local_recoiled;
+        moliere::process_recoilers(lres_moliere_particles, nr_, kappa_, alpha_, tmethod_, mode_,
+                                   ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, recoiled_out);
     }
 
     for (size_t i = 0; i < n; ++i) {
@@ -467,6 +509,10 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
         quenched[i].vSetRi(life[i].ri);
         quenched[i].vSetRf(qstate[i].r);
         quenched[i].vSetInhP(qstate[i].p);
+        if (do_elastic_) {
+            quenched[i].setOrient(qorient[i]);
+            quenched[i].setHadScattering(qhad[i]);
+        }
         quenched[i].SetIsDone(true);
     }
 }
