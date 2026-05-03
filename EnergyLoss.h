@@ -37,7 +37,8 @@ private:
 
     // Private member functions for energy loss calculations
     void do_eloss_impl(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double x, double y);
-    void do_lres_eloss_impl(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double x, double y);
+    void do_lres_eloss_impl(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
+                            double x, double y, std::vector<Quench> *recoiled);
     void loss_rate(std::array<double,4> &p, std::array<double,4> &pos, double tof, int id, double &length, double &tlength);
     double resolution_time(double parent_e, double parent_px, double parent_py, double parent_pz,
                            double x, double y, double z,
