@@ -29,8 +29,10 @@ This bypasses Glauber vertex sampling for controlled one-event comparisons. Leav
 - `HYBRID` now reads `do_lres` and `rpower`/`lres_rpower` from the input card.
 - `EnergyLoss` dispatches to a finite-LRES resolver when `do_lres = true` and `rpower < 1e9`.
 - The resolver builds a vacuum formation timeline, computes daughter resolution times, rewrites effective mother links, then applies the existing MMI energy-loss stepper to resolved objects.
+- When `do_elastic = true`, finite LRES owns the propagation timeline and calls Moliere on the currently resolved effective color object. Unresolved daughters do not scatter independently until their resolution time.
 - A causal-time guard is applied when a resolved start position would otherwise have `t < |z|`; this prevents invalid proper-time evaluation during the integrated MMI loss-rate step.
 - A fixed-vertex validation hook was added in `HYBRID` to isolate vertex RNG differences from finite-LRES physics differences.
+- Moliere inverse-CDF kinematics now reject zero/non-finite endpoint draws before evaluating `Cu_`; those endpoints previously produced deterministic `Cu failed 0 0 0 ...` aborts in standalone Moliere as well as in finite-LRES compositions.
 
 ## Validation
 
@@ -48,6 +50,20 @@ Checks:
 - Default-path regression was repeated after adding the fixed-vertex validation hook: partons and hadrons remain byte-identical to the earlier validated MMI output.
 - Integrated finite-LRES smoke, `do_lres = true`, `rpower = 2.0`, wake off, `kappa = 0.5`: runs successfully for 1 event.
 - Integrated finite-LRES reproducibility: two identical 1-event runs are byte-identical.
+
+Finite-LRES + Moliere validation:
+
+- Directory: `/raid5/data/yjlee/hybrid_dev/test/mmli_lres_moliere_integration_20260502`
+- Focused endpoint probe after the Moliere kinematic guard: `seed2_probe_20260503_084219`.
+- Full matrix after the guard: `moliere_on_run_20260503_084440`.
+- Setup: pinned PYTHIA 8.315, averaged hydro, `cent = 0-5`, `do_lres = true`, `lres_rpower = 2.0`, `do_elastic = true`, `compat_moliere_legacy_hydro = true`, 10 seeds, 1 event per seed, two same-seed repeats.
+- Matrix cells: wake off/on crossed with broadening off/on, with `kappa = 0` and `kappa = 0.5`.
+- Result: all 40 repeat pairs pass; parton and hadron outputs are byte-identical in every cell, with no timeouts.
+- Runtime envelope from the passing matrix:
+  - wake off, broadening off: average 32.4 s per repeat, maximum 61.6 s
+  - wake on, broadening off: average 48.2 s per repeat, maximum 107.6 s
+  - wake off, broadening on: average 35.2 s per repeat, maximum 74.3 s
+  - wake on, broadening on: average 46.7 s per repeat, maximum 90.9 s
 
 Staged-vs-integrated finite-LRES 1-event matrix:
 

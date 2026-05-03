@@ -48,6 +48,13 @@ std::uniform_real_distribution<double> distcon(0.0,1.0);
 std::uniform_int_distribution<> distint(0,1);
 std::uniform_int_distribution<> distintNf(1,Nf);
 
+double distcon_open()
+{
+    double out = distcon(generator);
+    while (out <= 0.) out = distcon(generator);
+    return out;
+}
+
 double kmin_(double kcm, double x, double pin)
 {
     if (x==0||kcm==0) return inf;
@@ -2879,7 +2886,7 @@ double gen_phi(double dk,double kcm,double x,double pin,double g,double d,double
 {
     double l=0;
     double h=2*M_PI;
-    double guess=distcon(generator) * myproc(h,dk,kcm,x,pin,g,d,3,proc,wdk,wkcm,wx, pinType);
+    double guess=distcon_open() * myproc(h,dk,kcm,x,pin,g,d,3,proc,wdk,wkcm,wx, pinType);
     while ((h-l)*2/(h+l)>ep/1000)
     {
         double mid=(h+l) / 2;
@@ -2893,7 +2900,7 @@ double gen_dk(double kcm,double x,double pin,double g,double d,double proc,gsl_i
 {
     double l=0;
     double h=pin*10;
-    double guess=distcon(generator) * myproc(0,h,kcm,x,pin,g,d,2,proc,wdk,wkcm,wx, pinType);
+    double guess=distcon_open() * myproc(0,h,kcm,x,pin,g,d,2,proc,wdk,wkcm,wx, pinType);
     //while (myproc(0,inf,kcm,x,pin,g,d,2,proc)<guess) h*=2;
     while ((h-l)*2/(h+l)>ep/1000)
     {
@@ -2908,7 +2915,7 @@ double gen_kcm(double x,double pin,double g,double d,double proc,gsl_integration
 {
     double l=0;
     double h=pin;
-    double guess=distcon(generator) * myproc(0,0,h,x,pin,g,d,1,proc,wdk,wkcm,wx, pinType);
+    double guess=distcon_open() * myproc(0,0,h,x,pin,g,d,1,proc,wdk,wkcm,wx, pinType);
     while ((h-l)*2/(h+l)>ep/1000)
     {
         double mid=(h+l) / 2;
@@ -2922,7 +2929,7 @@ double gen_x(double pin,double g,double d,double proc,gsl_integration_workspace 
 {
     double l=0;
     double h=1;
-    double guess=distcon(generator) * myproc(0,0,0,1,pin,g,d,0,proc,wdk,wkcm,wx, pinType);
+    double guess=distcon_open() * myproc(0,0,0,1,pin,g,d,0,proc,wdk,wkcm,wx, pinType);
     while ((h-l)*2/(h+l)>ep/1000)
     {
         double mid=(h+l) / 2;
@@ -2973,6 +2980,10 @@ std::vector<double> kinematics(double pinx, double piny, double pinz, double g, 
       kcm=gen_kcm(x,pin,g,d,proc,wdk,wkcm,wx, pinType);
       //std::cout << " Generating dk " << std::endl;
       dk=gen_dk(kcm,x,pin,g,d,proc,wdk,wkcm,wx, pinType);
+      if (!std::isfinite(x) || !std::isfinite(kcm) || !std::isfinite(dk)
+          || x <= 0. || kcm <= 0. || dk <= 0.) {
+        continue;
+      }
       //std::cout << " Generating phi " << std::endl;
       phi=gen_phi(dk,kcm,x,pin,g,d,proc,wdk,wkcm,wx, pinType);
 
