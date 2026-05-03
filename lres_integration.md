@@ -48,8 +48,20 @@ Checks:
 
 - Default-path regression, `do_lres = false`: byte-identical to the pre-integration MMI binary for 1 event.
 - Default-path regression was repeated after adding the fixed-vertex validation hook: partons and hadrons remain byte-identical to the earlier validated MMI output.
+- Current-main core-physics regression, `do_lres = false`, `do_elastic = false`, wake off, 100 events: byte-identical to `origin/main` commit `36151fa` for partons and hadrons.
 - Integrated finite-LRES smoke, `do_lres = true`, `rpower = 2.0`, wake off, `kappa = 0.5`: runs successfully for 1 event.
 - Integrated finite-LRES reproducibility: two identical 1-event runs are byte-identical.
+
+Current-main 100-event benchmark:
+
+- Directory: `/raid5/data/yjlee/hybrid_dev/test/main_vs_mmli_20260503/run_20260503_124059`
+- Reference: clean detached `origin/main` at `36151fa` (`Merge pull request #2 from peibols/main_moliere_integration`).
+- Setup: pinned PYTHIA 8.315, averaged hydro, `cent = 0-5`, `kappa = 0.5`, `alpha = 0.404`, `tmethod = 0`, `do_quench = true`, `do_wake = false`, `do_elastic = false`, `do_lres = false`, seed 0, 100 events.
+- Result: `pass=True`; return codes OK, hadrons exact, partons exact.
+- Output sizes and hashes:
+  - Hadrons: 13,688 lines in both branches, SHA256 `4989983e193935a51d3514edc628251a9871f831b33a2dd3cb4c349aaae3073e`.
+  - Partons: 1,897 lines in both branches, SHA256 `c28c878dad31bfbbc097d471ef55c76c04f17caa5cb1281ab203ae31ed7d536d`.
+- Runtime on the loaded validation node: current main 2.774 s, MMLI 2.719 s.
 
 Finite-LRES + Moliere validation:
 
@@ -74,23 +86,48 @@ Staged-vs-integrated finite-LRES 1-event matrix:
 - Enabling staged `HYBRID_MMI_COMPAT=1` aligns the vertex, but that staged path calls `runMmiCompatEloss` and bypasses finite-LRES resolution, so it is not a finite-LRES reference.
 - Fixed-vertex diagnostic, wake off and `kappa = 0`, confirms the remaining difference is in the finite-LRES loss/timing/output contract rather than the vertex RNG. The same final colored parton count is present, but the rows are not byte-identical.
 
+Historical `untouched_basic` probe:
+
+- Directory: `/raid5/data/yjlee/hybrid_dev/test/main_vs_mmli_20260503/run_untouched_20260503_124402`
+- Reference: clean detached `origin/untouched_basic` at `c775edf`.
+- Setup: pinned PYTHIA 8.315, legacy `main`, `do_quench = true`, wake compiled on, `kappa = 0.5`, `alpha = 0.404`, `tmethod = 0`, seed 0, 1 event.
+- Result: not an exact-reference gate. The legacy branch and MMLI both run, but byte identity fails immediately because the legacy production vertex and medium evolution differ from the MMI-native contract:
+  - legacy header: `X = 2.62739`, `Y = 0.759099`
+  - MMLI header: `X = -1.69064`, `Y = -2.08526`
+- Interpretation: `origin/untouched_basic` is useful historical context, but not the byte-level integration oracle for MMLI. The byte-level production oracle is current `origin/main`/MMI with the MMI-native contract.
+
+Deprecated 100-event wake-on sync attempt:
+
+- Directory: `/raid5/data/yjlee/hybrid_dev/test/mmli_vs_mmi_sync_20260502/run_20260503_093417`
+- Setup: MMI versus MMLI, seed 0, 100 events, `do_lres=false` and `lres -> 0`, wake off/on.
+- Wake-off branch pairs completed and were byte-aligned.
+- The original Python harness exited before writing `summary.tsv`; four wake-on child executables continued as orphaned processes and later exited with logs stopping at event 76/100.
+- Result: this run is not used as a validation gate. It was superseded by controlled gates above plus the existing 10-seed wake-on exact sync matrix.
+
 Hashes for the integrated finite-LRES smoke:
 
 - Partons: `f76dac271982f1394729f6a65069dea784156e06109317f5cd76cdade7b91545`
 - Hadrons: `5da77894d7381c20a324c8647a233e6a77010c8e44c9acde2ad50322fb96e704`
 
-## Remaining Validation Target
+## Integration Readiness
 
-This is an integration milestone, not yet the final physics-validation endpoint.
+The integration contract is MMI-native finite LRES:
 
-The integrated implementation is currently an MMI-native finite-LRES path: LRES controls color-resolution grouping, while energy loss, hydro access, wake, and Lund remain MMI-native. Exact byte reproduction of the legacy staged finite-LRES executable would require a different contract:
+- LRES controls color-resolution grouping.
+- Hydro access, geometry sampling, energy loss, wake, Lund, and output contract remain MMI-native.
+- Moliere scattering is applied segment-by-segment to the currently resolved effective color object when `do_elastic = true`.
+- Unresolved daughters do not scatter independently until their resolution time; after resolution, daughters propagate and scatter independently.
 
-- Either port the legacy staged `gdE` stepper, including its `0.01 fm` step size and legacy hydro access, into MMI finite-LRES mode.
-- Or add a staged finite-LRES validation mode that keeps finite resolution but uses the MMI loss-rate, MMI hydro, MMI geometry, and MMI output contract.
-
-Until that contract is chosen, the correct validation targets for the current MMI-native integration are:
+Closed gates for this contract:
 
 - Default MMI path unchanged when `do_lres = false`.
 - `lres -> 0` limit reproduces MMI when `do_lres = true` and `rpower >= 1e9`.
-- Finite `rpower` runs reproducibly for the wake/broadening matrix.
-- Physics comparisons are made at the spectrum/observable level, not byte-level against the legacy staged finite executable.
+- Current `origin/main` versus MMLI core path is byte-identical for 100 events.
+- Finite `rpower = 2.0` with Moliere on repeats byte-identically across the 2x2 wake/broadening matrix at the 10-seed validation scale.
+- The Moliere endpoint guard removes deterministic zero-kinematics crashes without changing completed exact-repeat outputs.
+
+Remaining work after merge is physics production, not integration correctness:
+
+- scale selected finite-LRES physics observables to higher statistics;
+- profile wake-on runtime tails under production settings;
+- compare spectra, energy balance, parton/hadron counts, and wake-sensitive observables for the chosen finite-LRES physics settings.
