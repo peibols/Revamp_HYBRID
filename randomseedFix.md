@@ -88,33 +88,36 @@ What this does not yet provide:
 - guaranteed documentation parity for the legacy trigger-oriented path
 - protection against output-file appending if the same `output_base` is reused
 
-## Current Validation Policy
+## PYTHIA Card Policy
 
-For the ongoing Moliere integration and exact-match regression tests, the default validation card is now run with:
+Historical exact-match regression tests were run with:
 
 - `PartonLevel:ISR = off`
 
-This is an explicit policy choice, not an accident of the latest harness. The reason is practical and technical:
+That was an explicit policy choice, not an accident of the harness. The reason was practical and technical:
 
 - ISR materially increases shower multiplicity.
 - In the elastic Moliere path, that produces many more medium-propagated branches and recoiler rescatterings.
 - The result is a large runtime increase that makes interactive exact-match validation unnecessarily slow.
 
-So from this point forward, the standard regression gate for:
+Those ISR-off regression gates covered:
 
 - `main`
 - `moliere_code_randomseedFix`
 - `main_moliere_integration`
 
-uses ISR-off cards unless a test is specifically labeled otherwise.
+The charged-hadron RAA production comparison has now been switched to match the legacy `Moliere_code` source card exactly:
 
-The recent elastic integration closure against `moliere_code_randomseedFix` was done under that ISR-off policy.
+- `PartonLevel:ISR = on`
+- `PhaseSpace:pTHatMin = 4.` in the template card
+
+Run harnesses may still override `PhaseSpace:pTHatMin` per campaign. Do not combine ISR-off validation outputs with the ISR-on production-comparison outputs in the same physics plot.
 
 What this means:
 
-- ISR-off is the default validation configuration.
-- ISR-on can still be tested later as a heavier production-style campaign.
-- ISR-on is not the default exact-match regression gate.
+- Old exact-match closure statements refer to the ISR-off validation card.
+- New production-comparison campaigns should be labeled as legacy-Moliere-code-card runs.
+- Partial outputs generated before this switch should be discarded or kept explicitly separated.
 
 ## Notes
 
