@@ -54,12 +54,23 @@ cd /raid5/data/yjlee/hybrid_dev/test/mmli_gpu_hydro_benchmark_20260506
 Results include host/device transfer for the query arrays and output arrays, with the
 hydro grid resident on the GPU after initialization.
 
+Fresh size scan on 2026-05-06:
+
+```bash
+for n in 1000 10000 50000 100000 500000 1000000 5000000; do
+  /raid5/data/yjlee/hybrid_dev/wt_main_moliere_lres_GPU_integration/gpu_hydro_benchmark --samples "$n" --repeats 5
+done
+```
+
 | Samples | CPU ms/repeat | GPU ms/repeat | Speedup | Max printed diff |
 |---:|---:|---:|---:|---:|
-| 10k | 0.908691 | 1.281352 | 0.709x | 0 |
-| 100k | 17.783945 | 4.985805 | 3.567x | 0 |
-| 1M | 175.701750 | 24.847081 | 7.071x | 0 |
-| 5M | 933.325274 | 142.486390 | 6.550x | 0 |
+| 1k | 0.115269 | 1.846599 | 0.062x | 0 |
+| 10k | 1.063195 | 2.255568 | 0.471x | 0 |
+| 50k | 8.319021 | 2.813371 | 2.957x | 0 |
+| 100k | 17.174950 | 3.969260 | 4.327x | 0 |
+| 500k | 85.142720 | 12.824803 | 6.639x | 0 |
+| 1M | 175.676882 | 23.563304 | 7.456x | 0 |
+| 5M | 896.637394 | 141.720949 | 6.327x | 0 |
 
 Interpretation:
 
