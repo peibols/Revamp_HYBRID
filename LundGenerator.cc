@@ -36,6 +36,8 @@ void LundGenerator::init(int seed) {
     // run string fragmentation on manually inserted partons.
     pythia->readString("Random:setSeed = on");
     pythia->readString("Random:seed = " + std::to_string(seed));
+    pythia->readString("111:mayDecay = off");
+    pythia->readString("23:mayDecay = off");
     pythia->readString("ProcessLevel:all = off");
     pythia->init();
 }
