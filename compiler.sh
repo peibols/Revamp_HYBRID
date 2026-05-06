@@ -1,8 +1,15 @@
 #!/bin/bash
 
-# Default PYTHIA paths (override by setting env vars PYTHIA_INCLUDE, PYTHIA_LIB before running).
-PYTHIA_INCLUDE=${PYTHIA_INCLUDE:-/home/usc/ie/dpa/software/pythia-install/include}
-PYTHIA_LIB=${PYTHIA_LIB:-/home/usc/ie/dpa/software/pythia-install/lib}
+# Default to the pinned PYTHIA 8.315 installation used by validated MMLI campaigns.
+# Override by setting PYTHIA_INCLUDE/PYTHIA_LIB before running.
+PINNED_PYTHIA=${PINNED_PYTHIA:-/data/yjlee/pythia/pythia8/pythia8315}
+if [[ -d "${PINNED_PYTHIA}/include" && -d "${PINNED_PYTHIA}/lib" ]]; then
+  PYTHIA_INCLUDE=${PYTHIA_INCLUDE:-${PINNED_PYTHIA}/include}
+  PYTHIA_LIB=${PYTHIA_LIB:-${PINNED_PYTHIA}/lib}
+else
+  PYTHIA_INCLUDE=${PYTHIA_INCLUDE:-/home/usc/ie/dpa/software/pythia-install/include}
+  PYTHIA_LIB=${PYTHIA_LIB:-/home/usc/ie/dpa/software/pythia-install/lib}
+fi
 
 CXXFLAGS="-g -std=c++17 -Wall"
 
@@ -14,6 +21,14 @@ if [[ "$(uname)" == "Darwin" ]]; then
 else
   CXX="g++"
   CXXFLAGS+=" -mcmodel=medium"
+fi
+
+if [[ "$1" == "gpu_hydro_benchmark" ]]; then
+  $CXX -O3 -std=c++17 -Wall \
+    gpu_hydro_benchmark.cc HydroProfile.cc GpuHydroOpenCL.cc \
+    -o gpu_hydro_benchmark \
+    -ldl
+  exit $?
 fi
 
 PYTHIA_INC_FLAGS=""

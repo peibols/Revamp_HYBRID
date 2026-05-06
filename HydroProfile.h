@@ -32,6 +32,20 @@ public:
     // Combined lookup: fills all three fields in one interpolation pass.
     void getValues(double tau, double x, double y, double &temp, double &vx, double &vy) const;
 
+    // Read-only accessors used by the GPU interpolation backend and benchmarks.
+    int ixmax() const { return ixmax_; }
+    int ietamax() const { return ietamax_; }
+    int itaumax() const { return itaumax_; }
+    double hydroDx() const { return hydroDx_; }
+    double hydroXmax() const { return hydroXmax_; }
+    double hydroTau0() const { return hydroTau0_; }
+    double hydroDtau() const { return hydroDtau_; }
+    double hydroTauMax() const { return hydroTauMax_; }
+    double tempScalingFactor() const { return tempScalingFactor_; }
+    const std::vector<double>& hydroT() const { return hydrot_; }
+    const std::vector<double>& hydroVx() const { return hydrox_; }
+    const std::vector<double>& hydroVy() const { return hydroy_; }
+
 private:
     int mode_ = 1;  // 0 = event-averaged (plaintext), 1 = event-by-event (IPSAT binary)
     double tempScalingFactor_ = 1.0;  // Temperature scaling: 0.2 for mode 0, 1.0 for mode 1

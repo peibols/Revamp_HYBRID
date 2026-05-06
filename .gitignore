@@ -1,5 +1,6 @@
 # Compiled binaries
 main
+gpu_hydro_benchmark
 *.o
 *.dSYM/
 
