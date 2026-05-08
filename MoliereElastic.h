@@ -19,7 +19,6 @@ void do_eloss(const std::vector<Parton> &partons,
               int tmethod,
               int model,
               int ebe_hydro,
-              bool compat_moliere_legacy_hydro,
               const HydroProfile &hydro_profile,
               std::vector<Quench> &recoiled);
 

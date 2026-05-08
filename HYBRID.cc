@@ -23,9 +23,6 @@ HYBRID::HYBRID(const Config &cfg) :
       do_wake_(cfg.getBoolOr("do_wake", true)),
       do_source_(cfg.getBoolOr("do_source", false)),
       do_elastic_(cfg.getBoolOr("do_elastic", false)),
-      do_lres_(cfg.getBoolOr("do_lres", false)),
-      use_fixed_xy_(cfg.getBoolOr("use_fixed_xy", false)),
-      compat_moliere_legacy_hydro_(cfg.getBoolOr("compat_moliere_legacy_hydro", true)),
       njob_(cfg.getIntOr("njob", 0)),
       Nev_(cfg.getIntOr("Nev", 1)),
       cent_(cfg.getStringOr("cent", "0-5")),
@@ -35,13 +32,10 @@ HYBRID::HYBRID(const Config &cfg) :
       mode_(cfg.getIntOr("mode", 0)),
       ebe_hydro_(cfg.getIntOr("ebe_hydro", 0)),
       hadro_type_(cfg.getIntOr("hadro_type", cfg.getBoolOr("do_elastic", false) ? 1 : 0)),
-      lres_rpower_(cfg.getDoubleOr("lres_rpower", cfg.getDoubleOr("rpower", 2.0))),
       seed_base_(getSeedBase(cfg)),
       shower_seed_(seed_base_ + kShowerSeedOffset),
       hybrid_seed_(seed_base_ + kHybridSeedOffset),
       lund_seed_(seed_base_ + kLundSeedOffset),
-      fixed_x_(cfg.getDoubleOr("fixed_x", 0.0)),
-      fixed_y_(cfg.getDoubleOr("fixed_y", 0.0)),
       tables_path_(cfg.getStringOr("tables_path", "")),
       nr_(hybrid_seed_),
       tree_gen_(std::make_unique<TreeGenerator>()),
@@ -50,9 +44,7 @@ HYBRID::HYBRID(const Config &cfg) :
       lund_gen_(std::make_unique<LundGenerator>()),
       glauber_model_(std::make_unique<GlauberModel>()),
       energy_loss_(std::make_unique<EnergyLoss>(nr_, kappa_, alpha_, tmethod_, mode_,
-                                                ebe_hydro_, do_elastic_, do_lres_, lres_rpower_,
-                                                compat_moliere_legacy_hydro_,
-                                                tables_path_,
+                                                ebe_hydro_, do_elastic_, tables_path_,
                                                 *hydro_profile_)) {
 
     // Open output files
@@ -68,24 +60,11 @@ HYBRID::HYBRID(const Config &cfg) :
               << " lund= " << lund_seed_ << std::endl;
     if (do_elastic_) {
         std::cout << "Elastic scattering requested"
-                  << " hadro_type= " << hadro_type_
-                  << " compat_moliere_legacy_hydro= " << compat_moliere_legacy_hydro_;
+                  << " hadro_type= " << hadro_type_;
         if (!tables_path_.empty()) {
             std::cout << " tables_path= " << tables_path_;
         }
         std::cout << std::endl;
-    }
-    if (do_lres_) {
-        std::cout << "Finite LRES requested"
-                  << " rpower= " << lres_rpower_
-                  << " (do_elastic= " << do_elastic_ << ")"
-                  << std::endl;
-    }
-    if (use_fixed_xy_) {
-        std::cout << "Using fixed production vertex"
-                  << " X= " << fixed_x_
-                  << " Y= " << fixed_y_
-                  << std::endl;
     }
 
     if (cfg.getBoolOr("use_trigger", false)) {
@@ -140,10 +119,7 @@ void HYBRID::run() {
         double x = 0., y = 0.;
         if (do_quench_) {
             // Generate x,y
-            if (use_fixed_xy_) {
-                x = fixed_x_;
-                y = fixed_y_;
-            } else if (ebe_hydro_ == 0) {
+            if (ebe_hydro_ == 0) {
                 gxy(x, y);
             } else {
                 gxy_ipsat(x, y);

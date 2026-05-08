@@ -223,7 +223,7 @@ FourVector BoostBack(double b[3], FourVector p) {
 
 void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numrand &nr, double kappa,
                double alpha, int tmethod, int model, int ebe_hydro,
-               bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile, vector<Quench> &new_particles,
+               const HydroProfile &hydro_profile, vector<Quench> &new_particles,
                int &had_scattering, vector<double> &orient) {
     auto &workspaces = integration_workspaces();
     gsl_integration_workspace *wdk = workspaces.wdk;
@@ -276,12 +276,8 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
         double tau0h = (ebe_hydro == 1) ? 0.4 : 0.6;
         if (tau >= tau0h) {
             vector<double> v;
-            vx = compat_moliere_legacy_hydro
-                ? gVx_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta)
-                : gVx(hydro_profile, tau, pos[0], pos[1]);
-            vy = compat_moliere_legacy_hydro
-                ? gVy_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta)
-                : gVy(hydro_profile, tau, pos[0], pos[1]);
+            vx = gVx_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta);
+            vy = gVy_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta);
             vz = pos[2]/pos[3];
             double frap = std::atanh(vz);
             vx /= std::cosh(frap);
@@ -294,9 +290,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
             if (v2 >= 1.) v2 = 0.999999999;
             double lore = 1./std::sqrt(1.-v2);
 
-            double temp = compat_moliere_legacy_hydro
-                ? gT_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta)
-                : gT(hydro_profile, tau, pos[0], pos[1]);
+            double temp = gT_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta);
 
             l_dist += step;
             double f_lore = w2 + lore*lore*(v2 - 2.*vscalw + vscalw*vscalw);
@@ -310,10 +304,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                     if (tpos[3] > tot) break;
                     tau = std::sqrt(tpos[3]*tpos[3]-tpos[2]*tpos[2]);
                     eta = 0.5*std::log((tpos[3]+tpos[2])/(tpos[3]-tpos[2]));
-                    const double ttemp = compat_moliere_legacy_hydro
-                        ? gT_legacy_elastic(hydro_profile, tau, tpos[0], tpos[1], eta)
-                        : gT(hydro_profile, tau, tpos[0], tpos[1]);
-                    if (ttemp > Tc) {
+                    if (gT_legacy_elastic(hydro_profile, tau, tpos[0], tpos[1], eta) > Tc) {
                         will_hot = int(j);
                         break;
                     }
@@ -477,7 +468,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
 
 void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double xcre, double ycre,
               numrand &nr, double kappa, double alpha, int tmethod, int model, int ebe_hydro,
-              bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile, std::vector<Quench> &recoiled) {
+              const HydroProfile &hydro_profile, std::vector<Quench> &recoiled) {
     vector<int> FinId;
     for (unsigned int i = 0; i < quenched.size(); ++i) {
         if (quenched[i].GetD1() == -1 && quenched[i].GetOrig() != "rem") {
@@ -529,7 +520,7 @@ void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
             vector<double> orient = to_vec(quenched[tp].orient());
             if (std::abs(quenched[tp].GetId()) <= 6 || quenched[tp].GetId() == 21) {
                 loss_rate(p, pos, tof, quenched[tp].GetId(), nr, kappa, alpha, tmethod, model,
-                          ebe_hydro, compat_moliere_legacy_hydro, hydro_profile, new_particles, had_scattering, orient);
+                          ebe_hydro, hydro_profile, new_particles, had_scattering, orient);
             } else {
                 pos += p/p[3]*tof;
             }
@@ -595,7 +586,7 @@ void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
             std::array<double,4> orig_en = current_particles[ip].vGetP();
             int had_scattering = 0;
             loss_rate(p, pos, tof, current_particles[ip].GetId(), nr, kappa, alpha, tmethod, model,
-                      ebe_hydro, compat_moliere_legacy_hydro, hydro_profile, new_particles, had_scattering, orient);
+                      ebe_hydro, hydro_profile, new_particles, had_scattering, orient);
             current_particles[ip].setOrigEn(orig_en);
             current_particles[ip].vSetP(p);
             current_particles[ip].vSetRf(to_arr(pos));

@@ -18,22 +18,11 @@ mode = 0
 # do_wake: true/false
 # do_source: true/false
 # do_elastic: true/false (Moliere elastic scattering integration path)
-# do_lres: true/false (finite color-resolution energy-loss path)
-# compat_moliere_legacy_hydro: true preserves exact Moliere_code averaged-hydro interpolation.
-# Set false to use unified MMI HydroProfile access for Moliere elastic.
 
 do_quench = true
 #do_wake = true
 #do_source = false
 #do_elastic = false
-#do_lres = false
-#compat_moliere_legacy_hydro = true
-#rpower = 2.0
-
-# Validation-only fixed production vertex. Leave disabled for physics runs.
-#use_fixed_xy = false
-#fixed_x = 0.0
-#fixed_y = 0.0
 
 # Hydro mode: 0 = averaged hydro (Hydro_PbPb), 1 = event-by-event (ipsat)
 ebe_hydro = 0
