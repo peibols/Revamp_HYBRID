@@ -19,6 +19,8 @@ fi
 PYTHIA_INC_FLAGS=""
 PYTHIA_LIB_FLAGS=""
 GSL_LIB_FLAGS=""
+ROOT_CFLAGS=""
+ROOT_LIB_FLAGS=""
 if [[ -d "$PYTHIA_INCLUDE" ]]; then
   PYTHIA_INC_FLAGS="-I${PYTHIA_INCLUDE}"
 fi
@@ -30,10 +32,14 @@ if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists gsl; then
 else
   GSL_LIB_FLAGS="-lgsl -lgslcblas -lm"
 fi
+if command -v root-config >/dev/null 2>&1; then
+  ROOT_CFLAGS="$(root-config --cflags) -DHAVE_ROOT"
+  ROOT_LIB_FLAGS="$(root-config --libs)"
+fi
 
 $CXX $CXXFLAGS \
 	$1.cc TreeGenerator.cc Wake.cc Quench.cc Random.cc Parton.cc Hadron.cc \
 	HydroProfile.cc WakeGenerator.cc LundGenerator.cc GlauberModel.cc EnergyLoss.cc HYBRID.cc Config.cc \
 	MoliereTables.cc MoliereElastic.cc read_tables.cpp \
 	-o $1 \
-	$PYTHIA_INC_FLAGS $PYTHIA_LIB_FLAGS $GSL_LIB_FLAGS
+	$PYTHIA_INC_FLAGS $ROOT_CFLAGS $PYTHIA_LIB_FLAGS $GSL_LIB_FLAGS $ROOT_LIB_FLAGS

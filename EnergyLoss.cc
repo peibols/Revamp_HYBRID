@@ -6,9 +6,15 @@
 #include <functional>
 #include <cmath>
 #include <iomanip>
+#include <sstream>
+#include <fstream>
 #include "MoliereTables.h"
 #include "MoliereElastic.h"
 #include "vector_operators.h"
+#ifdef HAVE_ROOT
+#include "TFile.h"
+#include "TTree.h"
+#endif
 
 namespace {
 constexpr double kLresFinalFlightTime = 10000.;
@@ -34,6 +40,68 @@ std::array<double,4> orientationFor(const std::array<double,4> &p) {
     return {p[0] / p[3], p[1] / p[3], p[2] / p[3], 1.};
 }
 
+double phiFromP(const std::array<double,4> &p) {
+    return std::atan2(p[1], p[0]);
+}
+
+double deltaPhiXYFromP(const std::array<double,4> &a, const std::array<double,4> &b) {
+    double dphi = phiFromP(a) - phiFromP(b);
+    while (dphi > M_PI) dphi -= 2. * M_PI;
+    while (dphi < -M_PI) dphi += 2. * M_PI;
+    return std::abs(dphi);
+}
+
+std::vector<double> toVector4(const std::array<double,4> &p) {
+    return {p[0], p[1], p[2], p[3]};
+}
+
+double properTimeFromPos(const std::array<double,4> &pos) {
+    const double tau2 = pos[3] * pos[3] - pos[2] * pos[2];
+    return tau2 > 0. ? std::sqrt(tau2) : 0.;
+}
+
+double compute_unresolved_pair_dperp(const std::array<double,4> &p1_vac,
+                                     const std::array<double,4> &p2_vac,
+                                     double split_time,
+                                     double scattering_time) {
+    const double dt = std::max(0., scattering_time - split_time);
+    const auto v1 = velocity(p1_vac);
+    const auto v2 = velocity(p2_vac);
+    const double dx = (v1[0] - v2[0]) * dt;
+    const double dy = (v1[1] - v2[1]) * dt;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+bool passes_dynamic_moliere_resolution_test(double qperp, double dperp, double c_res) {
+    return qperp * dperp > c_res;
+}
+
+moliere::ScatteringDecision apply_coherent_unresolved_kick() {
+    return moliere::ScatteringDecision::Apply;
+}
+
+void apply_resolved_daughter_kick(const moliere::ScatteringCandidate &candidate,
+                                  std::array<double,4> &p,
+                                  std::vector<Quench> &new_particles,
+                                  int &had_scattering,
+                                  std::array<double,4> &orient) {
+    for (int i = 0; i < 4; ++i) {
+        p[i] += candidate.p_after[i] - candidate.p_before[i];
+    }
+    if (p[3] <= 0.) {
+        p = {0., 0., 0., 0.};
+    }
+    had_scattering = 1;
+    orient = orientationFor(p);
+
+    new_particles.emplace_back(Parton(toVector4(candidate.recoiler_p), 100000000., 0., 0,
+                                      -1, -1, candidate.recoiler_id, "recoiler", 0, 0, false));
+    new_particles.back().vSetRi(candidate.pos);
+    new_particles.emplace_back(Parton(toVector4(candidate.hole_p), 100000000., 0., 0,
+                                      -1, -1, candidate.hole_id, "hole", 0, 0, true));
+    new_particles.back().vSetRi(candidate.pos);
+}
+
 struct LresLifetime {
     double resolve = 0.;
     double creation = 0.;
@@ -51,22 +119,314 @@ struct LresState {
 }
 
 EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int mode,
-                       int ebe_hydro, bool do_elastic, bool do_lres, double lres_rpower,
+                       int ebe_hydro, bool do_elastic, bool do_lres,
+                       bool do_moliere_on_unresolved_partons,
+                       bool do_moliere_dynamic_unresolved_resolution,
+                       bool do_moliere_dynamic_daughter_unresolved_resolution,
+                       double moliere_unresolved_resolution_c,
+                       double lres_rpower,
+                       bool dump_hybrid_evolution_history,
+                       const std::string &hybrid_evolution_history_file,
+                       bool do_event_display,
+                       const std::string &event_display_file,
                        bool compat_moliere_legacy_hydro,
                        const std::string &tables_path,
                        const HydroProfile &hydro_profile)
     : nr_(nr), kappa_(kappa), alpha_(alpha), tmethod_(tmethod), mode_(mode),
       ebe_hydro_(ebe_hydro), do_elastic_(do_elastic), do_lres_(do_lres),
+      do_moliere_on_unresolved_partons_(do_moliere_on_unresolved_partons),
+      do_moliere_dynamic_unresolved_resolution_(do_moliere_dynamic_unresolved_resolution),
+      do_moliere_dynamic_daughter_unresolved_resolution_(do_moliere_dynamic_daughter_unresolved_resolution),
+      moliere_unresolved_resolution_c_(moliere_unresolved_resolution_c),
+      dump_hybrid_evolution_history_(dump_hybrid_evolution_history),
+      hybrid_evolution_history_file_(hybrid_evolution_history_file),
+      do_event_display_(do_event_display),
+      event_display_file_(event_display_file),
+      history_event_counter_(0),
+      n_unresolved_segments_dynamic_(0),
+      n_unresolved_candidate_scatters_(0),
+      n_unresolved_coherent_scatters_(0),
+      n_unresolved_resolving_scatters_(0),
+      n_unresolved_pairs_elastically_decohered_(0),
+      sum_qperp_dperp_unresolved_candidates_(0.),
       compat_moliere_legacy_hydro_(compat_moliere_legacy_hydro),
       lres_rpower_(lres_rpower), tables_path_(tables_path),
-      hydro_profile_(hydro_profile) {
+      hydro_profile_(hydro_profile)
+#ifdef HAVE_ROOT
+      , event_display_root_file_(nullptr), event_display_tree_(nullptr),
+      event_display_detail_tree_(nullptr),
+      ed_event_id_(0), ed_segment_id_(0), ed_parton_index_(0), ed_pdg_id_(0),
+      ed_parent_index_(0), ed_d1_(0), ed_d2_(0), ed_is_colored_(0),
+      ed_is_unresolved_(0), ed_had_scattering_(0), ed_t_start_(0.),
+      ed_x_start_(0.), ed_y_start_(0.), ed_z_start_(0.), ed_tau_start_(0.),
+      ed_px_start_(0.), ed_py_start_(0.), ed_pz_start_(0.), ed_e_start_(0.),
+      ed_t_end_(0.), ed_x_end_(0.), ed_y_end_(0.), ed_z_end_(0.),
+      ed_tau_end_(0.), ed_px_end_(0.), ed_py_end_(0.), ed_pz_end_(0.),
+      ed_e_end_(0.), ed_length_(0.), ed_tlength_(0.), ed_qperp_(0.),
+      ed_segment_type_(""), ed_record_id_(0), ed_record_parton_index_(0),
+      ed_record_pdg_id_(0), ed_record_parent_index_(0), ed_record_d1_(0),
+      ed_record_d2_(0), ed_record_related_index_(0), ed_record_is_unresolved_(0),
+      ed_record_in_medium_(0), ed_record_t_(0.), ed_record_x_(0.),
+      ed_record_y_(0.), ed_record_z_(0.), ed_record_tau_(0.),
+      ed_record_px_(0.), ed_record_py_(0.), ed_record_pz_(0.), ed_record_e_(0.),
+      ed_record_t_end_(0.), ed_record_x_end_(0.), ed_record_y_end_(0.),
+      ed_record_z_end_(0.), ed_record_tau_end_(0.), ed_record_px_end_(0.),
+      ed_record_py_end_(0.), ed_record_pz_end_(0.), ed_record_e_end_(0.),
+      ed_record_qperp_(0.), ed_record_temperature_(0.), ed_record_length_(0.),
+      ed_record_tlength_(0.), ed_record_type_(""), ed_record_label_("")
+#endif
+{
     if (do_elastic_) {
         MoliereTables::ensureLoaded(tables_path_);
     }
+    init_event_display();
 }
 
 EnergyLoss::~EnergyLoss() {
-    // No special cleanup needed
+    close_event_display();
+    if (n_unresolved_segments_dynamic_ > 0) {
+        const double avg_qd =
+            n_unresolved_candidate_scatters_ > 0
+                ? sum_qperp_dperp_unresolved_candidates_ /
+                      static_cast<double>(n_unresolved_candidate_scatters_)
+                : 0.;
+        std::cout << "Dynamic unresolved Moliere diagnostics:"
+                  << " n_unresolved_segments_dynamic= " << n_unresolved_segments_dynamic_
+                  << " n_unresolved_candidate_scatters= " << n_unresolved_candidate_scatters_
+                  << " n_unresolved_coherent_scatters= " << n_unresolved_coherent_scatters_
+                  << " n_unresolved_resolving_scatters= " << n_unresolved_resolving_scatters_
+                  << " n_unresolved_pairs_elastically_decohered= "
+                  << n_unresolved_pairs_elastically_decohered_
+                  << " average_qperp_dperp_for_candidate_scatters= " << avg_qd
+                  << std::endl;
+    }
+}
+
+void EnergyLoss::init_event_display() {
+    if (!do_event_display_) return;
+    if (event_display_file_.empty()) event_display_file_ = "eventDisplay.root";
+#ifdef HAVE_ROOT
+    event_display_root_file_ = TFile::Open(event_display_file_.c_str(), "RECREATE");
+    if (event_display_root_file_ == nullptr || event_display_root_file_->IsZombie()) {
+        std::cerr << "Event-display ROOT output disabled: could not open "
+                  << event_display_file_ << std::endl;
+        do_event_display_ = false;
+        return;
+    }
+    event_display_tree_ = new TTree("PartonSegments",
+                                    "Parton location, energy, and momentum by propagation segment");
+    event_display_tree_->Branch("event_id", &ed_event_id_);
+    event_display_tree_->Branch("segment_id", &ed_segment_id_);
+    event_display_tree_->Branch("parton_index", &ed_parton_index_);
+    event_display_tree_->Branch("pdg_id", &ed_pdg_id_);
+    event_display_tree_->Branch("parent_index", &ed_parent_index_);
+    event_display_tree_->Branch("d1", &ed_d1_);
+    event_display_tree_->Branch("d2", &ed_d2_);
+    event_display_tree_->Branch("is_colored", &ed_is_colored_);
+    event_display_tree_->Branch("is_unresolved", &ed_is_unresolved_);
+    event_display_tree_->Branch("had_scattering", &ed_had_scattering_);
+    event_display_tree_->Branch("t_start", &ed_t_start_);
+    event_display_tree_->Branch("x_start", &ed_x_start_);
+    event_display_tree_->Branch("y_start", &ed_y_start_);
+    event_display_tree_->Branch("z_start", &ed_z_start_);
+    event_display_tree_->Branch("tau_start", &ed_tau_start_);
+    event_display_tree_->Branch("px_start", &ed_px_start_);
+    event_display_tree_->Branch("py_start", &ed_py_start_);
+    event_display_tree_->Branch("pz_start", &ed_pz_start_);
+    event_display_tree_->Branch("e_start", &ed_e_start_);
+    event_display_tree_->Branch("t_end", &ed_t_end_);
+    event_display_tree_->Branch("x_end", &ed_x_end_);
+    event_display_tree_->Branch("y_end", &ed_y_end_);
+    event_display_tree_->Branch("z_end", &ed_z_end_);
+    event_display_tree_->Branch("tau_end", &ed_tau_end_);
+    event_display_tree_->Branch("px_end", &ed_px_end_);
+    event_display_tree_->Branch("py_end", &ed_py_end_);
+    event_display_tree_->Branch("pz_end", &ed_pz_end_);
+    event_display_tree_->Branch("e_end", &ed_e_end_);
+    event_display_tree_->Branch("length", &ed_length_);
+    event_display_tree_->Branch("tlength", &ed_tlength_);
+    event_display_tree_->Branch("qperp", &ed_qperp_);
+    event_display_tree_->Branch("segment_type", &ed_segment_type_);
+    event_display_detail_tree_ = new TTree("DetailedRecords",
+                                           "Time-ordered shower, propagation, Moliere, and LRES diagnostic records");
+    event_display_detail_tree_->Branch("event_id", &ed_event_id_);
+    event_display_detail_tree_->Branch("record_id", &ed_record_id_);
+    event_display_detail_tree_->Branch("parton_index", &ed_record_parton_index_);
+    event_display_detail_tree_->Branch("pdg_id", &ed_record_pdg_id_);
+    event_display_detail_tree_->Branch("parent_index", &ed_record_parent_index_);
+    event_display_detail_tree_->Branch("d1", &ed_record_d1_);
+    event_display_detail_tree_->Branch("d2", &ed_record_d2_);
+    event_display_detail_tree_->Branch("related_index", &ed_record_related_index_);
+    event_display_detail_tree_->Branch("is_unresolved", &ed_record_is_unresolved_);
+    event_display_detail_tree_->Branch("in_medium", &ed_record_in_medium_);
+    event_display_detail_tree_->Branch("t", &ed_record_t_);
+    event_display_detail_tree_->Branch("x", &ed_record_x_);
+    event_display_detail_tree_->Branch("y", &ed_record_y_);
+    event_display_detail_tree_->Branch("z", &ed_record_z_);
+    event_display_detail_tree_->Branch("tau", &ed_record_tau_);
+    event_display_detail_tree_->Branch("px", &ed_record_px_);
+    event_display_detail_tree_->Branch("py", &ed_record_py_);
+    event_display_detail_tree_->Branch("pz", &ed_record_pz_);
+    event_display_detail_tree_->Branch("e", &ed_record_e_);
+    event_display_detail_tree_->Branch("t_end", &ed_record_t_end_);
+    event_display_detail_tree_->Branch("x_end", &ed_record_x_end_);
+    event_display_detail_tree_->Branch("y_end", &ed_record_y_end_);
+    event_display_detail_tree_->Branch("z_end", &ed_record_z_end_);
+    event_display_detail_tree_->Branch("tau_end", &ed_record_tau_end_);
+    event_display_detail_tree_->Branch("px_end", &ed_record_px_end_);
+    event_display_detail_tree_->Branch("py_end", &ed_record_py_end_);
+    event_display_detail_tree_->Branch("pz_end", &ed_record_pz_end_);
+    event_display_detail_tree_->Branch("e_end", &ed_record_e_end_);
+    event_display_detail_tree_->Branch("qperp", &ed_record_qperp_);
+    event_display_detail_tree_->Branch("temperature", &ed_record_temperature_);
+    event_display_detail_tree_->Branch("length", &ed_record_length_);
+    event_display_detail_tree_->Branch("tlength", &ed_record_tlength_);
+    event_display_detail_tree_->Branch("record_type", &ed_record_type_);
+    event_display_detail_tree_->Branch("label", &ed_record_label_);
+#else
+    std::cerr << "Event-display ROOT output requested but this binary was built without ROOT. "
+              << "Rebuild with root-config available." << std::endl;
+    do_event_display_ = false;
+#endif
+}
+
+void EnergyLoss::close_event_display() {
+#ifdef HAVE_ROOT
+    if (event_display_root_file_ != nullptr) {
+        event_display_root_file_->cd();
+        if (event_display_tree_ != nullptr) event_display_tree_->Write();
+        if (event_display_detail_tree_ != nullptr) event_display_detail_tree_->Write();
+        event_display_root_file_->Close();
+        delete event_display_root_file_;
+        event_display_root_file_ = nullptr;
+        event_display_tree_ = nullptr;
+        event_display_detail_tree_ = nullptr;
+    }
+#endif
+}
+
+void EnergyLoss::fill_event_display_segment(int event_id, int segment_id, int parton_index,
+                                            const Parton &parton, int parent_index, int d1, int d2,
+                                            bool is_unresolved, int had_scattering,
+                                            const std::array<double,4> &pos_start,
+                                            const std::array<double,4> &p_start,
+                                            const std::array<double,4> &pos_end,
+                                            const std::array<double,4> &p_end,
+                                            double length, double tlength,
+                                            const std::string &segment_type) {
+    if (!do_event_display_) return;
+#ifdef HAVE_ROOT
+    if (event_display_tree_ == nullptr) return;
+    ed_event_id_ = event_id;
+    ed_segment_id_ = segment_id;
+    ed_parton_index_ = parton_index;
+    ed_pdg_id_ = parton.GetId();
+    ed_parent_index_ = parent_index;
+    ed_d1_ = d1;
+    ed_d2_ = d2;
+    ed_is_colored_ = isColored(parton.GetId()) ? 1 : 0;
+    ed_is_unresolved_ = is_unresolved ? 1 : 0;
+    ed_had_scattering_ = had_scattering;
+    ed_t_start_ = pos_start[3];
+    ed_x_start_ = pos_start[0];
+    ed_y_start_ = pos_start[1];
+    ed_z_start_ = pos_start[2];
+    ed_tau_start_ = properTimeFromPos(pos_start);
+    ed_px_start_ = p_start[0];
+    ed_py_start_ = p_start[1];
+    ed_pz_start_ = p_start[2];
+    ed_e_start_ = p_start[3];
+    ed_t_end_ = pos_end[3];
+    ed_x_end_ = pos_end[0];
+    ed_y_end_ = pos_end[1];
+    ed_z_end_ = pos_end[2];
+    ed_tau_end_ = properTimeFromPos(pos_end);
+    ed_px_end_ = p_end[0];
+    ed_py_end_ = p_end[1];
+    ed_pz_end_ = p_end[2];
+    ed_e_end_ = p_end[3];
+    ed_length_ = length;
+    ed_tlength_ = tlength;
+    ed_qperp_ = std::sqrt((p_end[0] - p_start[0]) * (p_end[0] - p_start[0]) +
+                          (p_end[1] - p_start[1]) * (p_end[1] - p_start[1]));
+    ed_segment_type_ = segment_type;
+    event_display_tree_->Fill();
+#else
+    (void)event_id;
+    (void)segment_id;
+    (void)parton_index;
+    (void)parton;
+    (void)parent_index;
+    (void)d1;
+    (void)d2;
+    (void)is_unresolved;
+    (void)had_scattering;
+    (void)pos_start;
+    (void)p_start;
+    (void)pos_end;
+    (void)p_end;
+    (void)length;
+    (void)tlength;
+    (void)segment_type;
+#endif
+}
+
+void EnergyLoss::fill_event_display_record(int event_id, int record_id, int parton_index,
+                                           int pdg_id, int parent_index, int d1, int d2,
+                                           int related_index, bool is_unresolved, bool in_medium,
+                                           const std::array<double,4> &pos_start,
+                                           const std::array<double,4> &p_start,
+                                           const std::array<double,4> &pos_end,
+                                           const std::array<double,4> &p_end,
+                                           double qperp, double temperature,
+                                           double length, double tlength,
+                                           const std::string &record_type,
+                                           const std::string &label) {
+    if (!do_event_display_) return;
+#ifdef HAVE_ROOT
+    if (event_display_detail_tree_ == nullptr) return;
+    ed_event_id_ = event_id;
+    ed_record_id_ = record_id;
+    ed_record_parton_index_ = parton_index;
+    ed_record_pdg_id_ = pdg_id;
+    ed_record_parent_index_ = parent_index;
+    ed_record_d1_ = d1;
+    ed_record_d2_ = d2;
+    ed_record_related_index_ = related_index;
+    ed_record_is_unresolved_ = is_unresolved ? 1 : 0;
+    ed_record_in_medium_ = in_medium ? 1 : 0;
+    ed_record_t_ = pos_start[3];
+    ed_record_x_ = pos_start[0];
+    ed_record_y_ = pos_start[1];
+    ed_record_z_ = pos_start[2];
+    ed_record_tau_ = properTimeFromPos(pos_start);
+    ed_record_px_ = p_start[0];
+    ed_record_py_ = p_start[1];
+    ed_record_pz_ = p_start[2];
+    ed_record_e_ = p_start[3];
+    ed_record_t_end_ = pos_end[3];
+    ed_record_x_end_ = pos_end[0];
+    ed_record_y_end_ = pos_end[1];
+    ed_record_z_end_ = pos_end[2];
+    ed_record_tau_end_ = properTimeFromPos(pos_end);
+    ed_record_px_end_ = p_end[0];
+    ed_record_py_end_ = p_end[1];
+    ed_record_pz_end_ = p_end[2];
+    ed_record_e_end_ = p_end[3];
+    ed_record_qperp_ = qperp;
+    ed_record_temperature_ = temperature;
+    ed_record_length_ = length;
+    ed_record_tlength_ = tlength;
+    ed_record_type_ = record_type;
+    ed_record_label_ = label;
+    event_display_detail_tree_->Fill();
+#else
+    (void)event_id; (void)record_id; (void)parton_index; (void)pdg_id;
+    (void)parent_index; (void)d1; (void)d2; (void)related_index;
+    (void)is_unresolved; (void)in_medium; (void)pos_start; (void)p_start;
+    (void)pos_end; (void)p_end; (void)qperp; (void)temperature;
+    (void)length; (void)tlength; (void)record_type; (void)label;
+#endif
 }
 
 void EnergyLoss::do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
@@ -81,13 +441,100 @@ void EnergyLoss::do_eloss(const std::vector<Parton> &partons, std::vector<Quench
         return;
     }
     if (do_elastic_) {
+        const int event_id = do_event_display_ ? history_event_counter_++ : -1;
+        int event_display_segment_id = 0;
+        int event_display_record_id = 0;
+        std::vector<std::array<double,4>> p_before;
+        std::vector<std::array<double,4>> pos_before;
+        if (do_event_display_) {
+            for (size_t ip = 0; ip < partons.size(); ++ip) {
+                fill_event_display_record(event_id, event_display_record_id++,
+                                          static_cast<int>(ip), partons[ip].GetId(),
+                                          partons[ip].GetMom(), partons[ip].GetD1(), partons[ip].GetD2(),
+                                          -1, false, false,
+                                          partons[ip].GetRi(), partons[ip].vGetP(),
+                                          partons[ip].GetRi(), partons[ip].vGetP(),
+                                          0., 0., 0., 0.,
+                                          "pythia_splitting_node", "shower_record");
+            }
+            p_before.reserve(quenched.size());
+            pos_before.reserve(quenched.size());
+            for (const auto &q : quenched) {
+                p_before.push_back(q.vGetP());
+                pos_before.push_back(q.GetRi());
+            }
+        }
+        auto callback_factory =
+            [&](int parton_index, int pdg_id, int parent_index, int d1, int d2) {
+                moliere::ScatteringCallback scattering_callback =
+                    [&, parton_index, pdg_id, parent_index, d1, d2]
+                    (const moliere::ScatteringCandidate &candidate) {
+                        fill_event_display_record(event_id, event_display_record_id++,
+                                                  parton_index, pdg_id, parent_index, d1, d2,
+                                                  -1, false, true,
+                                                  candidate.pos, candidate.p_before,
+                                                  candidate.pos, candidate.p_after,
+                                                  candidate.qperp, 0., 0., 0.,
+                                                  "moliere_scattering",
+                                                  "accepted_elastic_scattering");
+                        fill_event_display_record(event_id, event_display_record_id++,
+                                                  -1, candidate.recoiler_id, parton_index, -1, -1,
+                                                  parton_index, false, true,
+                                                  candidate.pos, candidate.recoiler_p,
+                                                  candidate.pos, candidate.recoiler_p,
+                                                  0., 0., 0., 0.,
+                                                  "medium_response",
+                                                  "moliere_recoiler");
+                        fill_event_display_record(event_id, event_display_record_id++,
+                                                  -1, candidate.hole_id, parton_index, -1, -1,
+                                                  parton_index, false, true,
+                                                  candidate.pos, candidate.hole_p,
+                                                  candidate.pos, candidate.hole_p,
+                                                  0., 0., 0., 0.,
+                                                  "medium_response",
+                                                  "moliere_hole");
+                        return moliere::ScatteringDecision::Apply;
+                    };
+                moliere::PropagationStepCallback step_callback =
+                    [&, parton_index, pdg_id, parent_index, d1, d2]
+                    (const moliere::PropagationStep &step) {
+                        fill_event_display_record(event_id, event_display_record_id++,
+                                                  parton_index, pdg_id, parent_index, d1, d2,
+                                                  -1, false, step.in_medium != 0,
+                                                  step.pos_before, step.p_before,
+                                                  step.pos_after, step.p_after,
+                                                  std::sqrt((step.p_after[0] - step.p_before[0]) *
+                                                            (step.p_after[0] - step.p_before[0]) +
+                                                            (step.p_after[1] - step.p_before[1]) *
+                                                            (step.p_after[1] - step.p_before[1])),
+                                                  step.temperature, step.step, 0.,
+                                                  "moliere_propagation_step",
+                                                  "moliere_internal_step");
+                    };
+                return std::make_pair(scattering_callback, step_callback);
+            };
         if (recoiled == nullptr) {
             std::vector<Quench> local_recoiled;
             moliere::do_eloss(partons, quenched, x, y, nr_, kappa_, alpha_, tmethod_, mode_,
-                              ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, local_recoiled);
+                              ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, local_recoiled,
+                              do_event_display_ ? callback_factory : moliere::PartonCallbackFactory());
         } else {
             moliere::do_eloss(partons, quenched, x, y, nr_, kappa_, alpha_, tmethod_, mode_,
-                              ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, *recoiled);
+                              ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, *recoiled,
+                              do_event_display_ ? callback_factory : moliere::PartonCallbackFactory());
+        }
+        if (do_event_display_) {
+            for (size_t i = 0; i < quenched.size() && i < p_before.size() && i < partons.size(); ++i) {
+                if (quenched[i].GetOrig() == "rem") continue;
+                if (!quenched[i].GetIsDone()) continue;
+                fill_event_display_segment(event_id, event_display_segment_id++,
+                                           static_cast<int>(i), partons[i], quenched[i].GetMom(),
+                                           quenched[i].GetD1(), quenched[i].GetD2(),
+                                           false, quenched[i].hadScattering(),
+                                           pos_before[i], p_before[i],
+                                           quenched[i].GetRf(), quenched[i].vGetP(),
+                                           0.0, 0.0, "moliere_elastic_segment");
+            }
         }
         return;
     }
@@ -95,6 +542,23 @@ void EnergyLoss::do_eloss(const std::vector<Parton> &partons, std::vector<Quench
 }
 
 void EnergyLoss::do_eloss_impl(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double xcre, double ycre) {
+    const int event_id = do_event_display_ ? history_event_counter_++ : -1;
+    int event_display_segment_id = 0;
+    int event_display_record_id = 0;
+
+    if (do_event_display_) {
+        for (size_t ip = 0; ip < partons.size(); ++ip) {
+            fill_event_display_record(event_id, event_display_record_id++,
+                                      static_cast<int>(ip), partons[ip].GetId(),
+                                      partons[ip].GetMom(), partons[ip].GetD1(), partons[ip].GetD2(),
+                                      -1, false, false,
+                                      partons[ip].GetRi(), partons[ip].vGetP(),
+                                      partons[ip].GetRi(), partons[ip].vGetP(),
+                                      0., 0., 0., 0.,
+                                      "pythia_splitting_node", "shower_record");
+        }
+    }
+
     // Tag final particles
     std::vector<int> FinId;
     for (size_t i = 0; i < quenched.size(); i++) {
@@ -151,6 +615,8 @@ void EnergyLoss::do_eloss_impl(const std::vector<Parton> &partons, std::vector<Q
             auto p = quenched[tp].vGetP();
             double q = quenched[tp].GetQ();
             auto pos = quenched[tp].GetRi();
+            const auto p_before = p;
+            const auto pos_before = pos;
             // Time of flight (from formation time argument)
             double tof = 0.2 * 2. * p[3] / (q * q); // in fm
             // If final particle, fly arbitrarily far
@@ -159,16 +625,34 @@ void EnergyLoss::do_eloss_impl(const std::vector<Parton> &partons, std::vector<Q
             double tlength = 0.; // temperature weighted length in QGP
             // If colored particle
             if (abs(quenched[tp].GetId()) <= 6 || quenched[tp].GetId() == 21) {
-                loss_rate(p, pos, tof, quenched[tp].GetId(), length, tlength);
+                loss_rate(p, pos, tof, quenched[tp].GetId(), length, tlength,
+                          event_id, &event_display_record_id, tp, quenched[tp].GetMom(),
+                          quenched[tp].GetD1(), quenched[tp].GetD2(), false);
             } else {
                 // If not colored particle, don't do energy loss, but propagate position and time manually
                 pos += p / p[3] * tof;
+                fill_event_display_record(event_id, event_display_record_id++,
+                                          tp, quenched[tp].GetId(), quenched[tp].GetMom(),
+                                          quenched[tp].GetD1(), quenched[tp].GetD2(),
+                                          -1, false, false,
+                                          pos_before, p_before, pos, p,
+                                          0., 0., 0., 0.,
+                                          "free_stream_step", "legacy_non_colored_free_stream");
             }
             // Update mother momenta and set positions to final
             quenched[tp].vSetP(p);
             quenched[tp].vSetRf(pos);
             quenched[tp].SetIsDone(true);
             quenched[tp].AddLength(length, tlength);
+            fill_event_display_segment(event_id, event_display_segment_id++,
+                                       tp, partons[tp], quenched[tp].GetMom(),
+                                       quenched[tp].GetD1(), quenched[tp].GetD2(),
+                                       false, quenched[tp].hadScattering(),
+                                       pos_before, p_before, pos, p,
+                                       length, tlength,
+                                       isColored(quenched[tp].GetId())
+                                           ? "legacy_energy_loss_segment"
+                                           : "legacy_free_stream_segment");
             // If it got fully quenched, quenched descendance and exit
             if (p[3] == 0.) {
                 for (size_t j = w; j > 0; j--) {
@@ -316,6 +800,11 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
         life[i].effective_time = life[i].resolve_abs;
     }
 
+    // Build the finite-LRES effective shower tree.  A daughter pair should not
+    // become visible to the medium before an unresolved ancestor is visible, and
+    // the two daughters of one splitting must become visible together.  The
+    // iteration below pulls ancestor/sibling effective times earlier until this
+    // ordered medium-resolution tree is self-consistent.
     bool changed = true;
     while (changed) {
         changed = false;
@@ -340,6 +829,9 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
         }
     }
 
+    // If a node and its parent have the same effective time, that parent would
+    // have zero lifetime as a separate medium object.  Collapse such nodes so
+    // propagation is done only for finite-duration effective charges.
     changed = true;
     while (changed) {
         changed = false;
@@ -355,6 +847,9 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
         }
     }
 
+    // live_time is the duration for which each effective object propagates
+    // before the medium resolves its effective daughter.  Final leaves are
+    // handled later with a long final-flight time.
     std::vector<int> effective_daughter(n, -1);
     for (size_t i = 0; i < n; ++i) {
         const int mom = effective_mom[i];
@@ -382,6 +877,131 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
     }
     std::vector<Quench> lres_moliere_particles;
     std::vector<Quench> local_recoiled;
+    std::vector<std::string> history_records;
+    const int event_id = history_event_counter_++;
+    int event_display_segment_id = 0;
+    int event_display_record_id = 0;
+    const std::string history_mode =
+        do_moliere_dynamic_daughter_unresolved_resolution_
+            ? "dynamic_daughter_unresolved_resolution"
+            : (do_moliere_dynamic_unresolved_resolution_
+                   ? "dynamic_unresolved_resolution"
+                   : (do_moliere_on_unresolved_partons_ ? "individual_unresolved" : "coherent_unresolved"));
+    auto emit = [&](const std::string &type, int parton_id, int parent_id, int d1, int d2, double t,
+                    const std::array<double,4> &pos, const std::array<double,4> &p, double qperp,
+                    const std::string &label, const std::string &note) {
+        if (do_event_display_) {
+            const int pdg_id =
+                (parton_id >= 0 && parton_id < static_cast<int>(partons.size()))
+                    ? partons[parton_id].GetId()
+                    : 0;
+            fill_event_display_record(event_id, event_display_record_id++,
+                                      parton_id, pdg_id, parent_id, d1, d2,
+                                      -1, type.find("unresolved") != std::string::npos,
+                                      false, pos, p, pos, p, qperp, 0., 0., 0.,
+                                      type, label + ":" + note);
+        }
+        if (dump_hybrid_evolution_history_) {
+            std::ostringstream os;
+            os << std::setprecision(10)
+               << event_id << '\t'
+               << history_mode << '\t'
+               << type << '\t'
+               << parton_id << '\t'
+               << parent_id << '\t'
+               << d1 << '\t'
+               << d2 << '\t'
+               << t << '\t'
+               << pos[0] << '\t' << pos[1] << '\t' << pos[2] << '\t'
+               << p[0] << '\t' << p[1] << '\t' << p[2] << '\t' << p[3] << '\t'
+               << qperp << '\t'
+               << label << '\t'
+               << note;
+            history_records.push_back(os.str());
+        }
+    };
+    auto make_moliere_scattering_callback =
+        [&](int parton_id, int pdg_id, int parent_id, int d1, int d2,
+            bool is_unresolved, const std::string &label) {
+            return moliere::ScatteringCallback(
+                [&, parton_id, pdg_id, parent_id, d1, d2, is_unresolved, label]
+                (const moliere::ScatteringCandidate &candidate) {
+                    fill_event_display_record(event_id, event_display_record_id++,
+                                              parton_id, pdg_id, parent_id, d1, d2,
+                                              -1, is_unresolved, true,
+                                              candidate.pos, candidate.p_before,
+                                              candidate.pos, candidate.p_after,
+                                              candidate.qperp, 0., 0., 0.,
+                                              "moliere_scattering", label);
+                    fill_event_display_record(event_id, event_display_record_id++,
+                                              -1, candidate.recoiler_id, parton_id, -1, -1,
+                                              parton_id, is_unresolved, true,
+                                              candidate.pos, candidate.recoiler_p,
+                                              candidate.pos, candidate.recoiler_p,
+                                              0., 0., 0., 0.,
+                                              "medium_response", "moliere_recoiler");
+                    fill_event_display_record(event_id, event_display_record_id++,
+                                              -1, candidate.hole_id, parton_id, -1, -1,
+                                              parton_id, is_unresolved, true,
+                                              candidate.pos, candidate.hole_p,
+                                              candidate.pos, candidate.hole_p,
+                                              0., 0., 0., 0.,
+                                              "medium_response", "moliere_hole");
+                    return moliere::ScatteringDecision::Apply;
+                });
+        };
+    auto make_moliere_step_callback =
+        [&](int parton_id, int pdg_id, int parent_id, int d1, int d2,
+            bool is_unresolved, const std::string &label) {
+            return moliere::PropagationStepCallback(
+                [&, parton_id, pdg_id, parent_id, d1, d2, is_unresolved, label]
+                (const moliere::PropagationStep &step) {
+                    fill_event_display_record(event_id, event_display_record_id++,
+                                              parton_id, pdg_id, parent_id, d1, d2,
+                                              -1, is_unresolved, step.in_medium != 0,
+                                              step.pos_before, step.p_before,
+                                              step.pos_after, step.p_after,
+                                              std::sqrt((step.p_after[0] - step.p_before[0]) *
+                                                        (step.p_after[0] - step.p_before[0]) +
+                                                        (step.p_after[1] - step.p_before[1]) *
+                                                        (step.p_after[1] - step.p_before[1])),
+                                              step.temperature, step.step, 0.,
+                                              "moliere_propagation_step", label);
+                });
+        };
+
+    for (size_t i = 0; i < n; ++i) {
+        const int mom = quenched[i].GetMom();
+        emit("split", static_cast<int>(i), mom, quenched[i].GetD1(), quenched[i].GetD2(),
+             life[i].creation, life[i].ri, partons[i].vGetP(), 0.0, "shower_branch", "formation_time");
+        if (mom >= 0 && mom < static_cast<int>(n)) {
+            const int sib = brother[i];
+            if (sib >= 0 && sib < static_cast<int>(n)) {
+                const double dr = deltaPhiXYFromP(partons[i].vGetP(), partons[sib].vGetP());
+                emit("opening_angle", static_cast<int>(i), mom, static_cast<int>(i), sib,
+                     life[i].creation, life[i].ri, partons[i].vGetP(), dr, "deltaPhi_xy", "at_creation");
+            }
+        }
+    }
+
+    for (size_t i = 0; i < n; ++i) {
+        const int d1 = quenched[i].GetD1();
+        const int d2 = quenched[i].GetD2();
+        const bool has_unresolved_pair =
+            d1 >= 0 && d2 >= 0 &&
+            d1 < static_cast<int>(n) && d2 < static_cast<int>(n) &&
+            effective_mom[d1] == static_cast<int>(i) && effective_mom[d2] == static_cast<int>(i) &&
+            life[d1].effective_time > life[i].effective_time &&
+            life[d2].effective_time > life[i].effective_time;
+        if (!has_unresolved_pair) continue;
+        const double t0 = life[i].effective_time;
+        const double t1 = std::min(life[d1].effective_time, life[d2].effective_time);
+        if (t1 <= t0) continue;
+        emit("unresolved_region_start", static_cast<int>(i), quenched[i].GetMom(), d1, d2,
+             t0, life[i].ri, partons[i].vGetP(), 0.0, "deltaR<Lres", "unresolved_by_Lres");
+        emit("resolution", static_cast<int>(i), quenched[i].GetMom(), d1, d2,
+             t1, life[i].rf, partons[i].vGetP(), 0.0, "deltaR>=Lres", "resolved_by_medium");
+    }
 
     for (int final_id : final_ids) {
         int ind = final_id;
@@ -441,6 +1061,9 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
             const double vac_e = vac_p[3];
             const double dt = life[idx].effective_time - life[idx].creation;
             std::array<double,4> pos = life[idx].ri;
+            // Start the effective segment at the vacuum shower location
+            // corresponding to its effective resolution time.  The momentum p
+            // carries the accumulated quenching inherited from its ancestor.
             if (vac_e != 0.) {
                 pos[0] += vac_p[0] / vac_e * dt;
                 pos[1] += vac_p[1] / vac_e * dt;
@@ -455,20 +1078,552 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
 
             double length = 0.;
             double tlength = 0.;
+            const auto p_segment_start = p;
+            const auto pos_segment_start = pos;
+            const int d1_segment = quenched[idx].GetD1();
+            const int d2_segment = quenched[idx].GetD2();
+            const bool segment_has_unresolved_pair =
+                d1_segment >= 0 && d2_segment >= 0 &&
+                d1_segment < static_cast<int>(n) && d2_segment < static_cast<int>(n) &&
+                effective_mom[d1_segment] == idx && effective_mom[d2_segment] == idx &&
+                life[d1_segment].effective_time > life[idx].effective_time &&
+                life[d2_segment].effective_time > life[idx].effective_time;
+            std::string segment_type = "lres_zero_momentum_segment";
             if (isColored(partons[idx].GetId())) {
                 if (do_elastic_) {
-                    // LRES has already selected idx as the currently resolved
-                    // color object. Moliere scatters that object until its
-                    // finite-resolution lifetime ends; daughters enter later.
-                    moliere::propagate_segment(p, pos, tof, partons[idx].GetId(), nr_, kappa_, alpha_,
-                                               tmethod_, mode_, ebe_hydro_, compat_moliere_legacy_hydro_,
-                                               hydro_profile_, lres_moliere_particles, qhad[idx], qorient[idx]);
+                    const auto p_before = p;
+                    const auto pos_before = pos;
+                    const int d1 = d1_segment;
+                    const int d2 = d2_segment;
+                    const bool has_unresolved_pair = segment_has_unresolved_pair;
+
+                    // Unresolved Moliere mode precedence:
+                    //   D: daughter-candidate dynamic dipole resolution;
+                    //   C: parent-candidate dynamic dipole resolution;
+                    //   B: propagate unresolved daughters independently;
+                    //   A: default coherent unresolved parent.
+                    if (do_moliere_dynamic_daughter_unresolved_resolution_ && has_unresolved_pair) {
+                        segment_type = "modeD_dynamic_daughter_unresolved";
+                        ++n_unresolved_segments_dynamic_;
+                        const double total_end = pos[3] + tof;
+                        bool elastically_decohered = false;
+
+                        // Mode D: during a geometrically unresolved LRES interval, use
+                        // daughter-level Moliere candidates to test whether a hard kick
+                        // resolves the dipole.  Until a candidate passes q_perp*d_perp
+                        // > c_res, continuous energy loss and unresolved kicks act on
+                        // the coherent parent.
+                        while (!elastically_decohered && p[3] > 0. && pos[3] < total_end - 1.e-9) {
+                            const double remaining = std::max(0., total_end - pos[3]);
+                            const double vac_parent_e = partons[idx].vGetP()[3];
+                            const double frac = (vac_parent_e != 0.) ? p[3] / vac_parent_e : 0.;
+                            auto p1 = partons[d1].vGetP() * frac;
+                            auto p2 = partons[d2].vGetP() * frac;
+                            const double daughter_e_sum = p1[3] + p2[3];
+                            const double share1 = (daughter_e_sum > 0.) ? p1[3] / daughter_e_sum : 0.5;
+                            const double share2 = 1. - share1;
+                            const auto parent_mismatch = p - (p1 + p2);
+                            p1 += parent_mismatch * share1;
+                            p2 += parent_mismatch * share2;
+
+                            auto pos1 = pos;
+                            auto pos2 = pos;
+                            int had1 = qhad[d1];
+                            int had2 = qhad[d2];
+                            if (qhad[idx] == 1 || qhad[idx] == 2) {
+                                had1 = 2;
+                                had2 = 2;
+                            }
+                            auto orient1 = orientationFor(p1);
+                            auto orient2 = orientationFor(p2);
+
+                            struct DaughterProbe {
+                                bool found = false;
+                                int daughter = -1;
+                                moliere::ScatteringCandidate candidate;
+                                std::array<double,4> p = {0., 0., 0., 0.};
+                                std::array<double,4> pos = {0., 0., 0., 0.};
+                                int had = 0;
+                                std::array<double,4> orient = {0., 0., 0., 1.};
+                                numrand rng;
+                            };
+
+                            auto probe_daughter = [&](int daughter, std::array<double,4> p_start,
+                                                      std::array<double,4> pos_start, int had_start,
+                                                      std::array<double,4> orient_start,
+                                                      numrand rng_start) {
+                                DaughterProbe probe;
+                                probe.daughter = daughter;
+                                probe.p = p_start;
+                                probe.pos = pos_start;
+                                probe.had = had_start;
+                                probe.orient = orient_start;
+                                probe.rng = rng_start;
+                                auto callback = [&](const moliere::ScatteringCandidate &candidate) {
+                                    probe.found = true;
+                                    probe.candidate = candidate;
+                                    return moliere::ScatteringDecision::StopBeforeApply;
+                                };
+                                moliere::propagate_segment_with_scattering_callback(
+                                    probe.p, probe.pos, remaining, partons[daughter].GetId(),
+                                    probe.rng, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
+                                    compat_moliere_legacy_hydro_, hydro_profile_,
+                                    lres_moliere_particles, probe.had, probe.orient, callback);
+                                return probe;
+                            };
+
+                            DaughterProbe probe1 = probe_daughter(d1, p1, pos1, had1, orient1, nr_);
+                            DaughterProbe probe2 = probe_daughter(d2, p2, pos2, had2, orient2, probe1.rng);
+                            DaughterProbe chosen;
+                            nr_ = probe2.rng;
+                            if (probe1.found && probe2.found) {
+                                chosen = probe1.candidate.pos[3] <= probe2.candidate.pos[3] ? probe1 : probe2;
+                            } else if (probe1.found) {
+                                chosen = probe1;
+                            } else if (probe2.found) {
+                                chosen = probe2;
+                            } else {
+                                loss_rate(p, pos, remaining, partons[idx].GetId(), length, tlength,
+                                          event_id, &event_display_record_id, idx, quenched[idx].GetMom(),
+                                          d1, d2, true);
+                                break;
+                            }
+
+                            const double candidate_time = chosen.candidate.pos[3];
+                            const double coherent_tof =
+                                std::max(0., std::min(candidate_time, total_end) - pos[3]);
+                            // Before the first candidate scattering, the pair is
+                            // still unresolved by LRES, so continuous HYBRID
+                            // energy loss acts on the coherent parent.
+                            if (coherent_tof > 1.e-9 && p[3] > 0.) {
+                                loss_rate(p, pos, coherent_tof, partons[idx].GetId(), length, tlength,
+                                          event_id, &event_display_record_id, idx, quenched[idx].GetMom(),
+                                          d1, d2, true);
+                            }
+                            if (pos[3] < candidate_time) {
+                                pos = chosen.candidate.pos;
+                            }
+
+                            const double dperp = compute_unresolved_pair_dperp(
+                                partons[d1].vGetP(), partons[d2].vGetP(),
+                                life[d1].creation, chosen.candidate.pos[3]);
+                            const double qd = chosen.candidate.qperp * dperp;
+                            ++n_unresolved_candidate_scatters_;
+                            sum_qperp_dperp_unresolved_candidates_ += qd;
+                            const bool resolves = passes_dynamic_moliere_resolution_test(
+                                chosen.candidate.qperp, dperp, moliere_unresolved_resolution_c_);
+                            emit("dynamic_resolution_test", chosen.daughter, idx, d1, d2,
+                                 chosen.candidate.pos[3], chosen.candidate.pos,
+                                 chosen.candidate.p_after, qd, "qperp_dperp",
+                                 resolves ? "daughter_candidate_resolves_dipole"
+                                          : "daughter_candidate_coherent_dipole");
+
+                            if (!resolves) {
+                                ++n_unresolved_coherent_scatters_;
+                                const double previous_segment_time = pos[3];
+                                // The candidate was generated from a daughter
+                                // probe, but its wavelength is too long to
+                                // resolve the dipole.  Convert it into one
+                                // coherent parent kick and one recoil/hole
+                                // source, then continue looking for later
+                                // candidate scatterings.
+                                apply_resolved_daughter_kick(chosen.candidate, p,
+                                                             lres_moliere_particles,
+                                                             qhad[idx], qorient[idx]);
+                                pos = chosen.candidate.pos;
+                                if (pos[3] <= previous_segment_time) {
+                                    pos[3] = std::min(total_end, previous_segment_time + 1.e-6);
+                                }
+                                emit("moliere_kick", idx, quenched[idx].GetMom(), d1, d2,
+                                     chosen.candidate.pos[3], chosen.candidate.pos,
+                                     p, chosen.candidate.qperp,
+                                     "q_perp", "dynamic_daughter_coherent_parent_kick");
+                                continue;
+                            }
+
+                            ++n_unresolved_resolving_scatters_;
+                            ++n_unresolved_pairs_elastically_decohered_;
+                            elastically_decohered = true;
+
+                            // A resolving candidate breaks elastic coherence.
+                            // Rebuild daughters from the updated parent after
+                            // pre-candidate coherent energy loss, then apply
+                            // only the sampled kick delta to the struck daughter.
+                            const double vac_parent_e_after_loss = partons[idx].vGetP()[3];
+                            const double frac_after_loss =
+                                (vac_parent_e_after_loss != 0.) ? p[3] / vac_parent_e_after_loss : 0.;
+                            p1 = partons[d1].vGetP() * frac_after_loss;
+                            p2 = partons[d2].vGetP() * frac_after_loss;
+                            const double daughter_e_sum_after_loss = p1[3] + p2[3];
+                            const double share1_after_loss =
+                                (daughter_e_sum_after_loss > 0.) ? p1[3] / daughter_e_sum_after_loss : 0.5;
+                            const double share2_after_loss = 1. - share1_after_loss;
+                            const auto parent_mismatch_after_loss = p - (p1 + p2);
+                            p1 += parent_mismatch_after_loss * share1_after_loss;
+                            p2 += parent_mismatch_after_loss * share2_after_loss;
+                            pos1 = pos;
+                            pos2 = pos;
+
+                            if (chosen.daughter == d1) {
+                                apply_resolved_daughter_kick(chosen.candidate, p1,
+                                                             lres_moliere_particles, had1, orient1);
+                            } else {
+                                apply_resolved_daughter_kick(chosen.candidate, p2,
+                                                             lres_moliere_particles, had2, orient2);
+                            }
+                            emit("moliere_kick", chosen.daughter, idx, d1, d2,
+                                 chosen.candidate.pos[3], chosen.candidate.pos,
+                                 (chosen.daughter == d1) ? p1 : p2,
+                                 chosen.candidate.qperp,
+                                 "q_perp", "dynamic_daughter_resolving_kick");
+                            emit("dynamic_resolution", chosen.daughter, idx, d1, d2,
+                                 chosen.candidate.pos[3], chosen.candidate.pos,
+                                 p1 + p2, qd, "qperp_dperp",
+                                 "daughter_candidate_elastic_decoherence");
+
+                            const double remaining_after = std::max(0., total_end - chosen.candidate.pos[3]);
+                            if (remaining_after > 0. && p1[3] > 0.) {
+                                auto cb = make_moliere_scattering_callback(
+                                    d1, partons[d1].GetId(), idx, d1, d2, true,
+                                    "modeD_post_decoherence_daughter_scattering");
+                                auto step_cb = make_moliere_step_callback(
+                                    d1, partons[d1].GetId(), idx, d1, d2, true,
+                                    "modeD_post_decoherence_daughter_step");
+                                moliere::propagate_segment_with_scattering_callback(
+                                    p1, pos1, remaining_after, partons[d1].GetId(),
+                                    nr_, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
+                                    compat_moliere_legacy_hydro_, hydro_profile_,
+                                    lres_moliere_particles, had1, orient1, cb, step_cb);
+                            }
+                            if (remaining_after > 0. && p2[3] > 0.) {
+                                auto cb = make_moliere_scattering_callback(
+                                    d2, partons[d2].GetId(), idx, d1, d2, true,
+                                    "modeD_post_decoherence_daughter_scattering");
+                                auto step_cb = make_moliere_step_callback(
+                                    d2, partons[d2].GetId(), idx, d1, d2, true,
+                                    "modeD_post_decoherence_daughter_step");
+                                moliere::propagate_segment_with_scattering_callback(
+                                    p2, pos2, remaining_after, partons[d2].GetId(),
+                                    nr_, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
+                                    compat_moliere_legacy_hydro_, hydro_profile_,
+                                    lres_moliere_particles, had2, orient2, cb, step_cb);
+                            }
+
+                            qhad[d1] = had1;
+                            qhad[d2] = had2;
+                            qorient[d1] = orient1;
+                            qorient[d2] = orient2;
+                            // The surrounding finite-LRES code still expects
+                            // one effective object until the original LRES
+                            // segment boundary, so recombine the independently
+                            // propagated daughters at the end of this segment.
+                            p = p1 + p2;
+                            if (p[3] > 0.) {
+                                pos[0] = (p1[3] * pos1[0] + p2[3] * pos2[0]) / p[3];
+                                pos[1] = (p1[3] * pos1[1] + p2[3] * pos2[1]) / p[3];
+                                pos[2] = (p1[3] * pos1[2] + p2[3] * pos2[2]) / p[3];
+                            } else {
+                                pos[0] = 0.;
+                                pos[1] = 0.;
+                                pos[2] = 0.;
+                            }
+                            pos[3] = std::max(pos1[3], pos2[3]);
+                            qhad[idx] = (had1 == 1 || had1 == 2 || had2 == 1 || had2 == 2) ? 2 : qhad[idx];
+                            qorient[idx] = orientationFor(p);
+                        }
+                    } else if (do_moliere_dynamic_unresolved_resolution_ && has_unresolved_pair) {
+                        segment_type = "modeC_dynamic_parent_unresolved";
+                        ++n_unresolved_segments_dynamic_;
+                        const double total_end = pos[3] + tof;
+                        bool elastically_decohered = false;
+                        moliere::ScatteringCandidate resolving_candidate;
+                        double resolving_qd = 0.;
+
+                        auto dynamic_callback = [&](const moliere::ScatteringCandidate &candidate) {
+                            // Mode C samples a candidate on the coherent parent.
+                            // The q_perp*d_perp test decides whether this parent
+                            // scattering should remain coherent or should
+                            // elastically decohere the unresolved daughter pair.
+                            const double dperp = compute_unresolved_pair_dperp(
+                                partons[d1].vGetP(), partons[d2].vGetP(),
+                                life[d1].creation, candidate.pos[3]);
+                            const double qd = candidate.qperp * dperp;
+                            ++n_unresolved_candidate_scatters_;
+                            sum_qperp_dperp_unresolved_candidates_ += qd;
+
+                            const bool resolves = passes_dynamic_moliere_resolution_test(
+                                candidate.qperp, dperp, moliere_unresolved_resolution_c_);
+                            emit("dynamic_resolution_test", idx, quenched[idx].GetMom(), d1, d2,
+                                 candidate.pos[3], candidate.pos, candidate.p_after,
+                                 qd, "qperp_dperp",
+                                 resolves ? "resolves_dipole" : "coherent_dipole");
+
+                            if (!resolves) {
+                                ++n_unresolved_coherent_scatters_;
+                                return apply_coherent_unresolved_kick();
+                            }
+
+                            ++n_unresolved_resolving_scatters_;
+                            elastically_decohered = true;
+                            resolving_candidate = candidate;
+                            resolving_qd = qd;
+                            return moliere::ScatteringDecision::StopBeforeApply;
+                        };
+
+                        moliere::propagate_segment_with_scattering_callback(
+                            p, pos, tof, partons[idx].GetId(), nr_, kappa_, alpha_,
+                            tmethod_, mode_, ebe_hydro_, compat_moliere_legacy_hydro_,
+                            hydro_profile_, lres_moliere_particles, qhad[idx],
+                            qorient[idx], dynamic_callback,
+                            make_moliere_step_callback(idx, partons[idx].GetId(), quenched[idx].GetMom(),
+                                                       d1, d2, true, "modeC_dynamic_parent_step"));
+
+                        if (elastically_decohered) {
+                            ++n_unresolved_pairs_elastically_decohered_;
+
+                            const double vac_parent_e = partons[idx].vGetP()[3];
+                            const double frac = (vac_parent_e != 0.) ? p[3] / vac_parent_e : 0.;
+                            auto p1 = partons[d1].vGetP() * frac;
+                            auto p2 = partons[d2].vGetP() * frac;
+                            const double daughter_e_sum = p1[3] + p2[3];
+                            const double share1 = (daughter_e_sum > 0.) ? p1[3] / daughter_e_sum : 0.5;
+                            const double share2 = 1. - share1;
+                            const auto parent_mismatch = p - (p1 + p2);
+                            p1 += parent_mismatch * share1;
+                            p2 += parent_mismatch * share2;
+                            auto pos1 = pos;
+                            auto pos2 = pos;
+
+                            int had1 = qhad[d1];
+                            int had2 = qhad[d2];
+                            if (qhad[idx] == 1 || qhad[idx] == 2) {
+                                had1 = 2;
+                                had2 = 2;
+                            }
+                            auto orient1 = orientationFor(p1);
+                            auto orient2 = orientationFor(p2);
+
+                            // Because the candidate was generated from the
+                            // coherent parent, Mode C does not know which
+                            // daughter was struck microscopically.  Assign the
+                            // resolving kick to a daughter with probability
+                            // proportional to the positive daughter energy.
+                            const double delta_e =
+                                resolving_candidate.p_after[3] - resolving_candidate.p_before[3];
+                            double prob_d1 = 0.5;
+                            const double positive_e_sum = std::max(0., p1[3]) + std::max(0., p2[3]);
+                            if (positive_e_sum > 0.) {
+                                prob_d1 = std::max(0., p1[3]) / positive_e_sum;
+                            }
+                            int struck = (nr_.rando() < prob_d1) ? d1 : d2;
+                            if (struck == d1 && p1[3] + delta_e <= 0. && p2[3] + delta_e > 0.) struck = d2;
+                            if (struck == d2 && p2[3] + delta_e <= 0. && p1[3] + delta_e > 0.) struck = d1;
+
+                            if (struck == d1) {
+                                apply_resolved_daughter_kick(resolving_candidate, p1,
+                                                             lres_moliere_particles, had1, orient1);
+                                emit("moliere_kick", d1, idx, d1, d2,
+                                     resolving_candidate.pos[3], resolving_candidate.pos,
+                                     p1, resolving_candidate.qperp,
+                                     "q_perp", "dynamic_resolving_daughter_kick");
+                            } else {
+                                apply_resolved_daughter_kick(resolving_candidate, p2,
+                                                             lres_moliere_particles, had2, orient2);
+                                emit("moliere_kick", d2, idx, d1, d2,
+                                     resolving_candidate.pos[3], resolving_candidate.pos,
+                                     p2, resolving_candidate.qperp,
+                                     "q_perp", "dynamic_resolving_daughter_kick");
+                            }
+                            emit("dynamic_resolution", struck, idx, d1, d2,
+                                 resolving_candidate.pos[3], resolving_candidate.pos,
+                                 p1 + p2, resolving_qd,
+                                 "qperp_dperp", "elastic_decoherence");
+
+                            const double remaining_after = std::max(0., total_end - pos[3]);
+                            if (remaining_after > 0. && p1[3] > 0.) {
+                                auto cb = make_moliere_scattering_callback(
+                                    d1, partons[d1].GetId(), idx, d1, d2, true,
+                                    "modeC_post_decoherence_daughter_scattering");
+                                auto step_cb = make_moliere_step_callback(
+                                    d1, partons[d1].GetId(), idx, d1, d2, true,
+                                    "modeC_post_decoherence_daughter_step");
+                                moliere::propagate_segment_with_scattering_callback(
+                                    p1, pos1, remaining_after, partons[d1].GetId(),
+                                    nr_, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
+                                    compat_moliere_legacy_hydro_, hydro_profile_,
+                                    lres_moliere_particles, had1, orient1, cb, step_cb);
+                            }
+                            if (remaining_after > 0. && p2[3] > 0.) {
+                                auto cb = make_moliere_scattering_callback(
+                                    d2, partons[d2].GetId(), idx, d1, d2, true,
+                                    "modeC_post_decoherence_daughter_scattering");
+                                auto step_cb = make_moliere_step_callback(
+                                    d2, partons[d2].GetId(), idx, d1, d2, true,
+                                    "modeC_post_decoherence_daughter_step");
+                                moliere::propagate_segment_with_scattering_callback(
+                                    p2, pos2, remaining_after, partons[d2].GetId(),
+                                    nr_, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
+                                    compat_moliere_legacy_hydro_, hydro_profile_,
+                                    lres_moliere_particles, had2, orient2, cb, step_cb);
+                            }
+
+                            qhad[d1] = had1;
+                            qhad[d2] = had2;
+                            qorient[d1] = orient1;
+                            qorient[d2] = orient2;
+
+                            p = p1 + p2;
+                            if (p[3] > 0.) {
+                                pos[0] = (p1[3] * pos1[0] + p2[3] * pos2[0]) / p[3];
+                                pos[1] = (p1[3] * pos1[1] + p2[3] * pos2[1]) / p[3];
+                                pos[2] = (p1[3] * pos1[2] + p2[3] * pos2[2]) / p[3];
+                            } else {
+                                pos[0] = 0.;
+                                pos[1] = 0.;
+                                pos[2] = 0.;
+                            }
+                            pos[3] = std::max(pos1[3], pos2[3]);
+                            qhad[idx] = (had1 == 1 || had1 == 2 || had2 == 1 || had2 == 2) ? 2 : qhad[idx];
+                            qorient[idx] = orientationFor(p);
+                        }
+                    } else if (do_moliere_on_unresolved_partons_ && has_unresolved_pair) {
+                        segment_type = "modeB_individual_unresolved_daughters";
+                        // Mode B keeps the LRES timeline unchanged but lets
+                        // Moliere act on the unresolved daughters separately.
+                        // The parent energy sets the daughter energy scale;
+                        // after propagation the daughters are recombined into
+                        // the effective parent required by the LRES segment.
+                        const double vac_parent_e = partons[idx].vGetP()[3];
+                        const double frac = (vac_parent_e != 0.) ? p[3] / vac_parent_e : 0.;
+
+                        auto p1 = partons[d1].vGetP() * frac;
+                        auto p2 = partons[d2].vGetP() * frac;
+                        auto pos1 = pos;
+                        auto pos2 = pos;
+                        const auto p1_before = p1;
+                        const auto p2_before = p2;
+                        const auto pos1_before = pos1;
+                        const auto pos2_before = pos2;
+
+                        int had1 = qhad[d1];
+                        int had2 = qhad[d2];
+                        auto orient1 = qorient[d1];
+                        auto orient2 = qorient[d2];
+
+                        auto cb1 = make_moliere_scattering_callback(
+                            d1, partons[d1].GetId(), idx, d1, d2, true,
+                            "modeB_unresolved_daughter_scattering");
+                        auto step_cb1 = make_moliere_step_callback(
+                            d1, partons[d1].GetId(), idx, d1, d2, true,
+                            "modeB_unresolved_daughter_step");
+                        moliere::propagate_segment_with_scattering_callback(
+                            p1, pos1, tof, partons[d1].GetId(), nr_, kappa_, alpha_,
+                            tmethod_, mode_, ebe_hydro_, compat_moliere_legacy_hydro_,
+                            hydro_profile_, lres_moliere_particles, had1, orient1, cb1, step_cb1);
+                        auto cb2 = make_moliere_scattering_callback(
+                            d2, partons[d2].GetId(), idx, d1, d2, true,
+                            "modeB_unresolved_daughter_scattering");
+                        auto step_cb2 = make_moliere_step_callback(
+                            d2, partons[d2].GetId(), idx, d1, d2, true,
+                            "modeB_unresolved_daughter_step");
+                        moliere::propagate_segment_with_scattering_callback(
+                            p2, pos2, tof, partons[d2].GetId(), nr_, kappa_, alpha_,
+                            tmethod_, mode_, ebe_hydro_, compat_moliere_legacy_hydro_,
+                            hydro_profile_, lres_moliere_particles, had2, orient2, cb2, step_cb2);
+
+                        qhad[d1] = had1;
+                        qhad[d2] = had2;
+                        qorient[d1] = orient1;
+                        qorient[d2] = orient2;
+
+                        const double qperp1 = std::sqrt((p1[0] - p1_before[0]) * (p1[0] - p1_before[0]) +
+                                                        (p1[1] - p1_before[1]) * (p1[1] - p1_before[1]));
+                        const double qperp2 = std::sqrt((p2[0] - p2_before[0]) * (p2[0] - p2_before[0]) +
+                                                        (p2[1] - p2_before[1]) * (p2[1] - p2_before[1]));
+                        if (qperp1 > 1.e-12) {
+                            emit("moliere_kick", d1, idx, d1, d2,
+                                 pos1_before[3], pos1_before, p1, qperp1,
+                                 "q_perp", "unresolved_daughter_kick");
+                        }
+                        if (qperp2 > 1.e-12) {
+                            emit("moliere_kick", d2, idx, d1, d2,
+                                 pos2_before[3], pos2_before, p2, qperp2,
+                                 "q_perp", "unresolved_daughter_kick");
+                        }
+
+                        p = p1 + p2;
+                        if (p[3] > 0.) {
+                            pos[0] = (p1[3] * pos1[0] + p2[3] * pos2[0]) / p[3];
+                            pos[1] = (p1[3] * pos1[1] + p2[3] * pos2[1]) / p[3];
+                            pos[2] = (p1[3] * pos1[2] + p2[3] * pos2[2]) / p[3];
+                        } else {
+                            pos[0] = 0.;
+                            pos[1] = 0.;
+                            pos[2] = 0.;
+                        }
+                        pos[3] = std::max(pos1[3], pos2[3]);
+                        qhad[idx] = (had1 == 1 || had1 == 2 || had2 == 1 || had2 == 2) ? 2 : qhad[idx];
+                        qorient[idx] = orientationFor(p);
+                    } else {
+                        segment_type = has_unresolved_pair ? "modeA_coherent_unresolved_parent"
+                                                           : "resolved_moliere_segment";
+                        // Mode A is the backward-compatible default.  If the
+                        // segment contains an unresolved pair, Moliere sees only
+                        // the coherent effective parent.  If no unresolved pair
+                        // is present, this is ordinary resolved-parton Moliere
+                        // propagation.
+                        auto cb = make_moliere_scattering_callback(
+                            idx, partons[idx].GetId(), quenched[idx].GetMom(), d1, d2,
+                            has_unresolved_pair, has_unresolved_pair
+                                                     ? "modeA_coherent_parent_scattering"
+                                                     : "resolved_parton_scattering");
+                        auto step_cb = make_moliere_step_callback(
+                            idx, partons[idx].GetId(), quenched[idx].GetMom(), d1, d2,
+                            has_unresolved_pair, has_unresolved_pair
+                                                     ? "modeA_coherent_parent_step"
+                                                     : "resolved_parton_step");
+                        moliere::propagate_segment_with_scattering_callback(
+                            p, pos, tof, partons[idx].GetId(), nr_, kappa_, alpha_,
+                            tmethod_, mode_, ebe_hydro_, compat_moliere_legacy_hydro_,
+                            hydro_profile_, lres_moliere_particles, qhad[idx], qorient[idx],
+                            cb, step_cb);
+                    }
+                    const double qperp = std::sqrt((p[0] - p_before[0]) * (p[0] - p_before[0]) +
+                                                   (p[1] - p_before[1]) * (p[1] - p_before[1]));
+                    if (qperp > 1.e-12) {
+                        const std::string kick_note =
+                            (do_moliere_dynamic_daughter_unresolved_resolution_ && has_unresolved_pair)
+                                ? "dynamic_daughter_unresolved_net_kick"
+                                : ((do_moliere_dynamic_unresolved_resolution_ && has_unresolved_pair)
+                                       ? "dynamic_unresolved_net_kick"
+                                       : (has_unresolved_pair ? "coherent_unresolved_kick" : "resolved_parton_kick"));
+                        emit("moliere_kick", idx, quenched[idx].GetMom(), d1, d2,
+                             pos_before[3], pos_before, p, qperp, "q_perp", kick_note);
+                    }
                 } else {
-                    loss_rate(p, pos, tof, partons[idx].GetId(), length, tlength);
+                    segment_type = "lres_energy_loss_segment";
+                    loss_rate(p, pos, tof, partons[idx].GetId(), length, tlength,
+                              event_id, &event_display_record_id, idx, quenched[idx].GetMom(),
+                              d1_segment, d2_segment, segment_has_unresolved_pair);
                 }
             } else if (p[3] != 0.) {
+                segment_type = "lres_free_stream_segment";
                 pos += p / p[3] * tof;
+                fill_event_display_record(event_id, event_display_record_id++,
+                                          idx, partons[idx].GetId(), quenched[idx].GetMom(),
+                                          d1_segment, d2_segment,
+                                          -1, segment_has_unresolved_pair, false,
+                                          pos_segment_start, p_segment_start, pos, p,
+                                          0., 0., 0., 0.,
+                                          "free_stream_step", "lres_free_stream");
             }
+
+            fill_event_display_segment(event_id, event_display_segment_id++,
+                                       idx, partons[idx], quenched[idx].GetMom(),
+                                       d1_segment, d2_segment,
+                                       segment_has_unresolved_pair, qhad[idx],
+                                       pos_segment_start, p_segment_start,
+                                       pos, p, length, tlength, segment_type);
 
             qstate[idx].p = p;
             qstate[idx].r = pos;
@@ -501,6 +1656,10 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
         std::vector<Quench> &recoiled_out = recoiled != nullptr ? *recoiled : local_recoiled;
         moliere::process_recoilers(lres_moliere_particles, nr_, kappa_, alpha_, tmethod_, mode_,
                                    ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, recoiled_out);
+        for (const auto &rp : recoiled_out) {
+            const std::string label = (rp.GetOrig() == "recoiler" || rp.GetOrig() == "hole") ? "response_parton" : "other";
+            emit("medium_response", -1, -1, -1, -1, rp.GetRi()[3], rp.GetRi(), rp.vGetP(), 0.0, label, rp.GetOrig());
+        }
     }
 
     for (size_t i = 0; i < n; ++i) {
@@ -515,9 +1674,26 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
         }
         quenched[i].SetIsDone(true);
     }
+
+    append_history_records(history_records);
 }
 
-void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, double tof, int id, double &length, double &tlength) {
+void EnergyLoss::append_history_records(const std::vector<std::string> &records) {
+    if (!dump_hybrid_evolution_history_ || hybrid_evolution_history_file_.empty() || records.empty()) return;
+    std::ofstream out(hybrid_evolution_history_file_, std::ios::app);
+    if (!out.is_open()) return;
+    if (out.tellp() == 0) {
+        out << "event_id\tmode\trecord_type\tparton_id\tparent_id\td1\td2\t"
+            << "time\tx\ty\tz\tpx\tpy\tpz\tE\tqperp\tlabel\tnote\n";
+    }
+    for (const auto &r : records) out << r << '\n';
+}
+
+void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, double tof, int id,
+                           double &length, double &tlength,
+                           int event_id, int *record_id,
+                           int parton_index, int parent_index,
+                           int d1, int d2, bool is_unresolved) {
     double Tc;
     if (tmethod_ == 0) Tc = 0.170;
     else Tc = 0.145;
@@ -547,6 +1723,12 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
     auto w = p / p[3];  // 4-velocity
 
     do {
+        const auto pos_step_start = pos;
+        const auto p_step_start = p;
+        double temp_for_record = 0.;
+        double step_length_before = length;
+        double step_tlength_before = tlength;
+        bool in_medium_for_record = false;
 #ifdef DO_SOURCE
         // Keep 4momentum before applying quenching this step
         auto p_prev = p;
@@ -577,6 +1759,8 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
         if (tau >= tau0h) {  // Hydro profile starting time
             double temp = 0.;
             hydro_profile_.getValues(tau, pos[0], pos[1], temp, vx, vy);
+            temp_for_record = temp;
+            in_medium_for_record = temp >= Tc;
 
             double vz = pos[2] / pos[3];
             double frap = atanh(vz);
@@ -733,6 +1917,20 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
                 tstep = tot - pos[3];
             }
             if (marker != 1) pos += w * tstep;
+        }
+
+        if (do_event_display_ && record_id != nullptr && event_id >= 0) {
+            fill_event_display_record(event_id, (*record_id)++, parton_index, id,
+                                      parent_index, d1, d2, -1,
+                                      is_unresolved, in_medium_for_record,
+                                      pos_step_start, p_step_start, pos, p,
+                                      std::sqrt((p[0] - p_step_start[0]) * (p[0] - p_step_start[0]) +
+                                                (p[1] - p_step_start[1]) * (p[1] - p_step_start[1])),
+                                      temp_for_record,
+                                      length - step_length_before,
+                                      tlength - step_tlength_before,
+                                      "energy_loss_step",
+                                      "hybrid_integration_step");
         }
 
 #ifdef DO_SOURCE

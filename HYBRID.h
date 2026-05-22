@@ -26,6 +26,11 @@ private:
     bool do_source_;
     bool do_elastic_;
     bool do_lres_;
+    bool do_moliere_on_unresolved_partons_;
+    bool do_moliere_dynamic_unresolved_resolution_;
+    bool do_moliere_dynamic_daughter_unresolved_resolution_;
+    bool dump_hybrid_evolution_history_;
+    bool do_event_display_;
     bool use_fixed_xy_;
     bool compat_moliere_legacy_hydro_;
 
@@ -40,6 +45,7 @@ private:
     int ebe_hydro_;
     int hadro_type_;
     double lres_rpower_;
+    double moliere_unresolved_resolution_c_;
     int seed_base_;
     int shower_seed_;
     int hybrid_seed_;
@@ -47,6 +53,8 @@ private:
     double fixed_x_;
     double fixed_y_;
     std::string tables_path_;
+    std::string hybrid_evolution_history_file_;
+    std::string event_display_file_;
 
     // Random number generator
     numrand nr_;

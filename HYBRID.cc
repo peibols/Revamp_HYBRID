@@ -24,6 +24,11 @@ HYBRID::HYBRID(const Config &cfg) :
       do_source_(cfg.getBoolOr("do_source", false)),
       do_elastic_(cfg.getBoolOr("do_elastic", false)),
       do_lres_(cfg.getBoolOr("do_lres", false)),
+      do_moliere_on_unresolved_partons_(cfg.getBoolOr("do_Moliere_on_unresolved_partons", false)),
+      do_moliere_dynamic_unresolved_resolution_(cfg.getBoolOr("do_Moliere_dynamic_unresolved_resolution", false)),
+      do_moliere_dynamic_daughter_unresolved_resolution_(cfg.getBoolOr("do_Moliere_dynamic_daughter_unresolved_resolution", false)),
+      dump_hybrid_evolution_history_(cfg.getBoolOr("dump_hybrid_evolution_history", false)),
+      do_event_display_(cfg.getBoolOr("doEventDisplay", false)),
       use_fixed_xy_(cfg.getBoolOr("use_fixed_xy", false)),
       compat_moliere_legacy_hydro_(cfg.getBoolOr("compat_moliere_legacy_hydro", true)),
       njob_(cfg.getIntOr("njob", 0)),
@@ -36,6 +41,7 @@ HYBRID::HYBRID(const Config &cfg) :
       ebe_hydro_(cfg.getIntOr("ebe_hydro", 0)),
       hadro_type_(cfg.getIntOr("hadro_type", cfg.getBoolOr("do_elastic", false) ? 1 : 0)),
       lres_rpower_(cfg.getDoubleOr("lres_rpower", cfg.getDoubleOr("rpower", 2.0))),
+      moliere_unresolved_resolution_c_(cfg.getDoubleOr("moliere_unresolved_resolution_c", 1.0)),
       seed_base_(getSeedBase(cfg)),
       shower_seed_(seed_base_ + kShowerSeedOffset),
       hybrid_seed_(seed_base_ + kHybridSeedOffset),
@@ -43,6 +49,8 @@ HYBRID::HYBRID(const Config &cfg) :
       fixed_x_(cfg.getDoubleOr("fixed_x", 0.0)),
       fixed_y_(cfg.getDoubleOr("fixed_y", 0.0)),
       tables_path_(cfg.getStringOr("tables_path", "")),
+      hybrid_evolution_history_file_(cfg.getStringOr("hybrid_evolution_history_file", "")),
+      event_display_file_(cfg.getStringOr("eventDisplayFile", "eventDisplay.root")),
       nr_(hybrid_seed_),
       tree_gen_(std::make_unique<TreeGenerator>()),
       hydro_profile_(std::make_unique<HydroProfile>()),
@@ -50,7 +58,16 @@ HYBRID::HYBRID(const Config &cfg) :
       lund_gen_(std::make_unique<LundGenerator>()),
       glauber_model_(std::make_unique<GlauberModel>()),
       energy_loss_(std::make_unique<EnergyLoss>(nr_, kappa_, alpha_, tmethod_, mode_,
-                                                ebe_hydro_, do_elastic_, do_lres_, lres_rpower_,
+                                                ebe_hydro_, do_elastic_, do_lres_,
+                                                do_moliere_on_unresolved_partons_,
+                                                do_moliere_dynamic_unresolved_resolution_,
+                                                do_moliere_dynamic_daughter_unresolved_resolution_,
+                                                moliere_unresolved_resolution_c_,
+                                                lres_rpower_,
+                                                dump_hybrid_evolution_history_,
+                                                hybrid_evolution_history_file_,
+                                                do_event_display_,
+                                                event_display_file_,
                                                 compat_moliere_legacy_hydro_,
                                                 tables_path_,
                                                 *hydro_profile_)) {
@@ -79,7 +96,26 @@ HYBRID::HYBRID(const Config &cfg) :
         std::cout << "Finite LRES requested"
                   << " rpower= " << lres_rpower_
                   << " (do_elastic= " << do_elastic_ << ")"
+                  << " (do_Moliere_on_unresolved_partons= "
+                  << do_moliere_on_unresolved_partons_ << ")"
+                  << " (do_Moliere_dynamic_unresolved_resolution= "
+                  << do_moliere_dynamic_unresolved_resolution_ << ")"
+                  << " (do_Moliere_dynamic_daughter_unresolved_resolution= "
+                  << do_moliere_dynamic_daughter_unresolved_resolution_ << ")"
+                  << " (moliere_unresolved_resolution_c= "
+                  << moliere_unresolved_resolution_c_ << ")"
                   << std::endl;
+    }
+    if (dump_hybrid_evolution_history_) {
+        std::cout << "Hybrid evolution history dump enabled";
+        if (!hybrid_evolution_history_file_.empty()) {
+            std::cout << " file= " << hybrid_evolution_history_file_;
+        }
+        std::cout << std::endl;
+    }
+    if (do_event_display_) {
+        std::cout << "Event-display ROOT segment dump enabled file= "
+                  << event_display_file_ << std::endl;
     }
     if (use_fixed_xy_) {
         std::cout << "Using fixed production vertex"
