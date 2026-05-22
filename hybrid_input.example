@@ -19,6 +19,21 @@ mode = 0
 # do_source: true/false
 # do_elastic: true/false (Moliere elastic scattering integration path)
 # do_lres: true/false (finite color-resolution energy-loss path)
+# do_Moliere_on_unresolved_partons: true applies Moliere to individual unresolved daughters.
+#                                   false keeps the default unresolved-effective-object scattering.
+# do_Moliere_dynamic_unresolved_resolution: true tests each parent-candidate unresolved hard
+#                                           Moliere scattering with q_perp*d_perp >
+#                                           moliere_unresolved_resolution_c.
+#                                           This takes precedence over do_Moliere_on_unresolved_partons.
+# do_Moliere_dynamic_daughter_unresolved_resolution: true generates candidate scatterings from
+#                                                    daughter-level attempts before the same
+#                                                    q_perp*d_perp test. This takes precedence
+#                                                    over the parent-candidate dynamic mode.
+# moliere_unresolved_resolution_c: O(1) dynamic dipole-resolution threshold.
+# dump_hybrid_evolution_history: write time-ordered LRES/Moliere/response records for event-display plots.
+# hybrid_evolution_history_file: output TSV path for those records (append mode).
+# doEventDisplay: write a ROOT TTree with one row per propagated parton time segment.
+# eventDisplayFile: output ROOT file used when doEventDisplay=true.
 # compat_moliere_legacy_hydro: true preserves exact Moliere_code averaged-hydro interpolation.
 # Set false to use unified MMI HydroProfile access for Moliere elastic.
 
@@ -27,6 +42,14 @@ do_quench = true
 #do_source = false
 #do_elastic = false
 #do_lres = false
+#do_Moliere_on_unresolved_partons = false
+#do_Moliere_dynamic_unresolved_resolution = false
+#do_Moliere_dynamic_daughter_unresolved_resolution = false
+#moliere_unresolved_resolution_c = 1.0
+#dump_hybrid_evolution_history = false
+#hybrid_evolution_history_file = hybrid_evolution_history.tsv
+#doEventDisplay = false
+#eventDisplayFile = eventDisplay.root
 #compat_moliere_legacy_hydro = true
 #rpower = 2.0
 
