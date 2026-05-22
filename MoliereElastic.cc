@@ -51,6 +51,21 @@ std::array<double,4> to_arr(const vector<double> &v) {
     return {v[0], v[1], v[2], v[3]};
 }
 
+double transverse_momentum_transfer(const vector<double> &p_before, const vector<double> &p_after) {
+    const double qx = p_after[0] - p_before[0];
+    const double qy = p_after[1] - p_before[1];
+    const double qz = p_after[2] - p_before[2];
+    const double pmag2 = p_before[0] * p_before[0] +
+                         p_before[1] * p_before[1] +
+                         p_before[2] * p_before[2];
+    const double qmag2 = qx * qx + qy * qy + qz * qz;
+    if (pmag2 <= 0.) return std::sqrt(qmag2);
+
+    const double qdotp = qx * p_before[0] + qy * p_before[1] + qz * p_before[2];
+    const double qparallel2 = qdotp * qdotp / pmag2;
+    return std::sqrt(std::max(0., qmag2 - qparallel2));
+}
+
 double gT(const HydroProfile &hydro_profile, double tau, double x, double y) {
     return hydro_profile.temperature(tau, x, y);
 }
@@ -224,7 +239,9 @@ FourVector BoostBack(double b[3], FourVector p) {
 void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numrand &nr, double kappa,
                double alpha, int tmethod, int model, int ebe_hydro,
                bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile, vector<Quench> &new_particles,
-               int &had_scattering, vector<double> &orient) {
+               int &had_scattering, vector<double> &orient,
+               const ScatteringCallback *scattering_callback = nullptr,
+               const PropagationStepCallback *step_callback = nullptr) {
     auto &workspaces = integration_workspaces();
     gsl_integration_workspace *wdk = workspaces.wdk;
     gsl_integration_workspace *wkcm = workspaces.wkcm;
@@ -254,12 +271,18 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
     vector<double> o_in = orient;
 
     do {
+        const vector<double> pos_step_start = pos;
+        const vector<double> p_step_start = p;
+        double temp_for_record = 0.;
+        double tau_for_record = 0.;
+        int in_medium_for_record = 0;
         p_prev = p;
 
         if (pos[3] == tot) marker = 1;
         if (pos[3] > tot) std::cout << " Warning: Went beyond tot= " << tot << " t= " << pos[3] << std::endl;
 
         double tau = std::sqrt(pos[3]*pos[3]-pos[2]*pos[2]);
+        tau_for_record = tau;
         if (tau != tau) {
             std::cout << " TAU Not a number z= " << pos[2] << " t= " << pos[3]
                       << " wz= " << w[2] << " en = " << p[3] << " pz= " << p[2] << "\n";
@@ -297,6 +320,8 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
             double temp = compat_moliere_legacy_hydro
                 ? gT_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta)
                 : gT(hydro_profile, tau, pos[0], pos[1]);
+            temp_for_record = temp;
+            in_medium_for_record = temp >= Tc ? 1 : 0;
 
             l_dist += step;
             double f_lore = w2 + lore*lore*(v2 - 2.*vscalw + vscalw*vscalw);
@@ -335,7 +360,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                     double deltime = f_step*temp/0.2;
                     vector<double> elscat = gen_particles(pp.x()/temp, pp.y()/temp, pp.z()/temp, id, deltime, wdk, wkcm, wx);
                     if (elscat[0] == 1) {
-                        had_scattering = 1;
+                        const vector<double> p_before_scattering = p;
                         FourVector pf(elscat[2]*temp, elscat[3]*temp, elscat[4]*temp,
                                       temp*std::sqrt(elscat[2]*elscat[2]+elscat[3]*elscat[3]+elscat[4]*elscat[4]));
                         pf = BoostBack(beta, pf);
@@ -371,22 +396,45 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                             }
                         }
 
+                        vector<double> p_after_scattering;
+                        vector<double> recoiler_p;
+                        int recoiler_id = 0;
                         if (iclose == 0) {
-                            p[0] = pf.x(); p[1] = pf.y(); p[2] = pf.z(); p[3] = pf.t();
-                            vector<double> vff{ff.x(), ff.y(), ff.z(), ff.t()};
-                            new_particles.emplace_back(Parton(vff, 100000000., 0., 0, -1, -1, ff_id, "recoiler", 0, 0, false));
-                            new_particles.back().vSetRi(to_arr(vpos));
+                            p_after_scattering = {pf.x(), pf.y(), pf.z(), pf.t()};
+                            recoiler_p = {ff.x(), ff.y(), ff.z(), ff.t()};
+                            recoiler_id = ff_id;
                         } else if (iclose == 1) {
-                            p[0] = ff.x(); p[1] = ff.y(); p[2] = ff.z(); p[3] = ff.t();
-                            vector<double> vpf{pf.x(), pf.y(), pf.z(), pf.t()};
-                            new_particles.emplace_back(Parton(vpf, 100000000., 0., 0, -1, -1, pf_id, "recoiler", 0, 0, false));
-                            new_particles.back().vSetRi(to_arr(vpos));
+                            p_after_scattering = {ff.x(), ff.y(), ff.z(), ff.t()};
+                            recoiler_p = {pf.x(), pf.y(), pf.z(), pf.t()};
+                            recoiler_id = pf_id;
                         } else {
                             std::cout << "No match for normal particle" << std::endl;
                             std::exit(1);
                         }
 
                         vector<double> vkf{kf.x(), kf.y(), kf.z(), kf.t()};
+                        if (scattering_callback != nullptr) {
+                            ScatteringCandidate candidate;
+                            candidate.pos = to_arr(vpos);
+                            candidate.p_before = to_arr(p_before_scattering);
+                            candidate.p_after = to_arr(p_after_scattering);
+                            candidate.recoiler_p = to_arr(recoiler_p);
+                            candidate.hole_p = to_arr(vkf);
+                            candidate.qperp = transverse_momentum_transfer(
+                                p_before_scattering, p_after_scattering);
+                            candidate.recoiler_id = recoiler_id;
+                            candidate.hole_id = kf_id;
+                            if ((*scattering_callback)(candidate) == ScatteringDecision::StopBeforeApply) {
+                                marker = 1;
+                                break;
+                            }
+                        }
+
+                        had_scattering = 1;
+                        p = p_after_scattering;
+                        new_particles.emplace_back(Parton(recoiler_p, 100000000., 0., 0, -1, -1,
+                                                          recoiler_id, "recoiler", 0, 0, false));
+                        new_particles.back().vSetRi(to_arr(vpos));
                         new_particles.emplace_back(Parton(vkf, 100000000., 0., 0, -1, -1, kf_id, "hole", 0, 0, true));
                         new_particles.back().vSetRi(to_arr(vpos));
                         p_prev = p;
@@ -395,8 +443,8 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                     }
                 }
 
-                double p_prev_mod = std::sqrt(p_prev[0]*p_prev[0]+p_prev[1]*p_prev[1]+p_prev[2]*p_prev[2]);
-                double p_mod = std::sqrt(p[0]*p[0]+p[1]*p[1]+p[2]*p[2]);
+                if (marker == 1) continue;
+
                 if (kappa != 0. && step != 0.) trans_kick(w, w2, v, p, temp, vscalw, lore, step, kappa, nr);
 
                 orient[0] = p[0]/p[3];
@@ -466,6 +514,19 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
             if (pos[3] + tstep > tot) tstep = tot-pos[3];
             if (marker != 1) pos += w*tstep;
         }
+
+        if (step_callback != nullptr) {
+            PropagationStep step_record;
+            step_record.pos_before = to_arr(pos_step_start);
+            step_record.pos_after = to_arr(pos);
+            step_record.p_before = to_arr(p_step_start);
+            step_record.p_after = to_arr(p);
+            step_record.temperature = temp_for_record;
+            step_record.tau = tau_for_record;
+            step_record.step = pos[3] - pos_step_start[3];
+            step_record.in_medium = in_medium_for_record;
+            (*step_callback)(step_record);
+        }
     } while (marker == 0);
 
     double scalpprev = orient[0]*o_in[0] + orient[1]*o_in[1] + orient[2]*o_in[2];
@@ -479,13 +540,38 @@ void propagate_segment(std::array<double,4> &p, std::array<double,4> &pos, doubl
                        numrand &nr, double kappa, double alpha, int tmethod, int model, int ebe_hydro,
                        bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile,
                        std::vector<Quench> &new_particles, int &had_scattering,
-                       std::array<double,4> &orient) {
+                       std::array<double,4> &orient,
+                       const PropagationStepCallback &step_callback) {
     vector<double> p_vec = to_vec(p);
     vector<double> pos_vec = to_vec(pos);
     vector<double> orient_vec = to_vec(orient);
     loss_rate(p_vec, pos_vec, tof, id, nr, kappa, alpha, tmethod, model,
               ebe_hydro, compat_moliere_legacy_hydro, hydro_profile,
-              new_particles, had_scattering, orient_vec);
+              new_particles, had_scattering, orient_vec, nullptr,
+              step_callback ? &step_callback : nullptr);
+    p = to_arr(p_vec);
+    pos = to_arr(pos_vec);
+    orient = to_arr(orient_vec);
+}
+
+void propagate_segment_with_scattering_callback(std::array<double,4> &p, std::array<double,4> &pos,
+                                                double tof, int id,
+                                                numrand &nr, double kappa, double alpha,
+                                                int tmethod, int model, int ebe_hydro,
+                                                bool compat_moliere_legacy_hydro,
+                                                const HydroProfile &hydro_profile,
+                                                std::vector<Quench> &new_particles,
+                                                int &had_scattering,
+                                                std::array<double,4> &orient,
+                                                const ScatteringCallback &callback,
+                                                const PropagationStepCallback &step_callback) {
+    vector<double> p_vec = to_vec(p);
+    vector<double> pos_vec = to_vec(pos);
+    vector<double> orient_vec = to_vec(orient);
+    loss_rate(p_vec, pos_vec, tof, id, nr, kappa, alpha, tmethod, model,
+              ebe_hydro, compat_moliere_legacy_hydro, hydro_profile,
+              new_particles, had_scattering, orient_vec, &callback,
+              step_callback ? &step_callback : nullptr);
     p = to_arr(p_vec);
     pos = to_arr(pos_vec);
     orient = to_arr(orient_vec);
@@ -527,7 +613,8 @@ void process_recoilers(std::vector<Quench> &new_particles, numrand &nr, double k
 
 void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double xcre, double ycre,
               numrand &nr, double kappa, double alpha, int tmethod, int model, int ebe_hydro,
-              bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile, std::vector<Quench> &recoiled) {
+              bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile, std::vector<Quench> &recoiled,
+              const PartonCallbackFactory &callback_factory) {
     vector<int> FinId;
     for (unsigned int i = 0; i < quenched.size(); ++i) {
         if (quenched[i].GetD1() == -1 && quenched[i].GetOrig() != "rem") {
@@ -578,8 +665,18 @@ void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
             int had_scattering = quenched[tp].hadScattering();
             vector<double> orient = to_vec(quenched[tp].orient());
             if (std::abs(quenched[tp].GetId()) <= 6 || quenched[tp].GetId() == 21) {
+                ScatteringCallback scattering_callback;
+                PropagationStepCallback step_callback;
+                if (callback_factory) {
+                    auto callbacks = callback_factory(tp, quenched[tp].GetId(), quenched[tp].GetMom(),
+                                                      quenched[tp].GetD1(), quenched[tp].GetD2());
+                    scattering_callback = callbacks.first;
+                    step_callback = callbacks.second;
+                }
                 loss_rate(p, pos, tof, quenched[tp].GetId(), nr, kappa, alpha, tmethod, model,
-                          ebe_hydro, compat_moliere_legacy_hydro, hydro_profile, new_particles, had_scattering, orient);
+                          ebe_hydro, compat_moliere_legacy_hydro, hydro_profile, new_particles, had_scattering, orient,
+                          scattering_callback ? &scattering_callback : nullptr,
+                          step_callback ? &step_callback : nullptr);
             } else {
                 pos += p/p[3]*tof;
             }
