@@ -131,3 +131,97 @@ Remaining work after merge is physics production, not integration correctness:
 - scale selected finite-LRES physics observables to higher statistics;
 - profile wake-on runtime tails under production settings;
 - compare spectra, energy balance, parton/hadron counts, and wake-sensitive observables for the chosen finite-LRES physics settings.
+
+## Status Snapshot: 2026-05-27
+
+This section records the current working understanding of MMLI finite-LRES plus Moliere after the May 27 slide and code-link pass.
+
+### Branch and Documentation State
+
+- Active implementation branch/worktree: `main_moliere_lres_integration` in `/raid5/data/yjlee/hybrid_dev/wt_main_moliere_lres_integration_clean`.
+- The MMLI implementation referenced in the slides is commit `9157d5b2d4b859c6573dd7fd834a54b3134cac45`.
+- Overleaf report file: `/raid5/data/yjlee/hybrid_dev/overleaf_69d5314739aed083fc3bbb0a/report/20260527-status.tex`.
+- Overleaf has been pushed through commit `4a5ff11 Add LRES tree timeline animation example`.
+- A later local edit added code-link buttons to slides 8-12, but that edit has not yet been pushed because the last command-approval/push attempt was blocked by the current usage limit.
+
+### LRES Tree and Timeline Algorithm
+
+- `EnergyLoss::do_lres_eloss_impl` assumes binary shower nodes. Each parton has at most first/second direct daughters for the LRES sibling-pair construction.
+- A topology that looks like `1 -> 2 + 3 + 4` must enter the algorithm as sequential binary splittings, for example `1 -> 2 + I`, then `I -> 3 + 4`.
+- LRES builds an effective resolution timeline from the shower formation times and the geometric condition for whether the medium can resolve a sibling pair.
+- The code enforces ordered effective resolution, so a descendant structure is not allowed to become visible to the medium in a way that is inconsistent with an unresolved ancestor chain.
+- The effective object lifetime is then propagated segment-by-segment. Before resolution, the medium sees one effective color object. After resolution, daughters propagate independently.
+
+### Moliere with LRES: Implemented Modes
+
+Mode precedence in the current implementation is:
+
+1. Mode D: `do_Moliere_dynamic_daughter_unresolved_resolution = true`
+2. Mode C: `do_Moliere_dynamic_unresolved_resolution = true`
+3. Mode B: `do_Moliere_on_unresolved_partons = true`
+4. Mode A: default coherent unresolved parent
+
+Mode A:
+
+- During an unresolved finite-LRES interval, Moliere scattering is applied to the coherent effective parent object.
+- One accepted coherent scattering creates one recoil/hole source.
+- This is the backward-compatible default when all newer unresolved-Moliere options are false.
+
+Mode B:
+
+- During the same unresolved interval, the current parent energy is projected onto the two vacuum daughter directions.
+- Each unresolved daughter is propagated separately through Moliere.
+- At the end of the unresolved interval, the daughters are recombined into the effective parent four-vector expected by the surrounding LRES algorithm.
+
+Mode C:
+
+- Candidate scatterings are generated from the coherent parent.
+- Each parent-level candidate is tested with `q_perp * d_perp > c_res`.
+- If the test fails, the kick remains coherent on the parent.
+- If the test passes, the pair is marked elastically decohered and the parent-level kick is assigned to one daughter probabilistically, weighted by daughter energy.
+- This is implemented, but the struck daughter assignment is approximate because the candidate was generated from the parent, not from a particular daughter.
+
+Mode D:
+
+- Candidate scatterings are probed separately from each daughter using copied `numrand` states and `propagate_segment_with_scattering_callback` with `StopBeforeApply`.
+- The earliest daughter candidate is selected.
+- Before testing that candidate, the coherent parent is propagated from the current time to the candidate time with the normal HYBRID `loss_rate`, preserving continuous unresolved energy loss.
+- The candidate is tested with `q_perp * d_perp > c_res`.
+- If the test fails, the daughter-probe sampled kick is applied coherently to the parent and exactly one recoil/hole source is created. This is an implemented approximation: the candidate came from a daughter probe, but its wavelength is treated as too long to resolve the dipole.
+- If the test passes, the struck daughter receives the kick, the pair is marked elastically decohered, both daughters are propagated independently for the rest of the original unresolved interval, and the daughters are recombined at the segment boundary.
+- The daughter probes are side-effect-free for momenta/recoilers/holes, but they intentionally consume/advance RNG through copied `numrand` objects and then update `nr_`.
+
+### Dynamic Resolution Helpers
+
+- The dipole size helper currently uses an approximate transverse separation:
+  `d_perp ~= |(v_perp,1 - v_perp,2) * (t_candidate - t_split)|`.
+- The resolution condition is `q_perp * d_perp > c_res`.
+- The runtime parameter `moliere_unresolved_resolution_c` defaults to `1.0`.
+- The dynamic-resolution test affects only the unresolved elastic/Moliere handling. It does not change hydro, the LRES timeline construction, the standard energy-loss formula, or downstream analysis selection.
+
+### Event Display and Tree/Timeline Dumps
+
+- Existing HYBRID diagnostic options:
+  - `dump_hybrid_evolution_history = true` writes time-ordered LRES/Moliere/response records to a TSV file.
+  - `doEventDisplay = true` writes ROOT TTrees for propagated parton time segments and detailed records.
+- A standalone plotting utility was added locally at:
+  `/raid5/data/yjlee/hybrid_dev/wt_main_moliere_lres_integration_clean/test/plot_lres_tree_timeline.py`.
+- That utility converts a HYBRID history TSV into an independent JSON tree/timeline dump plus PNG/GIF animation.
+- Example generated files are stored at:
+  `/raid5/data/yjlee/hybrid_dev/test/lres_tree_timeline_example/`.
+- The corresponding Overleaf assets were pushed under:
+  `eventDisplay/lres_tree_timeline_example/`.
+
+### Slides
+
+- `20260527-status.tex` now documents the LRES tree/timeline construction, effective objects, propagation handoff, energy-loss stepper, and Moliere modes A-D.
+- Slides 2-6 already had working GitHub code buttons after switching to `\beamergotobutton{code}` links.
+- Slides 8-12 have local code-link buttons added for the mode A-D algorithms and implementation contract. These were compiled successfully locally, but remain unpushed as of this snapshot.
+- The local compile produced `20260527-status.pdf` successfully with 14 pages and only a small overfull warning on the Mode-D outcome slide.
+
+### Open Caveats
+
+- Mode D is closer to a daughter-candidate interpretation than Mode C, but it is still not a full analytic merged Poisson process for unresolved dipoles.
+- Failed Mode-D tests coherently apply a kick that was sampled from a daughter probe. This is deliberate in the current implementation and should be described as an approximation.
+- The event-display tree/timeline animation is currently a diagnostic visualization, not a physics validation observable.
+- The slide source has local changes not yet pushed to Overleaf after the slide 8-12 code-link update.
