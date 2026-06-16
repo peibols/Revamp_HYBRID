@@ -29,6 +29,7 @@ private:
     bool do_moliere_on_unresolved_partons_;
     bool do_moliere_dynamic_unresolved_resolution_;
     bool do_moliere_dynamic_daughter_unresolved_resolution_;
+    bool do_moliere_recursive_unresolved_resolution_;
     bool dump_hybrid_evolution_history_;
     bool do_event_display_;
     bool use_fixed_xy_;

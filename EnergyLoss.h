@@ -15,6 +15,7 @@ public:
                bool do_moliere_on_unresolved_partons,
                bool do_moliere_dynamic_unresolved_resolution,
                bool do_moliere_dynamic_daughter_unresolved_resolution,
+               bool do_moliere_recursive_unresolved_resolution,
                double moliere_unresolved_resolution_c,
                double lres_rpower,
                bool dump_hybrid_evolution_history,
@@ -42,6 +43,7 @@ private:
     bool do_moliere_on_unresolved_partons_;
     bool do_moliere_dynamic_unresolved_resolution_;
     bool do_moliere_dynamic_daughter_unresolved_resolution_;
+    bool do_moliere_recursive_unresolved_resolution_;
     double moliere_unresolved_resolution_c_;
     bool dump_hybrid_evolution_history_;
     std::string hybrid_evolution_history_file_;
@@ -54,6 +56,12 @@ private:
     long long n_unresolved_resolving_scatters_;
     long long n_unresolved_pairs_elastically_decohered_;
     double sum_qperp_dperp_unresolved_candidates_;
+    long long n_unresolved_segments_recursive_;
+    long long n_recursive_frontier_candidates_;
+    long long n_recursive_inner_resolutions_;
+    long long n_recursive_outer_resolutions_;
+    long long n_recursive_coherent_applications_;
+    long long n_recursive_tree_updates_;
     bool compat_moliere_legacy_hydro_;
     double lres_rpower_;
     std::string tables_path_;

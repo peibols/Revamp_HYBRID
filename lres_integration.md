@@ -223,5 +223,43 @@ Mode D:
 
 - Mode D is closer to a daughter-candidate interpretation than Mode C, but it is still not a full analytic merged Poisson process for unresolved dipoles.
 - Failed Mode-D tests coherently apply a kick that was sampled from a daughter probe. This is deliberate in the current implementation and should be described as an approximation.
+- TODO for Mode E / recursive unresolved Moliere: a coherent parent kick should propagate its changed kinematics recursively to all descendants when the active tree opens. The current finite-LRES handoff mainly rescales daughters by the quenched parent energy fraction, and the dynamic branches only redistribute the parent momentum mismatch locally to direct daughters. A full recursive momentum mapper should preserve the coherent parent deflection for descendants such as `1' -> (2' -> 4 + 5) + 3`.
+- TODO for dynamic coherence status: update the unresolved/resolved status using the latest live kinematics, not only the vacuum shower estimate. After coherent or resolved Moliere kicks and energy-loss updates, track active-node positions/momenta and recompute `d_perp(t)` from live transverse positions at each candidate timestamp. This would let Mode E decide coherence from the current event history rather than a fixed `|Delta v_perp^vac| * (t - t_split)` approximation.
+- TODO validation study: for the nested example `1 -> 2 + 3`, `2 -> 4 + 5` (final frontier `4,5,3`), compare how the angular distribution relative to the original parent-1 direction changes with and without color-coherence treatment. Track angles such as `DeltaR(4,1)`, `DeltaR(5,1)`, `DeltaR(3,1)`, and the effective-subtree axes before/after coherent parent kicks, then compare coherent propagation, independent daughter propagation, and recursive Mode-E-style coherence.
 - The event-display tree/timeline animation is currently a diagnostic visualization, not a physics validation observable.
 - The slide source has local changes not yet pushed to Overleaf after the slide 8-12 code-link update.
+
+## Status Snapshot: 2026-06-06
+
+This section records the latest slide/documentation state after preparing the June status deck.
+
+### Overleaf Slide Deck
+
+- The June status deck has been renamed from `report/20260606-status.tex` to `report/20260609-status.tex`.
+- The displayed slide date is now `June 9, 2026`.
+- The rename/date update was pushed to Overleaf in commit `600c574 Rename status deck to 20260609`.
+- The deck compiles locally as `report/20260609-status.pdf` with 19 pages. The generated PDF and aux/log files are local build products and were not committed.
+
+### Current Slide Content
+
+- The deck retains the finite-LRES implementation slides: tree/timeline construction, effective objects, propagation handoff, energy-loss stepper, and current Moliere modes A-D.
+- The mode A-D slides include clickable GitHub code buttons pointing to the MMLI implementation commit used for the documentation.
+- Two Mode-E planning slides were added and pushed in Overleaf commit `322d432 Add Mode E implementation path slides`.
+
+### Mode E Direction
+
+Mode E is intended to be the fully Korinna-like dynamic colour-coherence implementation, not just another per-segment unresolved-Moliere option.
+
+The required changes are:
+
+1. Promote colour coherence to explicit event state: active dipoles/coherent systems, members, formation times, positions, and decoherence flags.
+2. Replace the current per-segment A-D branch with an interaction-level candidate scheduler.
+3. Test each actual sampled elastic/Moliere momentum transfer against the relevant dipole size, using `q_perp * d_perp > c_res`.
+4. Failed test: apply one coherent kick to the coherent system and create one recoil/hole source.
+5. Passed test: apply the kick to the struck parton, create one recoil/hole source, and update the coherence graph.
+6. After decoherence, subsequent elastic candidates in the same original geometric LRES interval must use the updated active resolved objects.
+7. A minimal MMLI Mode E can record decoherence while keeping the PYTHIA vacuum shower fixed, but a fully Korinna-like implementation also needs the shower-evolution consequence of decoherence: an in-medium shower hook, emission veto/reweighting, or regenerated constrained shower.
+
+### Important Caveat
+
+Mode D is the closest implemented approximation today. It uses daughter-level probes and selects the earliest candidate, but a failed dynamic test still applies a daughter-probe sampled kick coherently to the parent. This is a deliberate approximation and should not be described as the full Korinna method.

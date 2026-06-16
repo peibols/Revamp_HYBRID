@@ -29,6 +29,11 @@ mode = 0
 #                                                    daughter-level attempts before the same
 #                                                    q_perp*d_perp test. This takes precedence
 #                                                    over the parent-candidate dynamic mode.
+# do_Moliere_recursive_unresolved_resolution: true recursively probes the finest
+#                                             available nested constituents, then maps
+#                                             failed tests back up the effective-charge tree.
+#                                             This takes precedence over all other
+#                                             unresolved Moliere modes.
 # moliere_unresolved_resolution_c: O(1) dynamic dipole-resolution threshold.
 # dump_hybrid_evolution_history: write time-ordered LRES/Moliere/response records for event-display plots.
 # hybrid_evolution_history_file: output TSV path for those records (append mode).
@@ -45,6 +50,7 @@ do_quench = true
 #do_Moliere_on_unresolved_partons = false
 #do_Moliere_dynamic_unresolved_resolution = false
 #do_Moliere_dynamic_daughter_unresolved_resolution = false
+#do_Moliere_recursive_unresolved_resolution = false
 #moliere_unresolved_resolution_c = 1.0
 #dump_hybrid_evolution_history = false
 #hybrid_evolution_history_file = hybrid_evolution_history.tsv

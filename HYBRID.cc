@@ -27,6 +27,7 @@ HYBRID::HYBRID(const Config &cfg) :
       do_moliere_on_unresolved_partons_(cfg.getBoolOr("do_Moliere_on_unresolved_partons", false)),
       do_moliere_dynamic_unresolved_resolution_(cfg.getBoolOr("do_Moliere_dynamic_unresolved_resolution", false)),
       do_moliere_dynamic_daughter_unresolved_resolution_(cfg.getBoolOr("do_Moliere_dynamic_daughter_unresolved_resolution", false)),
+      do_moliere_recursive_unresolved_resolution_(cfg.getBoolOr("do_Moliere_recursive_unresolved_resolution", false)),
       dump_hybrid_evolution_history_(cfg.getBoolOr("dump_hybrid_evolution_history", false)),
       do_event_display_(cfg.getBoolOr("doEventDisplay", false)),
       use_fixed_xy_(cfg.getBoolOr("use_fixed_xy", false)),
@@ -62,6 +63,7 @@ HYBRID::HYBRID(const Config &cfg) :
                                                 do_moliere_on_unresolved_partons_,
                                                 do_moliere_dynamic_unresolved_resolution_,
                                                 do_moliere_dynamic_daughter_unresolved_resolution_,
+                                                do_moliere_recursive_unresolved_resolution_,
                                                 moliere_unresolved_resolution_c_,
                                                 lres_rpower_,
                                                 dump_hybrid_evolution_history_,
@@ -102,6 +104,8 @@ HYBRID::HYBRID(const Config &cfg) :
                   << do_moliere_dynamic_unresolved_resolution_ << ")"
                   << " (do_Moliere_dynamic_daughter_unresolved_resolution= "
                   << do_moliere_dynamic_daughter_unresolved_resolution_ << ")"
+                  << " (do_Moliere_recursive_unresolved_resolution= "
+                  << do_moliere_recursive_unresolved_resolution_ << ")"
                   << " (moliere_unresolved_resolution_c= "
                   << moliere_unresolved_resolution_c_ << ")"
                   << std::endl;
