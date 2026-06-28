@@ -60,6 +60,8 @@ private:
     long long n_recursive_frontier_candidates_;
     long long n_recursive_frontier_probe_batches_;
     long long n_recursive_frontier_probe_objects_;
+    long long n_recursive_frontier_permutation_checks_;
+    long long n_recursive_frontier_permutation_mismatches_;
     long long n_recursive_inner_resolutions_;
     long long n_recursive_outer_resolutions_;
     long long n_recursive_coherent_applications_;

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <functional>
+#include <random>
 #include <vector>
 
 #include "HydroProfile.h"
@@ -42,6 +43,10 @@ using ScatteringCallback = std::function<ScatteringDecision(const ScatteringCand
 using PropagationStepCallback = std::function<void(const PropagationStep&)>;
 using PartonCallbackFactory = std::function<std::pair<ScatteringCallback, PropagationStepCallback>(
     int parton_index, int pdg_id, int parent_index, int d1, int d2)>;
+
+std::default_random_engine elastic_generator_state();
+void set_elastic_generator_state(const std::default_random_engine &state);
+void seed_elastic_generator(unsigned int seed);
 
 void propagate_segment(std::array<double,4> &p,
                        std::array<double,4> &pos,

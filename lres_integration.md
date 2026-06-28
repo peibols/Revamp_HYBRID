@@ -292,9 +292,10 @@ The current local implementation now includes the following follow-up changes be
 3. Branch-local frontier probe RNGs:
    - The previous Mode-E candidate scan used one copied `numrand` stream in deterministic tree order. For a frontier such as `4, 5, 3`, the first branch got the first random draws, the second branch got the next random draws, etc.; this made the sampled candidates depend on an arbitrary traversal order.
    - The current local code now assigns each frontier probe a deterministic branch-local seed keyed by the base HYBRID seed, event id, LRES segment id, Mode-E iteration id, active ancestor, and probe id.
+   - The Moliere elastic sampler also had to be scoped explicitly, because `gen_particles` uses the global `std::default_random_engine generator` from `Distributions.hpp`, not `numrand`. Mode E probes now snapshot, seed, and restore that elastic generator around each branch-local probe.
    - Frontier ids are sorted before probing, and equal-time candidate ties are broken by probe id.
    - The history dump records each selected probe candidate as `recursive_probe_candidate` with a `modeE_branch_local_seed=...` note.
-   - New diagnostics count `n_recursive_frontier_probe_batches` and `n_recursive_frontier_probe_objects`.
+   - New diagnostics count `n_recursive_frontier_probe_batches`, `n_recursive_frontier_probe_objects`, `n_recursive_frontier_permutation_checks`, and `n_recursive_frontier_permutation_mismatches`.
 
 4. Coherent upward application location:
    - If the recursive tests map a frontier-probe candidate upward to an unresolved coherent object, the code applies one kick and one recoil/hole source at the live coherent object/subtree state.
@@ -303,7 +304,7 @@ The current local implementation now includes the following follow-up changes be
 ### Important Approximations That Remain
 
 - The momentum-transfer delta is still sampled from a frontier probe. If the `q_perp d_perp` tests fail, the same sampled kick is mapped upward to the coherent parent/object. This is a controlled implementation approximation, not yet an analytic merged coherent-object Poisson process.
-- The branch-local RNG scheduler removes dependence on arbitrary frontier traversal order, but it is a stochastic convention rather than a derivation of the exact coherent-system elastic rate.
+- The branch-local RNG scheduler now removes dependence on arbitrary frontier traversal order for Mode-E probes, including the Moliere elastic `Distributions.hpp` generator. It is still a stochastic convention rather than a derivation of the exact coherent-system elastic rate.
 - A coherent massless/on-shell parent cannot generally be opened into two separated massless/on-shell daughters while preserving the exact full four-vector, live opening angle, and causal daughter kinematics simultaneously. The current implementation conserves the live parent energy and direction/deflection, then treats the residual spatial-momentum mismatch as a validation item.
 - The PYTHIA vacuum shower is still fixed. A fully Korinna/JEWEL-like treatment would also need an in-medium shower hook, emission veto/reweighting, or constrained regeneration after elastic decoherence.
 
@@ -336,6 +337,22 @@ Interpretation:
 - They did not find a candidate requiring a nested sibling `q_perp d_perp` test, so they do not yet validate a resolving Mode-E nested-dipole event.
 - A targeted event search is still needed for the Dani/Krishna topology where a candidate appears on `4`, `5`, or `3` while the ancestor object is still unresolved.
 
+Additional permutation diagnostic after finding the hidden global-generator issue:
+
+- A first permutation check deliberately reran each already-collected frontier in reversed order. It found `3` mismatches in `38` checks, showing that branch-local `numrand` alone did not control Moliere elastic candidate generation.
+- Root cause: `gen_particles` samples from the global `std::default_random_engine generator` in `Distributions.hpp`.
+- Fix: Mode E probes now snapshot, seed, and restore that elastic generator for each branch-local probe.
+- `modeE_smoke20_permutation_fix.input`, `moliere_unresolved_resolution_c = 1.0`, 20 events: completed successfully.
+  - `n_unresolved_segments_dynamic = 129`
+  - `n_unresolved_candidate_scatters = 5`
+  - `n_unresolved_coherent_scatters = 5`
+  - `n_unresolved_resolving_scatters = 0`
+  - `n_recursive_frontier_probe_batches = 133`
+  - `n_recursive_frontier_probe_objects = 178`
+  - `n_recursive_frontier_permutation_checks = 32`
+  - `n_recursive_frontier_permutation_mismatches = 0`
+  - `n_recursive_tree_updates = 129`
+
 ### Remaining TODOs
 
 1. Find or construct a Mode-E event with a true nested-dipole candidate:
@@ -347,8 +364,8 @@ Interpretation:
    - Compare coherent propagation, independent daughter propagation, and recursive Mode-E propagation.
 
 3. Quantify branch-local scheduler stability:
-   - Add a diagnostic permutation test showing that changing the traversal order of an already-collected frontier does not change the chosen candidate when branch-local seeds are used.
-   - Compare branch-local Mode E statistically against any future analytic merged coherent-object scheduler.
+   - Done for the current implementation: the diagnostic reversed-frontier permutation check is implemented and gives `32` checks with `0` mismatches in the latest 20-event smoke.
+   - Still future work: compare branch-local Mode E statistically against any future analytic merged coherent-object scheduler.
 
 4. Quantify four-momentum closure at LRES openings:
    - Record the residual between the live coherent parent four-vector and the sum of materialized daughter four-vectors.

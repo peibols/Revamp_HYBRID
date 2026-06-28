@@ -314,6 +314,8 @@ EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int
       n_recursive_frontier_candidates_(0),
       n_recursive_frontier_probe_batches_(0),
       n_recursive_frontier_probe_objects_(0),
+      n_recursive_frontier_permutation_checks_(0),
+      n_recursive_frontier_permutation_mismatches_(0),
       n_recursive_inner_resolutions_(0),
       n_recursive_outer_resolutions_(0),
       n_recursive_coherent_applications_(0),
@@ -379,6 +381,10 @@ EnergyLoss::~EnergyLoss() {
                   << n_recursive_frontier_probe_batches_
                   << " n_recursive_frontier_probe_objects= "
                   << n_recursive_frontier_probe_objects_
+                  << " n_recursive_frontier_permutation_checks= "
+                  << n_recursive_frontier_permutation_checks_
+                  << " n_recursive_frontier_permutation_mismatches= "
+                  << n_recursive_frontier_permutation_mismatches_
                   << " n_recursive_inner_resolutions= " << n_recursive_inner_resolutions_
                   << " n_recursive_outer_resolutions= " << n_recursive_outer_resolutions_
                   << " n_recursive_coherent_applications= " << n_recursive_coherent_applications_
@@ -1562,7 +1568,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             numrand rng;
                         };
                         auto probe_object = [&](int probe_id, const RecursiveProjectedState &start,
-                                                numrand rng_start) {
+                                                numrand rng_start, int elastic_seed) {
                             RecursiveProbe probe;
                             probe.probe = probe_id;
                             probe.active_ancestor = find_active_ancestor(probe_id);
@@ -1577,6 +1583,10 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 probe.candidate = candidate;
                                 return moliere::ScatteringDecision::StopBeforeApply;
                             };
+                            // Moliere gen_particles uses the global Distributions.hpp generator,
+                            // so branch-local probes must scope that generator in addition to numrand.
+                            const auto elastic_rng_state = moliere::elastic_generator_state();
+                            moliere::seed_elastic_generator(static_cast<unsigned int>(elastic_seed));
                             if (remaining > 1.e-9 && probe.p[3] > 0.) {
                                 moliere::propagate_segment_with_scattering_callback(
                                     probe.p, probe.pos, remaining, partons[probe_id].GetId(),
@@ -1584,6 +1594,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                     compat_moliere_legacy_hydro_, hydro_profile_,
                                     lres_moliere_particles, probe.had, probe.orient, callback);
                             }
+                            moliere::set_elastic_generator_state(elastic_rng_state);
                             return probe;
                         };
 
@@ -1600,29 +1611,77 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             n_recursive_frontier_probe_objects_ +=
                                 static_cast<long long>(probe_frontier.size());
 
-                            RecursiveProbe chosen;
-                            for (int probe_id : probe_frontier) {
-                                const auto start = project_from_active(probe_id, pos[3]);
-                                if (!start.ok || start.p[3] <= 0.) continue;
-                                const int active_ancestor_for_probe = find_active_ancestor(probe_id);
-                                const int probe_seed = modeEBranchLocalSeed(
-                                    nr_.GetIr(), event_id, modee_segment_id, modee_iteration_id,
-                                    active_ancestor_for_probe, probe_id);
-                                RecursiveProbe probe = probe_object(probe_id, start, numrand(probe_seed));
-                                if (probe.found) {
-                                    emit("recursive_probe_candidate", probe.probe, probe.active_ancestor,
-                                         quenched[probe.probe].GetD1(), quenched[probe.probe].GetD2(),
-                                         probe.candidate.pos[3], probe.candidate.pos,
-                                         probe.candidate.p_after, probe.candidate.qperp,
-                                         "q_perp",
-                                         "modeE_branch_local_seed=" + std::to_string(probe_seed));
+                            const double probe_time = pos[3];
+                            auto earlier_probe = [](const RecursiveProbe &probe,
+                                                    const RecursiveProbe &chosen) {
+                                if (!probe.found) return false;
+                                if (!chosen.found) return true;
+                                if (probe.candidate.pos[3] < chosen.candidate.pos[3] - 1.e-12) {
+                                    return true;
                                 }
-                                if (probe.found &&
-                                    (!chosen.found ||
-                                     probe.candidate.pos[3] < chosen.candidate.pos[3] - 1.e-12 ||
-                                     (std::abs(probe.candidate.pos[3] - chosen.candidate.pos[3]) <= 1.e-12 &&
-                                      probe.probe < chosen.probe))) {
-                                    chosen = probe;
+                                if (std::abs(probe.candidate.pos[3] - chosen.candidate.pos[3]) <= 1.e-12 &&
+                                    probe.probe < chosen.probe) {
+                                    return true;
+                                }
+                                return false;
+                            };
+                            auto same_probe_choice = [](const RecursiveProbe &a,
+                                                        const RecursiveProbe &b) {
+                                if (a.found != b.found) return false;
+                                if (!a.found) return true;
+                                return a.probe == b.probe &&
+                                       a.active_ancestor == b.active_ancestor &&
+                                       std::abs(a.candidate.pos[3] - b.candidate.pos[3]) <= 1.e-12 &&
+                                       std::abs(a.candidate.qperp - b.candidate.qperp) <= 1.e-12;
+                            };
+                            auto select_frontier_candidate = [&](const std::vector<int> &frontier_order,
+                                                                bool record_candidates) {
+                                RecursiveProbe selected;
+                                for (int probe_id : frontier_order) {
+                                    const auto start = project_from_active(probe_id, probe_time);
+                                    if (!start.ok || start.p[3] <= 0.) continue;
+                                    const int active_ancestor_for_probe = find_active_ancestor(probe_id);
+                                    const int probe_seed = modeEBranchLocalSeed(
+                                        nr_.GetIr(), event_id, modee_segment_id, modee_iteration_id,
+                                        active_ancestor_for_probe, probe_id);
+                                    RecursiveProbe probe = probe_object(probe_id, start, numrand(probe_seed), probe_seed);
+                                    if (record_candidates && probe.found) {
+                                        emit("recursive_probe_candidate", probe.probe, probe.active_ancestor,
+                                             quenched[probe.probe].GetD1(), quenched[probe.probe].GetD2(),
+                                             probe.candidate.pos[3], probe.candidate.pos,
+                                             probe.candidate.p_after, probe.candidate.qperp,
+                                             "q_perp",
+                                             "modeE_branch_local_seed=" + std::to_string(probe_seed));
+                                    }
+                                    if (earlier_probe(probe, selected)) {
+                                        selected = probe;
+                                    }
+                                }
+                                return selected;
+                            };
+
+                            RecursiveProbe chosen = select_frontier_candidate(probe_frontier, true);
+                            if ((dump_hybrid_evolution_history_ || do_event_display_) &&
+                                probe_frontier.size() > 1) {
+                                ++n_recursive_frontier_permutation_checks_;
+                                std::vector<int> reversed_frontier = probe_frontier;
+                                std::reverse(reversed_frontier.begin(), reversed_frontier.end());
+                                const RecursiveProbe reversed_chosen =
+                                    select_frontier_candidate(reversed_frontier, false);
+                                if (!same_probe_choice(chosen, reversed_chosen)) {
+                                    ++n_recursive_frontier_permutation_mismatches_;
+                                    const RecursiveProbe &reported = chosen.found ? chosen : reversed_chosen;
+                                    emit("recursive_probe_permutation_mismatch",
+                                         reported.probe, reported.active_ancestor,
+                                         reported.probe >= 0 ? quenched[reported.probe].GetD1() : -1,
+                                         reported.probe >= 0 ? quenched[reported.probe].GetD2() : -1,
+                                         reported.found ? reported.candidate.pos[3] : probe_time,
+                                         reported.found ? reported.candidate.pos : pos,
+                                         reported.found ? reported.candidate.p_after : p,
+                                         reported.found ? reported.candidate.qperp : 0.,
+                                         "modeE_frontier_permutation",
+                                         "sorted_probe=" + std::to_string(chosen.probe) +
+                                         ":reversed_probe=" + std::to_string(reversed_chosen.probe));
                                 }
                             }
 

@@ -536,6 +536,18 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
 
 }  // namespace
 
+std::default_random_engine elastic_generator_state() {
+    return ::generator;
+}
+
+void set_elastic_generator_state(const std::default_random_engine &state) {
+    ::generator = state;
+}
+
+void seed_elastic_generator(unsigned int seed) {
+    ::generator.seed(seed);
+}
+
 void propagate_segment(std::array<double,4> &p, std::array<double,4> &pos, double tof, int id,
                        numrand &nr, double kappa, double alpha, int tmethod, int model, int ebe_hydro,
                        bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile,
