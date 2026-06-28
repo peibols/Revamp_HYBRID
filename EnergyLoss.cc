@@ -101,6 +101,21 @@ double norm3(const std::array<double,3> &a) {
     return std::sqrt(dot3(a, a));
 }
 
+double spatialMomentumResidual(const std::array<double,4> &parent_p,
+                               const std::array<double,4> &child1_p,
+                               const std::array<double,4> &child2_p) {
+    const double dx = parent_p[0] - child1_p[0] - child2_p[0];
+    const double dy = parent_p[1] - child1_p[1] - child2_p[1];
+    const double dz = parent_p[2] - child1_p[2] - child2_p[2];
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+double energyResidual(const std::array<double,4> &parent_p,
+                      const std::array<double,4> &child1_p,
+                      const std::array<double,4> &child2_p) {
+    return std::abs(parent_p[3] - child1_p[3] - child2_p[3]);
+}
+
 std::array<double,3> normalized3(const std::array<double,3> &a,
                                  const std::array<double,3> &fallback) {
     const double n = norm3(a);
@@ -320,6 +335,11 @@ EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int
       n_recursive_outer_resolutions_(0),
       n_recursive_coherent_applications_(0),
       n_recursive_tree_updates_(0),
+      n_recursive_opening_closure_checks_(0),
+      sum_recursive_opening_spatial_residual_(0.),
+      max_recursive_opening_spatial_residual_(0.),
+      sum_recursive_opening_energy_residual_(0.),
+      max_recursive_opening_energy_residual_(0.),
       n_recursive_live_dperp_tests_(0),
       n_recursive_vacuum_dperp_fallbacks_(0),
       compat_moliere_legacy_hydro_(compat_moliere_legacy_hydro),
@@ -389,6 +409,22 @@ EnergyLoss::~EnergyLoss() {
                   << " n_recursive_outer_resolutions= " << n_recursive_outer_resolutions_
                   << " n_recursive_coherent_applications= " << n_recursive_coherent_applications_
                   << " n_recursive_tree_updates= " << n_recursive_tree_updates_
+                  << " n_recursive_opening_closure_checks= "
+                  << n_recursive_opening_closure_checks_
+                  << " avg_recursive_opening_spatial_residual= "
+                  << (n_recursive_opening_closure_checks_ > 0
+                          ? sum_recursive_opening_spatial_residual_ /
+                                static_cast<double>(n_recursive_opening_closure_checks_)
+                          : 0.)
+                  << " max_recursive_opening_spatial_residual= "
+                  << max_recursive_opening_spatial_residual_
+                  << " avg_recursive_opening_energy_residual= "
+                  << (n_recursive_opening_closure_checks_ > 0
+                          ? sum_recursive_opening_energy_residual_ /
+                                static_cast<double>(n_recursive_opening_closure_checks_)
+                          : 0.)
+                  << " max_recursive_opening_energy_residual= "
+                  << max_recursive_opening_energy_residual_
                   << " n_recursive_live_dperp_tests= " << n_recursive_live_dperp_tests_
                   << " n_recursive_vacuum_dperp_fallbacks= "
                   << n_recursive_vacuum_dperp_fallbacks_
@@ -1380,6 +1416,27 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             std::array<double,4> p1;
                             std::array<double,4> p2;
                             split_child_momenta(parent, qstate[parent].p, c1, c2, p1, p2);
+                            const double spatial_residual =
+                                spatialMomentumResidual(qstate[parent].p, p1, p2);
+                            const double energy_residual =
+                                energyResidual(qstate[parent].p, p1, p2);
+                            const double relative_spatial_residual =
+                                qstate[parent].p[3] > 0. ? spatial_residual / qstate[parent].p[3] : 0.;
+                            ++n_recursive_opening_closure_checks_;
+                            sum_recursive_opening_spatial_residual_ += spatial_residual;
+                            max_recursive_opening_spatial_residual_ =
+                                std::max(max_recursive_opening_spatial_residual_, spatial_residual);
+                            sum_recursive_opening_energy_residual_ += energy_residual;
+                            max_recursive_opening_energy_residual_ =
+                                std::max(max_recursive_opening_energy_residual_, energy_residual);
+                            std::ostringstream closure_note;
+                            closure_note << note
+                                         << ":spatial_abs=" << spatial_residual
+                                         << ":energy_abs=" << energy_residual;
+                            emit("recursive_opening_closure", parent, quenched[parent].GetMom(), c1, c2,
+                                 qstate[parent].r[3], qstate[parent].r, qstate[parent].p,
+                                 relative_spatial_residual, "relative_spatial_residual",
+                                 closure_note.str());
                             std::array<double,4> pos1;
                             std::array<double,4> pos2;
                             split_child_positions(c1, c2, qstate[parent].p, qstate[parent].r,

@@ -353,24 +353,84 @@ Additional permutation diagnostic after finding the hidden global-generator issu
   - `n_recursive_frontier_permutation_mismatches = 0`
   - `n_recursive_tree_updates = 129`
 
-### Remaining TODOs
+### Mode E Validation Status After TODO Pass
 
-1. Find or construct a Mode-E event with a true nested-dipole candidate:
-   - Example topology: `1 -> 2 + 3`, followed by `2 -> 4 + 5`, with a candidate on `4`, `5`, or `3` while the ancestor object is still unresolved.
-   - Run A/B/C/D/E side-by-side and record which object receives the kick, which recoil/hole source is created, and how the active coherent groups change.
+Validation tools added:
 
-2. Validate the angular effect of coherence:
-   - Track `DeltaR(4,1)`, `DeltaR(5,1)`, `DeltaR(3,1)`, and effective-subtree axes before/after coherent parent kicks.
-   - Compare coherent propagation, independent daughter propagation, and recursive Mode-E propagation.
+- `test/analyze_modeE_validation.py` summarizes `dump_hybrid_evolution_history` TSV files without ROOT.
+- It reports:
+  - recursive `q_perp d_perp` candidate groups;
+  - nested groups with more than one bottom-up sibling test;
+  - resolving versus coherent Mode-E kicks;
+  - angular changes of Mode-E kicks relative to the shower root in the transverse plane;
+  - live parent-opening closure residuals.
 
-3. Quantify branch-local scheduler stability:
-   - Done for the current implementation: the diagnostic reversed-frontier permutation check is implemented and gives `32` checks with `0` mismatches in the latest 20-event smoke.
-   - Still future work: compare branch-local Mode E statistically against any future analytic merged coherent-object scheduler.
+New code diagnostics added:
 
-4. Quantify four-momentum closure at LRES openings:
-   - Record the residual between the live coherent parent four-vector and the sum of materialized daughter four-vectors.
-   - Decide whether the current energy/direction-preserving split is sufficient for diagnostics, or whether a different off-shell bookkeeping object is needed.
+- Mode E now emits `recursive_opening_closure` history records whenever a live coherent object is opened into daughters.
+- The destructor now prints:
+  - `n_recursive_opening_closure_checks`
+  - `avg_recursive_opening_spatial_residual`
+  - `max_recursive_opening_spatial_residual`
+  - `avg_recursive_opening_energy_residual`
+  - `max_recursive_opening_energy_residual`
+- Interpretation: energy closure is expected to be near machine precision because the current materialization conserves live parent energy. Spatial momentum closure is not exact because the daughters are kept on shell while inheriting the live parent deflection and vacuum opening directions.
 
-5. Define the full Korinna-like path beyond current MMLI:
-   - Current Mode E records elastic decoherence while keeping the PYTHIA vacuum shower fixed.
-   - A complete treatment needs an explicit interface for shower evolution after decoherence.
+Current-code validation runs under `test/tmp_modeE_recursive_smoke/`:
+
+- `modeE_todo_c1.input`, `c_res = 1.0`, 20 events: completed successfully.
+  - `n_unresolved_segments_recursive = 129`
+  - `n_recursive_frontier_candidates = 5`
+  - `n_recursive_frontier_permutation_checks = 32`
+  - `n_recursive_frontier_permutation_mismatches = 0`
+  - `n_recursive_opening_closure_checks = 129`
+  - average relative spatial residual from the analyzer: `0.020016`
+  - max relative spatial residual from the analyzer: `0.34727`
+  - max absolute energy residual from the analyzer: `5.6843e-14`
+- `modeE_todo_c0.input`, `c_res = 0.0`, 20 events: completed successfully and matched the same candidate stream in this sample.
+- `modeE_todo_c0_100b.input`, `c_res = 0.0`, 100 events: completed successfully.
+  - `n_unresolved_segments_recursive = 771`
+  - `n_recursive_frontier_candidates = 30`
+  - `n_unresolved_resolving_scatters = 3`
+  - `n_recursive_outer_resolutions = 3`
+  - `n_recursive_inner_resolutions = 0`
+  - `n_recursive_frontier_permutation_checks = 232`
+  - `n_recursive_frontier_permutation_mismatches = 0`
+  - `n_recursive_opening_closure_checks = 771`
+  - analyzer angular summary: 30 Mode-E recursive kicks, 27 coherent and 3 resolving; average `DeltaPhi(after-before)` relative to the shower root is `0.052833`; largest absolute change is event 92, parton 29, `0.18445`.
+  - analyzer closure summary: average relative spatial residual `0.023412`, max relative spatial residual `0.79604`, average absolute spatial residual `1.0452`, max absolute spatial residual `43.373`, max absolute energy residual `5.6843e-14`.
+- `modeE_todo_c0_rp02.input`, `c_res = 0.0`, `rpower = 0.2`, 20 events: completed successfully as a longer-unresolved-interval stress sample.
+  - `n_recursive_frontier_candidates = 5`
+  - `n_unresolved_resolving_scatters = 2`
+  - `n_recursive_outer_resolutions = 2`
+  - `n_recursive_inner_resolutions = 0`
+  - `n_recursive_frontier_permutation_checks = 48`
+  - `n_recursive_frontier_permutation_mismatches = 0`
+  - analyzer angular summary: largest resolving-kick angular change is event 13, parton 27, `DeltaPhi` change `0.40333`.
+- `modeE_todo_c0_rp002.input`, `c_res = 0.0`, `rpower = 0.02`, 20 events: not used for validation. It aborted at event 11 with the pre-existing `TAU Not a number` guard in an extreme long-unresolved-interval stress configuration.
+
+Status of the previous TODO items:
+
+1. Nested Dani/Krishna candidate search:
+   - Current-code stochastic searches found resolving candidates but did not find a two-level nested candidate group with more than one bottom-up sibling test.
+   - The 100-event nominal search found 3 resolving candidates, all outer-pair resolutions.
+   - The `rpower = 0.2` stress search found 2 resolving candidates, also outer-pair resolutions.
+   - Therefore the current evidence validates the resolving path and live `q_perp d_perp` tests, but does not yet provide a real current-code nested two-level Dani/Krishna event. A deterministic constructed unit fixture or a much larger event search is still needed for that rare topology.
+
+2. Angular effect of coherence:
+   - The analyzer now quantifies angular changes relative to the shower root for Mode-E recursive kicks.
+   - Current validation provides Mode-E angular summaries for nominal and longer-unresolved samples.
+   - A full A/B/C/D/E angular-distribution comparison is still a production-analysis task, not a missing code hook.
+
+3. Branch-local scheduler stability:
+   - Done for the current implementation.
+   - Reversed-frontier permutation checks give `32/32`, `232/232`, and `48/48` matches in the current validation samples.
+   - This includes the scoped Moliere elastic `Distributions.hpp` generator.
+
+4. Four-momentum closure at LRES openings:
+   - Code instrumentation is implemented.
+   - Current validation confirms energy closure at machine precision and quantifies the expected spatial residual from the on-shell daughter materialization approximation.
+
+5. Full Korinna-like path beyond current MMLI:
+   - The current Mode E handles the elastic/Moliere coherence decision inside the fixed HYBRID/PYTHIA shower record.
+   - A fully Korinna/JEWEL-like shower response after elastic decoherence remains outside this local MMLI patch because it requires an in-medium shower-evolution interface, emission veto/reweighting, or constrained shower regeneration.

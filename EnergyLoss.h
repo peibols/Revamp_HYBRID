@@ -66,6 +66,11 @@ private:
     long long n_recursive_outer_resolutions_;
     long long n_recursive_coherent_applications_;
     long long n_recursive_tree_updates_;
+    long long n_recursive_opening_closure_checks_;
+    double sum_recursive_opening_spatial_residual_;
+    double max_recursive_opening_spatial_residual_;
+    double sum_recursive_opening_energy_residual_;
+    double max_recursive_opening_energy_residual_;
     long long n_recursive_live_dperp_tests_;
     long long n_recursive_vacuum_dperp_fallbacks_;
     bool compat_moliere_legacy_hydro_;
