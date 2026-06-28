@@ -223,8 +223,10 @@ Mode D:
 
 - Mode D is closer to a daughter-candidate interpretation than Mode C, but it is still not a full analytic merged Poisson process for unresolved dipoles.
 - Failed Mode-D tests coherently apply a kick that was sampled from a daughter probe. This is deliberate in the current implementation and should be described as an approximation.
-- TODO for Mode E / recursive unresolved Moliere: a coherent parent kick should propagate its changed kinematics recursively to all descendants when the active tree opens. The current finite-LRES handoff mainly rescales daughters by the quenched parent energy fraction, and the dynamic branches only redistribute the parent momentum mismatch locally to direct daughters. A full recursive momentum mapper should preserve the coherent parent deflection for descendants such as `1' -> (2' -> 4 + 5) + 3`.
-- TODO for dynamic coherence status: update the unresolved/resolved status using the latest live kinematics, not only the vacuum shower estimate. After coherent or resolved Moliere kicks and energy-loss updates, track active-node positions/momenta and recompute `d_perp(t)` from live transverse positions at each candidate timestamp. This would let Mode E decide coherence from the current event history rather than a fixed `|Delta v_perp^vac| * (t - t_split)` approximation.
+- Mode E follow-up implemented locally: when a coherent object opens, daughter momenta are now materialized by rotating the vacuum daughter directions into the live parent axis and conserving the live parent energy. If no elastic candidate decoheres the parent before the normal finite-LRES boundary, the boundary split now seeds live daughter states so coherent parent deflections are inherited by later descendants. The residual spatial-momentum mismatch from opening an on-shell coherent parent is an explicit approximation to validate.
+- Mode E follow-up implemented locally: recursive `q_perp d_perp` tests now use live projected daughter positions when available (`qperp_dperp_live` in the history output) and fall back to the old vacuum estimate only if projection fails (`qperp_dperp_vac_fallback`). Diagnostics count live tests and fallbacks.
+- Remaining TODO for Mode E: the sampled momentum-transfer delta is still taken from the frontier probe and then mapped upward if the dipole test fails. This keeps one kick and one recoil/hole source, but it is not yet a fully analytic merged Poisson process for the coherent object.
+- Remaining TODO for Mode E: audit whether deterministic frontier order (`4, 5, 3`, for example) biases candidate selection or RNG consumption. The robust target is an order-independent candidate scheduler, not a cosmetic shuffle.
 - TODO validation study: for the nested example `1 -> 2 + 3`, `2 -> 4 + 5` (final frontier `4,5,3`), compare how the angular distribution relative to the original parent-1 direction changes with and without color-coherence treatment. Track angles such as `DeltaR(4,1)`, `DeltaR(5,1)`, `DeltaR(3,1)`, and the effective-subtree axes before/after coherent parent kicks, then compare coherent propagation, independent daughter propagation, and recursive Mode-E-style coherence.
 - The event-display tree/timeline animation is currently a diagnostic visualization, not a physics validation observable.
 - The slide source has local changes not yet pushed to Overleaf after the slide 8-12 code-link update.
@@ -263,3 +265,95 @@ The required changes are:
 ### Important Caveat
 
 Mode D is the closest implemented approximation today. It uses daughter-level probes and selects the earliest candidate, but a failed dynamic test still applies a daughter-probe sampled kick coherently to the parent. This is a deliberate approximation and should not be described as the full Korinna method.
+
+## Status Snapshot: 2026-06-29
+
+This section records the Mode-E follow-up after the June 16 Dani/Krishna discussion and the June 29 local implementation pass.
+
+### Mode E Changes Implemented Locally
+
+Mode E is the recursive unresolved-Moliere mode enabled by:
+
+- `do_Moliere_recursive_unresolved_resolution = true`
+
+The current local implementation now includes the following follow-up changes beyond the first Mode-E commit:
+
+1. Live daughter materialization from the coherent parent:
+   - When a coherent object opens, daughter momenta are constructed by rotating the vacuum daughter directions into the current live parent axis.
+   - The live parent energy is partitioned by the vacuum daughter energy fractions.
+   - The normal finite-LRES boundary also seeds live daughter states if no elastic candidate decoheres the parent before the boundary, so coherent parent deflections are inherited by later descendants.
+
+2. Live projected `d_perp` in recursive tests:
+   - Recursive `q_perp d_perp` tests first project both siblings from the current active tree state to the candidate scattering time.
+   - History records use `qperp_dperp_live` when this live projection succeeds.
+   - The older vacuum estimate is retained only as a fallback and is labeled `qperp_dperp_vac_fallback`.
+   - Diagnostics count `n_recursive_live_dperp_tests` and `n_recursive_vacuum_dperp_fallbacks`.
+
+3. Branch-local frontier probe RNGs:
+   - The previous Mode-E candidate scan used one copied `numrand` stream in deterministic tree order. For a frontier such as `4, 5, 3`, the first branch got the first random draws, the second branch got the next random draws, etc.; this made the sampled candidates depend on an arbitrary traversal order.
+   - The current local code now assigns each frontier probe a deterministic branch-local seed keyed by the base HYBRID seed, event id, LRES segment id, Mode-E iteration id, active ancestor, and probe id.
+   - Frontier ids are sorted before probing, and equal-time candidate ties are broken by probe id.
+   - The history dump records each selected probe candidate as `recursive_probe_candidate` with a `modeE_branch_local_seed=...` note.
+   - New diagnostics count `n_recursive_frontier_probe_batches` and `n_recursive_frontier_probe_objects`.
+
+4. Coherent upward application location:
+   - If the recursive tests map a frontier-probe candidate upward to an unresolved coherent object, the code applies one kick and one recoil/hole source at the live coherent object/subtree state.
+   - This preserves the intended one-source behavior for unresolved coherent scatterings.
+
+### Important Approximations That Remain
+
+- The momentum-transfer delta is still sampled from a frontier probe. If the `q_perp d_perp` tests fail, the same sampled kick is mapped upward to the coherent parent/object. This is a controlled implementation approximation, not yet an analytic merged coherent-object Poisson process.
+- The branch-local RNG scheduler removes dependence on arbitrary frontier traversal order, but it is a stochastic convention rather than a derivation of the exact coherent-system elastic rate.
+- A coherent massless/on-shell parent cannot generally be opened into two separated massless/on-shell daughters while preserving the exact full four-vector, live opening angle, and causal daughter kinematics simultaneously. The current implementation conserves the live parent energy and direction/deflection, then treats the residual spatial-momentum mismatch as a validation item.
+- The PYTHIA vacuum shower is still fixed. A fully Korinna/JEWEL-like treatment would also need an in-medium shower hook, emission veto/reweighting, or constrained regeneration after elastic decoherence.
+
+### Validation Run After Branch-Local Probe Update
+
+Build:
+
+- Compiled `main` successfully with pinned PYTHIA 8.315 from `/raid5/data/yjlee/hybrid_dev/test/tmp_pythia8315_validate_mmi_revert/pythia8315`.
+- Existing compiler warnings only; no new compile errors.
+
+Smoke checks under `/raid5/data/yjlee/hybrid_dev/wt_main_moliere_lres_integration_clean/test/tmp_modeE_recursive_smoke/`:
+
+- `modeE_smoke20_branch_rng.input`, `moliere_unresolved_resolution_c = 1.0`, 20 events: completed successfully.
+  - `n_unresolved_segments_dynamic = 130`
+  - `n_unresolved_candidate_scatters = 8`
+  - `n_unresolved_coherent_scatters = 8`
+  - `n_unresolved_resolving_scatters = 0`
+  - `n_unresolved_pairs_elastically_decohered = 0`
+  - `n_recursive_frontier_probe_batches = 137`
+  - `n_recursive_frontier_probe_objects = 183`
+  - `n_recursive_coherent_applications = 8`
+  - `n_recursive_tree_updates = 130`
+  - `n_recursive_live_dperp_tests = 0`
+  - `n_recursive_vacuum_dperp_fallbacks = 0`
+- `modeE_smoke20_c0_branch_rng.input`, `moliere_unresolved_resolution_c = 0.0`, 20 events: completed successfully with the same aggregate scheduler diagnostics in this sample.
+
+Interpretation:
+
+- These two smoke samples validate the branch-local frontier candidate scheduler, history output, and coherent upward-application path.
+- They did not find a candidate requiring a nested sibling `q_perp d_perp` test, so they do not yet validate a resolving Mode-E nested-dipole event.
+- A targeted event search is still needed for the Dani/Krishna topology where a candidate appears on `4`, `5`, or `3` while the ancestor object is still unresolved.
+
+### Remaining TODOs
+
+1. Find or construct a Mode-E event with a true nested-dipole candidate:
+   - Example topology: `1 -> 2 + 3`, followed by `2 -> 4 + 5`, with a candidate on `4`, `5`, or `3` while the ancestor object is still unresolved.
+   - Run A/B/C/D/E side-by-side and record which object receives the kick, which recoil/hole source is created, and how the active coherent groups change.
+
+2. Validate the angular effect of coherence:
+   - Track `DeltaR(4,1)`, `DeltaR(5,1)`, `DeltaR(3,1)`, and effective-subtree axes before/after coherent parent kicks.
+   - Compare coherent propagation, independent daughter propagation, and recursive Mode-E propagation.
+
+3. Quantify branch-local scheduler stability:
+   - Add a diagnostic permutation test showing that changing the traversal order of an already-collected frontier does not change the chosen candidate when branch-local seeds are used.
+   - Compare branch-local Mode E statistically against any future analytic merged coherent-object scheduler.
+
+4. Quantify four-momentum closure at LRES openings:
+   - Record the residual between the live coherent parent four-vector and the sum of materialized daughter four-vectors.
+   - Decide whether the current energy/direction-preserving split is sufficient for diagnostics, or whether a different off-shell bookkeeping object is needed.
+
+5. Define the full Korinna-like path beyond current MMLI:
+   - Current Mode E records elastic decoherence while keeping the PYTHIA vacuum shower fixed.
+   - A complete treatment needs an explicit interface for shower evolution after decoherence.

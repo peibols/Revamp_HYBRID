@@ -58,10 +58,14 @@ private:
     double sum_qperp_dperp_unresolved_candidates_;
     long long n_unresolved_segments_recursive_;
     long long n_recursive_frontier_candidates_;
+    long long n_recursive_frontier_probe_batches_;
+    long long n_recursive_frontier_probe_objects_;
     long long n_recursive_inner_resolutions_;
     long long n_recursive_outer_resolutions_;
     long long n_recursive_coherent_applications_;
     long long n_recursive_tree_updates_;
+    long long n_recursive_live_dperp_tests_;
+    long long n_recursive_vacuum_dperp_fallbacks_;
     bool compat_moliere_legacy_hydro_;
     double lres_rpower_;
     std::string tables_path_;
