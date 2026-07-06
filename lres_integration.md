@@ -225,7 +225,7 @@ Mode D:
 - Failed Mode-D tests coherently apply a kick that was sampled from a daughter probe. This is deliberate in the current implementation and should be described as an approximation.
 - Mode E follow-up implemented locally: when a coherent object opens, daughter momenta are now materialized by rotating the vacuum daughter directions into the live parent axis and conserving the live parent energy. If no elastic candidate decoheres the parent before the normal finite-LRES boundary, the boundary split now seeds live daughter states so coherent parent deflections are inherited by later descendants. The residual spatial-momentum mismatch from opening an on-shell coherent parent is an explicit approximation to validate.
 - Mode E follow-up implemented locally: recursive `q_perp d_perp` tests now use live projected daughter positions when available (`qperp_dperp_live` in the history output) and fall back to the old vacuum estimate only if projection fails (`qperp_dperp_vac_fallback`). Diagnostics count live tests and fallbacks.
-- Remaining TODO for Mode E: when a daughter/frontier candidate fails the resolution test, the current code still maps that sampled daughter kick upward to the coherent parent. The desired correction is to veto the failed daughter candidate, discard its sampled `q_perp`/recoil, and keep sampling the active coherent object over the remaining unresolved interval until the coherent object generates its own valid scattering. That coherent-source sampling must use the coherent object's color/scattering rate; if the active parent is color neutral, e.g. `gamma -> q qbar`, no coherent Moliere kick should be applied to the photon.
+- Remaining TODO for Mode E: when a daughter/frontier candidate fails the resolution test, the current code still maps that sampled daughter kick upward to the coherent parent. The desired correction is to veto the failed daughter candidate, discard its sampled `q_perp`/recoil, and sample the active coherent object over the remaining unresolved interval. Accept the coherent-source sample only when the parent gets a kick that is itself unresolved (`q_perp * d_perp <= c_res`) and therefore legitimately coherent. If a parent-sampled candidate would resolve the dipole, veto that parent candidate too and keep resampling. The coherent-source sampling must use the coherent object's color/scattering rate; if the active parent is color neutral, e.g. `gamma -> q qbar`, no coherent Moliere kick should be applied to the photon.
 - Remaining TODO for Mode E: audit whether deterministic frontier order (`4, 5, 3`, for example) biases candidate selection or RNG consumption. The robust target is an order-independent candidate scheduler, not a cosmetic shuffle.
 - TODO validation study: for the nested example `1 -> 2 + 3`, `2 -> 4 + 5` (final frontier `4,5,3`), compare how the angular distribution relative to the original parent-1 direction changes with and without color-coherence treatment. Track angles such as `DeltaR(4,1)`, `DeltaR(5,1)`, `DeltaR(3,1)`, and the effective-subtree axes before/after coherent parent kicks, then compare coherent propagation, independent daughter propagation, and recursive Mode-E-style coherence.
 - The event-display tree/timeline animation is currently a diagnostic visualization, not a physics validation observable.
@@ -258,14 +258,14 @@ The required changes are:
 2. Replace the current per-segment A-D branch with an interaction-level candidate scheduler.
 3. Test each actual sampled elastic/Moliere momentum transfer against the relevant dipole size, using `q_perp * d_perp > c_res`.
 4. Failed daughter-resolution test: veto the daughter-probe candidate and do not reuse its sampled `q_perp` or recoil/hole source.
-5. After the veto, sample the active coherent system itself over the remaining unresolved interval until its own valid scattering occurs; if the coherent system is color neutral, no coherent Moliere kick is allowed.
+5. After the veto, sample the active coherent system itself over the remaining unresolved interval until it gets a candidate kick that is also unresolved (`q_perp * d_perp <= c_res`). If a parent-sampled candidate would resolve the dipole, veto it and keep resampling; if the coherent system is color neutral, no coherent Moliere kick is allowed.
 6. Passed test: apply the kick to the struck parton, create one recoil/hole source, and update the coherence graph.
 7. After decoherence, subsequent elastic candidates in the same original geometric LRES interval must use the updated active resolved objects.
 8. A minimal MMLI Mode E can record decoherence while keeping the PYTHIA vacuum shower fixed, but a fully Korinna-like implementation also needs the shower-evolution consequence of decoherence: an in-medium shower hook, emission veto/reweighting, or regenerated constrained shower.
 
 ### Important Caveat
 
-Mode D is the closest implemented approximation today. It uses daughter-level probes and selects the earliest candidate, but a failed dynamic test still applies a daughter-probe sampled kick coherently to the parent. This is a deliberate approximation and should not be described as the full Korinna method. The July 6 TODO is stronger: failed daughter probes should be vetoed, then the active coherent object should be sampled until it generates its own valid scattering, with no coherent Moliere kick for a color-neutral parent.
+Mode D is the closest implemented approximation today. It uses daughter-level probes and selects the earliest candidate, but a failed dynamic test still applies a daughter-probe sampled kick coherently to the parent. This is a deliberate approximation and should not be described as the full Korinna method. The July 6 TODO is stronger: failed daughter probes should be vetoed, then the active coherent object should be sampled until it receives a parent-level kick that is itself unresolved. Parent-sampled resolving kicks should be vetoed and resampled, and no coherent Moliere kick should be applied for a color-neutral parent.
 
 ## Status Snapshot: 2026-06-29
 
@@ -452,15 +452,19 @@ Requested correction:
 
 1. If a daughter/frontier candidate fails the resolution test, veto that candidate.
 2. Do not reuse the daughter-probe sampled `q_perp`, post-kick momentum, recoil, or hole.
-3. Re-sample the active coherent object over the remaining unresolved interval until that coherent object generates its own valid scattering.
-4. Use the coherent object's own color representation and scattering rate for that resampling.
-5. If the active parent/coherent object is color neutral, for example `gamma -> q qbar`, do not apply a coherent Moliere kick to the photon.
-6. Continue the unresolved interval from the coherent-source scattering time/state, or to the normal finite-`L_res` boundary if no valid coherent scattering occurs before the interval ends.
+3. Re-sample the active coherent object over the remaining unresolved interval using the coherent object's own color representation and scattering rate.
+4. For each parent-sampled candidate, re-apply the resolution test to the relevant unresolved dipole.
+5. Accept the parent candidate only if it is an unresolving/coherent kick, `q_perp * d_perp <= c_res`.
+6. If the parent-sampled candidate would resolve the dipole, veto it as well and keep resampling the active coherent object.
+7. If the active parent/coherent object is color neutral, for example `gamma -> q qbar`, do not apply a coherent Moliere kick to the photon.
+8. Continue the unresolved interval from the accepted coherent-source scattering time/state, or to the normal finite-`L_res` boundary if no accepted coherent scattering occurs before the interval ends.
 
 Validation TODOs after implementing this correction:
 
 - Count how often daughter-probe failures trigger coherent-source resampling.
-- Count how often no valid coherent-source scattering occurs before the unresolved interval ends.
-- Compare the candidate-time distribution before and after the veto/resampling correction.
+- Count how many parent-sampled candidates are vetoed because they would resolve the dipole.
+- Count how many accepted parent-level kicks are genuinely unresolving/coherent.
+- Count how often no accepted coherent-source scattering occurs before the unresolved interval ends.
+- Compare the accepted candidate-time distribution before and after the veto/resampling correction.
 - Re-run the reversed-frontier scheduler check, because the veto path must remain independent of daughter traversal order.
 - Re-check examples with color-neutral parents to confirm no coherent photon kick is generated.
