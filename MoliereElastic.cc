@@ -297,7 +297,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
         int will_hot = 0;
         double vx = 0., vy = 0., vz = 0.;
         double tau0h = (ebe_hydro == 1) ? 0.4 : 0.6;
-        if (tau >= tau0h) {
+        if (tau >= tau0h || hydro_profile.hasPreHydroAt(tau)) {
             vector<double> v;
             vx = compat_moliere_legacy_hydro
                 ? gVx_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta)

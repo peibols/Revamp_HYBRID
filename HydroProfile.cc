@@ -1,5 +1,6 @@
 #include "HydroProfile.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -9,6 +10,17 @@
 #include <sstream>
 
 namespace {
+
+constexpr double kTauTolerance = 1e-8;
+
+struct PreHydroRow {
+    double tau = 0.0;
+    int ix = 0;
+    int iy = 0;
+    double temperature = 0.0;
+    double vx = 0.0;
+    double vy = 0.0;
+};
 
 int legacyAxisIndex(double coord, double delta, int maxCount) {
     if (coord >= 0.) {
@@ -93,6 +105,11 @@ double HydroProfile::fracFromIndex(double coord, double origin, double spacing, 
 
 void HydroProfile::loadHydro(int mode, const std::string &cent) {
     mode_ = mode;
+    prehydroLoaded_ = false;
+    prehydroTaus_.clear();
+    prehydrot_.clear();
+    prehydrox_.clear();
+    prehydroy_.clear();
     if (mode == 0) {
         tempScalingFactor_ = 0.197327;  // hbar*c [GeV·fm]: converts fm^-1 -> GeV
         loadPlaintextHydro(cent);
@@ -100,6 +117,140 @@ void HydroProfile::loadHydro(int mode, const std::string &cent) {
         tempScalingFactor_ = 1.0;
         loadIpsatBinary(cent, "evolution_all_xyeta.dat");
     }
+}
+
+void HydroProfile::loadPreHydroTable(const std::string &filename) {
+    prehydroLoaded_ = false;
+    prehydroTaus_.clear();
+    prehydrot_.clear();
+    prehydrox_.clear();
+    prehydroy_.clear();
+
+    if (ixmax_ < 2 || ietamax_ < 2 || hydroDx_ <= 0.) {
+        std::cerr << "[HydroProfile::loadPreHydroTable] ERROR: load hydro before loading pre-hydro table"
+                  << std::endl;
+        std::exit(1);
+    }
+
+    std::ifstream in(filename);
+    if (!in.is_open()) {
+        std::cerr << "[HydroProfile::loadPreHydroTable] ERROR: pre-hydro file open fail: "
+                  << filename << std::endl;
+        std::exit(1);
+    }
+
+    std::vector<PreHydroRow> rows;
+    std::vector<double> taus;
+    int lineNumber = 0;
+    int maxIx = -1;
+    int maxIy = -1;
+
+    std::string line;
+    while (std::getline(in, line)) {
+        ++lineNumber;
+        if (line.empty() || line[0] == '#') continue;
+
+        std::istringstream iss(line);
+        int eventId = 0;
+        int ix = 0;
+        int iy = 0;
+        int valid = 0;
+        double tau = 0.0;
+        double x = 0.0;
+        double y = 0.0;
+        double temperature = 0.0;
+        double energyDensity = 0.0;
+        double vx = 0.0;
+        double vy = 0.0;
+        double temperatureHydTau0 = 0.0;
+        double vxHydTau0 = 0.0;
+        double vyHydTau0 = 0.0;
+        double attractorOmega = 0.0;
+        double attractorE = 0.0;
+
+        if (!(iss >> eventId >> tau >> ix >> iy >> x >> y >> temperature >> energyDensity
+                  >> vx >> vy >> valid >> temperatureHydTau0 >> vxHydTau0 >> vyHydTau0
+                  >> attractorOmega >> attractorE)) {
+            std::cerr << "[HydroProfile::loadPreHydroTable] ERROR: malformed row "
+                      << lineNumber << " in " << filename << std::endl;
+            std::exit(1);
+        }
+
+        (void)eventId;
+        (void)x;
+        (void)y;
+        (void)energyDensity;
+        (void)temperatureHydTau0;
+        (void)vxHydTau0;
+        (void)vyHydTau0;
+        (void)attractorOmega;
+        (void)attractorE;
+
+        if (valid == 0) continue;
+        if (tau >= hydroTau0_ - kTauTolerance) continue;
+        if (ix < 0 || ix >= ixmax_ || iy < 0 || iy >= ietamax_) {
+            std::cerr << "[HydroProfile::loadPreHydroTable] ERROR: row " << lineNumber
+                      << " index out of hydro grid: ix=" << ix << " iy=" << iy
+                      << " ixmax=" << ixmax_ << " iymax=" << ietamax_ << std::endl;
+            std::exit(1);
+        }
+
+        rows.push_back({tau, ix, iy, temperature, vx, vy});
+        taus.push_back(tau);
+        maxIx = std::max(maxIx, ix);
+        maxIy = std::max(maxIy, iy);
+    }
+
+    if (rows.empty()) {
+        std::cout << "Pre-hydro table has no valid rows before tau_hydro; running without pre-hydro: "
+                  << filename << std::endl;
+        return;
+    }
+
+    std::sort(taus.begin(), taus.end());
+    for (double tau : taus) {
+        if (prehydroTaus_.empty() || std::abs(tau - prehydroTaus_.back()) > kTauTolerance) {
+            prehydroTaus_.push_back(tau);
+        }
+    }
+
+    const size_t totalSize = prehydroTaus_.size() *
+                             static_cast<size_t>(ietamax_) *
+                             static_cast<size_t>(ixmax_);
+    prehydrot_.assign(totalSize, 0.0);
+    prehydrox_.assign(totalSize, 0.0);
+    prehydroy_.assign(totalSize, 0.0);
+
+    auto tauIndex = [&](double tau) {
+        for (size_t i = 0; i < prehydroTaus_.size(); ++i) {
+            if (std::abs(tau - prehydroTaus_[i]) <= kTauTolerance) {
+                return static_cast<int>(i);
+            }
+        }
+        std::cerr << "[HydroProfile::loadPreHydroTable] ERROR: internal tau lookup failed for tau="
+                  << tau << std::endl;
+        std::exit(1);
+    };
+
+    double maxTemp = 0.0;
+    for (const auto &row : rows) {
+        const int it = tauIndex(row.tau);
+        const size_t idx = index(it, row.iy, row.ix, ietamax_, ixmax_);
+        prehydrot_[idx] = row.temperature;
+        prehydrox_[idx] = row.vx;
+        prehydroy_[idx] = row.vy;
+        maxTemp = std::max(maxTemp, row.temperature);
+    }
+
+    prehydroLoaded_ = true;
+    std::cout << "Read pre-hydro: ntau=" << prehydroTaus_.size()
+              << " valid rows=" << rows.size()
+              << " max ix=" << maxIx
+              << " max iy=" << maxIy
+              << " max temp=" << maxTemp
+              << " tau range=[" << prehydroTaus_.front()
+              << ", " << prehydroTaus_.back() << "]"
+              << " file=" << filename << "\n";
 }
 
 void HydroProfile::loadIpsatBinary(const std::string &cent, const std::string &filename) {
@@ -295,13 +446,14 @@ void HydroProfile::loadPlaintextHydro(const std::string &cent) {
 }
 
 double HydroProfile::getValue(const std::vector<double> &data, double tau, double x, double y) const {
-    if (tau >= hydroTauMax_ || tau < hydroTau0_) {
+    if (tau >= hydroTauMax_ || tau < hydroTau0_ - kTauTolerance) {
         return 0.0;
     }
 
-    int it = static_cast<int>(std::floor((tau - hydroTau0_) / hydroDtau_));
+    const double tauEval = tau < hydroTau0_ ? hydroTau0_ : tau;
+    int it = static_cast<int>(std::floor((tauEval - hydroTau0_) / hydroDtau_));
     it = clampIndex(it, itaumax_);
-    double dt = fracFromIndex(tau, hydroTau0_, hydroDtau_, it);
+    double dt = fracFromIndex(tauEval, hydroTau0_, hydroDtau_, it);
 
     double xgrid = (hydroXmax_ + x) / hydroDx_;
     int ix = static_cast<int>(std::floor(xgrid));
@@ -336,15 +488,107 @@ double HydroProfile::getValue(const std::vector<double> &data, double tau, doubl
     return value;
 }
 
+bool HydroProfile::getPreHydroBracket(double tau, int &it0, int &it1, double &dt) const {
+    if (!prehydroLoaded_ || prehydroTaus_.empty()) return false;
+    if (tau >= hydroTau0_ - kTauTolerance) return false;
+    if (tau < prehydroTaus_.front() - kTauTolerance ||
+        tau > prehydroTaus_.back() + kTauTolerance) {
+        return false;
+    }
+
+    if (prehydroTaus_.size() == 1) {
+        if (std::abs(tau - prehydroTaus_.front()) > kTauTolerance) return false;
+        it0 = it1 = 0;
+        dt = 0.0;
+        return true;
+    }
+
+    if (tau <= prehydroTaus_.front() + kTauTolerance) {
+        it0 = it1 = 0;
+        dt = 0.0;
+        return true;
+    }
+    if (tau >= prehydroTaus_.back() - kTauTolerance) {
+        it0 = it1 = static_cast<int>(prehydroTaus_.size() - 1);
+        dt = 0.0;
+        return true;
+    }
+
+    auto upper = std::upper_bound(prehydroTaus_.begin(), prehydroTaus_.end(), tau);
+    it1 = static_cast<int>(upper - prehydroTaus_.begin());
+    it0 = it1 - 1;
+
+    const double denom = prehydroTaus_[it1] - prehydroTaus_[it0];
+    if (denom <= 0.) {
+        dt = 0.0;
+    } else {
+        dt = (tau - prehydroTaus_[it0]) / denom;
+        dt = std::max(0.0, std::min(1.0, dt));
+    }
+    return true;
+}
+
+bool HydroProfile::hasPreHydroAt(double tau) const {
+    int it0 = 0;
+    int it1 = 0;
+    double dt = 0.0;
+    return getPreHydroBracket(tau, it0, it1, dt);
+}
+
+double HydroProfile::getPreHydroValue(const std::vector<double> &data, double tau, double x, double y) const {
+    int it0 = 0;
+    int it1 = 0;
+    double dt = 0.0;
+    if (!getPreHydroBracket(tau, it0, it1, dt)) return 0.0;
+
+    double xgrid = (hydroXmax_ + x) / hydroDx_;
+    int ix = static_cast<int>(std::floor(xgrid));
+    ix = clampIndex(ix, ixmax_);
+    double dx = xgrid - static_cast<double>(ix);
+
+    double ygrid = (hydroXmax_ + y) / hydroDx_;
+    int iy = static_cast<int>(std::floor(ygrid));
+    iy = clampIndex(iy, ietamax_);
+    double dy = ygrid - static_cast<double>(iy);
+
+    auto spatial = [&](int it) {
+        size_t base = index(it, iy, ix, ietamax_, ixmax_);
+        size_t strideY = static_cast<size_t>(ixmax_);
+
+        size_t i00 = base;
+        size_t i10 = base + 1;
+        size_t i01 = base + strideY;
+        size_t i11 = base + strideY + 1;
+
+        assert(i11 < data.size());
+        return data[i00] * (1. - dx) * (1. - dy) +
+               data[i10] * dx * (1. - dy) +
+               data[i01] * (1. - dx) * dy +
+               data[i11] * dx * dy;
+    };
+
+    if (it0 == it1) return spatial(it0);
+    return spatial(it0) * (1. - dt) + spatial(it1) * dt;
+}
+
 double HydroProfile::temperature(double tau, double x, double y) const {
+    if (tau < hydroTau0_ - kTauTolerance) {
+        return getPreHydroValue(prehydrot_, tau, x, y);
+    }
     return getValue(hydrot_, tau, x, y) * tempScalingFactor_;
 }
 
 double HydroProfile::velocityX(double tau, double x, double y) const {
+    if (tau < hydroTau0_ - kTauTolerance) {
+        return getPreHydroValue(prehydrox_, tau, x, y);
+    }
     return getValue(hydrox_, tau, x, y);
 }
 
 double HydroProfile::velocityY(double tau, double x, double y) const {
+    if (tau < hydroTau0_ - kTauTolerance) {
+        return getPreHydroValue(prehydroy_, tau, x, y);
+    }
     return getValue(hydroy_, tau, x, y);
 }
 
@@ -391,14 +635,20 @@ double HydroProfile::velocityYElasticLegacy(double tau, double x, double y, doub
 }
 
 void HydroProfile::getValues(double tau, double x, double y, double &temp, double &vx, double &vy) const {
-    if (tau >= hydroTauMax_ || tau < hydroTau0_) {
+    if (tau < hydroTau0_ - kTauTolerance) {
+        getPreHydroValues(tau, x, y, temp, vx, vy);
+        return;
+    }
+
+    if (tau >= hydroTauMax_) {
         temp = vx = vy = 0.0;
         return;
     }
 
-    int it = static_cast<int>(std::floor((tau - hydroTau0_) / hydroDtau_));
+    const double tauEval = tau < hydroTau0_ ? hydroTau0_ : tau;
+    int it = static_cast<int>(std::floor((tauEval - hydroTau0_) / hydroDtau_));
     it = clampIndex(it, itaumax_);
-    double dt = fracFromIndex(tau, hydroTau0_, hydroDtau_, it);
+    double dt = fracFromIndex(tauEval, hydroTau0_, hydroDtau_, it);
 
     double xgrid = (hydroXmax_ + x) / hydroDx_;
     int ix = static_cast<int>(std::floor(xgrid));
@@ -441,4 +691,51 @@ void HydroProfile::getValues(double tau, double x, double y, double &temp, doubl
             hydrox_[i110]*w110 + hydrox_[i011]*w011 + hydrox_[i101]*w101 + hydrox_[i111]*w111;
     vy   =  hydroy_[i000]*w000 + hydroy_[i100]*w100 + hydroy_[i010]*w010 + hydroy_[i001]*w001 +
             hydroy_[i110]*w110 + hydroy_[i011]*w011 + hydroy_[i101]*w101 + hydroy_[i111]*w111;
+}
+
+void HydroProfile::getPreHydroValues(double tau, double x, double y, double &temp, double &vx, double &vy) const {
+    int it0 = 0;
+    int it1 = 0;
+    double dt = 0.0;
+    if (!getPreHydroBracket(tau, it0, it1, dt)) {
+        temp = vx = vy = 0.0;
+        return;
+    }
+
+    double xgrid = (hydroXmax_ + x) / hydroDx_;
+    int ix = static_cast<int>(std::floor(xgrid));
+    ix = clampIndex(ix, ixmax_);
+    double dx = xgrid - static_cast<double>(ix);
+
+    double ygrid = (hydroXmax_ + y) / hydroDx_;
+    int iy = static_cast<int>(std::floor(ygrid));
+    iy = clampIndex(iy, ietamax_);
+    double dy = ygrid - static_cast<double>(iy);
+
+    auto spatial = [&](const std::vector<double> &data, int it) {
+        size_t base = index(it, iy, ix, ietamax_, ixmax_);
+        size_t strideY = static_cast<size_t>(ixmax_);
+
+        size_t i00 = base;
+        size_t i10 = base + 1;
+        size_t i01 = base + strideY;
+        size_t i11 = base + strideY + 1;
+
+        assert(i11 < data.size());
+        return data[i00] * (1. - dx) * (1. - dy) +
+               data[i10] * dx * (1. - dy) +
+               data[i01] * (1. - dx) * dy +
+               data[i11] * dx * dy;
+    };
+
+    if (it0 == it1) {
+        temp = spatial(prehydrot_, it0);
+        vx = spatial(prehydrox_, it0);
+        vy = spatial(prehydroy_, it0);
+        return;
+    }
+
+    temp = spatial(prehydrot_, it0) * (1. - dt) + spatial(prehydrot_, it1) * dt;
+    vx = spatial(prehydrox_, it0) * (1. - dt) + spatial(prehydrox_, it1) * dt;
+    vy = spatial(prehydroy_, it0) * (1. - dt) + spatial(prehydroy_, it1) * dt;
 }

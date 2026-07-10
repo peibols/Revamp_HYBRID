@@ -34,6 +34,7 @@ private:
     bool do_event_display_;
     bool use_fixed_xy_;
     bool compat_moliere_legacy_hydro_;
+    bool use_prehydro_;
 
     // Parameters
     int njob_;
@@ -54,6 +55,7 @@ private:
     double fixed_x_;
     double fixed_y_;
     std::string tables_path_;
+    std::string prehydro_file_;
     std::string hybrid_evolution_history_file_;
     std::string event_display_file_;
 

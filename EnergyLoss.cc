@@ -2531,7 +2531,7 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
         int will_hot = 0;  // Advance variable (to reach hot zones)
         double vx = 0.;
         double vy = 0.;
-        if (tau >= tau0h) {  // Hydro profile starting time
+        if (tau >= tau0h || hydro_profile_.hasPreHydroAt(tau)) {  // Hydro or optional pre-hydro profile
             double temp = 0.;
             hydro_profile_.getValues(tau, pos[0], pos[1], temp, vx, vy);
             temp_for_record = temp;
@@ -2768,7 +2768,7 @@ double EnergyLoss::resolution_time(double parent_e, double parent_px, double par
         const double proper_sq = ti * ti - z * z;
         const double tau = proper_sq > 0. ? std::sqrt(proper_sq) : 0.;
 
-        if (tau >= 0.6) {
+        if (tau >= 0.6 || hydro_profile_.hasPreHydroAt(tau)) {
             const double temp = call_gT(tau, x, y, 0);
             const double sep = std::sqrt(xprime * xprime + yprime * yprime + zprime * zprime);
             if (sep >= scale / (temp / 0.2) || temp <= Tc) {

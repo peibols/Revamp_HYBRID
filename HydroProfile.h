@@ -15,6 +15,9 @@ public:
     // Mode 0: reads "./hydroinfoPlaintxtHuichaoFormat.dat" (plaintext, boost-invariant)
     // Mode 1: reads "evolution_all_xyeta.dat" (binary, event-by-event)
     void loadHydro(int mode, const std::string &cent);
+    void loadPreHydroTable(const std::string &filename);
+    bool hasPreHydro() const { return prehydroLoaded_; }
+    bool hasPreHydroAt(double tau) const;
 
     // Legacy interface: directs to loadHydro(1, cent) for backward compatibility
     void loadIpsat(int nhyd, const std::string &cent, const std::string &filename = "evolution_all_xyeta.dat") {
@@ -50,6 +53,12 @@ private:
     std::vector<double> hydrox_;
     std::vector<double> hydroy_;
 
+    bool prehydroLoaded_ = false;
+    std::vector<double> prehydroTaus_;
+    std::vector<double> prehydrot_;
+    std::vector<double> prehydrox_;
+    std::vector<double> prehydroy_;
+
     // Mode-specific loaders
     void loadPlaintextHydro(const std::string &cent);
     void loadIpsatBinary(const std::string &cent, const std::string &filename);
@@ -59,4 +68,7 @@ private:
     static double fracFromIndex(double coord, double origin, double spacing, int idx);
 
     double getValue(const std::vector<double> &data, double tau, double x, double y) const;
+    bool getPreHydroBracket(double tau, int &it0, int &it1, double &dt) const;
+    double getPreHydroValue(const std::vector<double> &data, double tau, double x, double y) const;
+    void getPreHydroValues(double tau, double x, double y, double &temp, double &vx, double &vy) const;
 };

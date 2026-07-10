@@ -32,6 +32,7 @@ HYBRID::HYBRID(const Config &cfg) :
       do_event_display_(cfg.getBoolOr("doEventDisplay", false)),
       use_fixed_xy_(cfg.getBoolOr("use_fixed_xy", false)),
       compat_moliere_legacy_hydro_(cfg.getBoolOr("compat_moliere_legacy_hydro", true)),
+      use_prehydro_(cfg.getBoolOr("use_prehydro", false)),
       njob_(cfg.getIntOr("njob", 0)),
       Nev_(cfg.getIntOr("Nev", 1)),
       cent_(cfg.getStringOr("cent", "0-5")),
@@ -50,6 +51,7 @@ HYBRID::HYBRID(const Config &cfg) :
       fixed_x_(cfg.getDoubleOr("fixed_x", 0.0)),
       fixed_y_(cfg.getDoubleOr("fixed_y", 0.0)),
       tables_path_(cfg.getStringOr("tables_path", "")),
+      prehydro_file_(cfg.getStringOr("prehydro_file", "prehydro_table.tsv")),
       hybrid_evolution_history_file_(cfg.getStringOr("hybrid_evolution_history_file", "")),
       event_display_file_(cfg.getStringOr("eventDisplayFile", "eventDisplay.root")),
       nr_(hybrid_seed_),
@@ -126,6 +128,9 @@ HYBRID::HYBRID(const Config &cfg) :
                   << " X= " << fixed_x_
                   << " Y= " << fixed_y_
                   << std::endl;
+    }
+    if (use_prehydro_) {
+        std::cout << "arXiv:2509.19430 pre-hydro enabled file= " << prehydro_file_ << std::endl;
     }
 
     if (cfg.getBoolOr("use_trigger", false)) {
@@ -319,6 +324,9 @@ int HYBRID::read_nuclear_ipsat() {
 
 void HYBRID::read_hydro() {
     hydro_profile_->loadHydro(ebe_hydro_, cent_);
+    if (use_prehydro_) {
+        hydro_profile_->loadPreHydroTable(prehydro_file_);
+    }
 }
 
 void HYBRID::init_tree() {
