@@ -40,6 +40,10 @@ The test covers the attractor checksum and known values, implicit-equation
 residual, interpolation accuracy, onset, flow, conformal EOS, and pinned
 production options.
 
+`cern_support/monitor_oo_1m_prehydro_raa.py` supports an AA campaign with a
+separate retained pp snapshot through `--pp-local-eos`. Milestone analysis
+always enables strict one-event paired-AA completeness.
+
 ## Reproducibility Boundary
 
 This reproduces every pre-equilibrium-medium operation stated publicly in the
