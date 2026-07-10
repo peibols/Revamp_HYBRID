@@ -177,7 +177,7 @@ def replace_status_block(tex_path: Path, block: str) -> None:
     pattern = re.compile(rf"{re.escape(BEGIN_MARKER)}.*?{re.escape(END_MARKER)}", re.S)
     if not pattern.search(text):
         raise RuntimeError(f"{tex_path} does not contain OO auto-status markers")
-    tex_path.write_text(pattern.sub(block, text))
+    tex_path.write_text(pattern.sub(lambda _: block, text))
 
 
 def run_analyzer(
