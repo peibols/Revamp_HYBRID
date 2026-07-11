@@ -228,6 +228,82 @@ end
             self.assertEqual(rejection_rows[0]["reason"], "ValueError")
             self.assertIn("no complete PYTHIA events", rejection_rows[0]["detail"])
 
+    def test_v2_accepts_nonzero_hydro_slot_with_manifest_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            aa = root / "aa"
+            pp = root / "pp"
+            output = root / "analysis"
+            self.make_snapshot(pp, "pp")
+            (aa / "status/aa").mkdir(parents=True)
+            (aa / "outputs/aa").mkdir(parents=True)
+            (aa / "status/aa/chunk_0.txt").write_text("status=success\n")
+            summary_header = (
+                "variant\ttask_id\tseed\thydro_slot\thydro_event_id\t"
+                "hydro_ncoll\thydro_payload_sha256\n"
+            )
+            digest = "a" * 64
+            with tarfile.open(aa / "outputs/aa/chunk_0.tar.gz", "w:gz") as archive:
+                for variant, suffix in (("no_prehydro", ""), ("with_prehydro", "_prehydro")):
+                    parent = (
+                        "runs/aa/hydro_026_C0-5_event_00643/"
+                        f"task_00000{suffix}"
+                    )
+                    self.add_member(
+                        archive, f"{parent}/HYBRID_Hadrons.out", self.event
+                    )
+                    summary = (
+                        summary_header
+                        + f"{variant}\t0\t900000\t26\t643\t35\t{digest}\n"
+                    ).encode()
+                    self.add_member(archive, f"{parent}/summary.tsv", summary)
+            manifest = root / "aa_task_manifest.tsv"
+            with manifest.open("w", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "task_id",
+                        "hard_seed",
+                        "hydro_slot",
+                        "hydro_event_id",
+                        "hydro_ncoll",
+                        "hydro_payload_sha256",
+                    ],
+                    delimiter="\t",
+                    lineterminator="\n",
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "task_id": 0,
+                        "hard_seed": 900000,
+                        "hydro_slot": 26,
+                        "hydro_event_id": 643,
+                        "hydro_ncoll": 35,
+                        "hydro_payload_sha256": digest,
+                    }
+                )
+            argv = [
+                "analyzer",
+                "--local-eos", str(aa),
+                "--pp-local-eos", str(pp),
+                "--out-dir", str(output),
+                "--require-paired-aa",
+                "--aa-events-per-chunk", "1",
+                "--aa-task-manifest", str(manifest),
+                "--aa-task-limit", "1",
+                "--require-complete-aa-prefix",
+            ]
+            with patch.object(sys, "argv", argv), patch.object(
+                analysis, "maybe_plot"
+            ):
+                self.assertEqual(analysis.main(), 0)
+            with (output / "aa_hydro_counts.tsv").open() as handle:
+                rows = list(csv.DictReader(handle, delimiter="\t"))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["hydro_slot"], "26")
+            self.assertEqual(rows[0]["accepted_tasks"], "1")
+
 
 if __name__ == "__main__":
     unittest.main()

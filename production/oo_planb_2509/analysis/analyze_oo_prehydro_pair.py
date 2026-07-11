@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import csv
 from dataclasses import dataclass
 import math
@@ -25,6 +26,18 @@ class PythiaRun:
     sigma_gen: float
     weight_sum: float
     event_count: int
+
+
+@dataclass(frozen=True)
+class ScannedRun:
+    variant: str
+    hydro_slot: int | None
+    hydro_event_id: int | None
+    hydro_ncoll: int | None
+    task_id: int | None
+    seed: int | None
+    hydro_payload_sha256: str | None
+    run: PythiaRun
 
 
 @dataclass(frozen=True)
@@ -241,8 +254,8 @@ def scan_tar(
     kind: str,
     bins: list[float],
     eta_max: float,
-) -> list[tuple[str, int | None, PythiaRun]]:
-    found: list[tuple[str, int | None, PythiaRun]] = []
+) -> list[ScannedRun]:
+    found: list[ScannedRun] = []
     with tarfile.open(tar_path, "r:gz") as tar:
         summaries: dict[str, dict[str, str]] = {}
         for member in tar.getmembers():
@@ -268,8 +281,75 @@ def scan_tar(
             match = re.search(r"/hydro_(\d+)_", member.name)
             if match:
                 hydro_index = int(match.group(1))
-            found.append((variant, hydro_index, parse_pythia_run(extracted, bins, eta_max)))
+            def optional_int(key: str) -> int | None:
+                if summary is None or not summary.get(key):
+                    return None
+                return int(summary[key])
+
+            found.append(
+                ScannedRun(
+                    variant=variant,
+                    hydro_slot=optional_int("hydro_slot")
+                    if summary is not None and "hydro_slot" in summary
+                    else hydro_index,
+                    hydro_event_id=optional_int("hydro_event_id"),
+                    hydro_ncoll=optional_int("hydro_ncoll"),
+                    task_id=optional_int("task_id"),
+                    seed=optional_int("seed"),
+                    hydro_payload_sha256=(
+                        summary.get("hydro_payload_sha256") if summary else None
+                    ),
+                    run=parse_pythia_run(extracted, bins, eta_max),
+                )
+            )
     return found
+
+
+def load_aa_task_manifest(path: Path) -> dict[int, dict[str, str]]:
+    with path.open(newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    required = {
+        "task_id",
+        "hard_seed",
+        "hydro_slot",
+        "hydro_event_id",
+        "hydro_ncoll",
+        "hydro_payload_sha256",
+    }
+    if not rows or not required.issubset(rows[0]):
+        raise ValueError(f"{path}: missing required v2 task-manifest columns")
+    assignments: dict[int, dict[str, str]] = {}
+    for row in rows:
+        task_id = int(row["task_id"])
+        if task_id in assignments:
+            raise ValueError(f"{path}: duplicate task_id {task_id}")
+        assignments[task_id] = row
+    if set(assignments) != set(range(len(assignments))):
+        raise ValueError(f"{path}: task IDs must be contiguous from zero")
+    return assignments
+
+
+def validate_v2_scanned_run(
+    scanned: ScannedRun, *, task_id: int, assignment: dict[str, str]
+) -> None:
+    expected_ints = {
+        "task_id": task_id,
+        "seed": int(assignment["hard_seed"]),
+        "hydro_slot": int(assignment["hydro_slot"]),
+        "hydro_event_id": int(assignment["hydro_event_id"]),
+        "hydro_ncoll": int(assignment["hydro_ncoll"]),
+    }
+    for field, expected in expected_ints.items():
+        actual = getattr(scanned, field)
+        if actual != expected:
+            raise ValueError(
+                f"task {task_id} {scanned.variant}: {field}={actual}, expected {expected}"
+            )
+    expected_sha = assignment["hydro_payload_sha256"]
+    if scanned.hydro_payload_sha256 != expected_sha:
+        raise ValueError(
+            f"task {task_id} {scanned.variant}: hydro payload SHA256 does not match manifest"
+        )
 
 
 def ratio_with_error(num: float, num_se: float, den: float, den_se: float) -> tuple[float, float]:
@@ -430,6 +510,21 @@ def main() -> int:
         default=0,
         help="required event count per AA variant when --require-paired-aa is set",
     )
+    parser.add_argument(
+        "--aa-task-manifest",
+        type=Path,
+        help="v2 task manifest used to validate task/hydro/seed provenance",
+    )
+    parser.add_argument(
+        "--aa-task-limit",
+        type=int,
+        help="analyze the manifest prefix [0, limit); use 5000,10000,... for v2 milestones",
+    )
+    parser.add_argument(
+        "--require-complete-aa-prefix",
+        action="store_true",
+        help="fail unless every task in the selected v2 manifest prefix passes strict pairing",
+    )
     parser.add_argument("--copy", action="store_true")
     args = parser.parse_args()
 
@@ -439,6 +534,22 @@ def main() -> int:
         copy_from_eos(args.eos_base, args.local_eos)
 
     bins = [float(x) for x in args.bins.split(",") if x]
+    task_assignments = (
+        load_aa_task_manifest(args.aa_task_manifest)
+        if args.aa_task_manifest is not None
+        else None
+    )
+    if args.aa_task_limit is not None and task_assignments is None:
+        parser.error("--aa-task-limit requires --aa-task-manifest")
+    if args.require_complete_aa_prefix and task_assignments is None:
+        parser.error("--require-complete-aa-prefix requires --aa-task-manifest")
+    task_limit = (
+        args.aa_task_limit
+        if args.aa_task_limit is not None
+        else len(task_assignments) if task_assignments is not None else None
+    )
+    if task_limit is not None and not 0 < task_limit <= len(task_assignments or {}):
+        parser.error("--aa-task-limit must be within the task manifest")
     aa_local_eos_sources = distinct_aa_sources(
         args.local_eos, args.additional_aa_local_eos
     )
@@ -452,19 +563,23 @@ def main() -> int:
         if not tar_path.is_file():
             pp_missing_outputs += 1
             continue
-        for _, _, run in scan_tar(tar_path, "pp", bins, args.eta_max):
-            pp.add(run)
+        for scanned in scan_tar(tar_path, "pp", bins, args.eta_max):
+            pp.add(scanned.run)
 
     aa_chunks_used = 0
     aa_chunks_skipped = 0
     aa_missing_outputs = 0
     aa_source_rows = []
     aa_rejection_rows = []
+    accepted_task_ids: set[int] = set()
+    accepted_hydro_counts: Counter[int] = Counter()
     for aa_local_eos in aa_local_eos_sources:
         source_used = 0
         source_skipped = 0
         source_missing = 0
         for chunk in successful_chunks(aa_local_eos, "aa"):
+            if task_limit is not None and chunk >= task_limit:
+                continue
             tar_path = aa_local_eos / "outputs" / "aa" / f"chunk_{chunk}.tar.gz"
             if not tar_path.is_file():
                 source_missing += 1
@@ -478,11 +593,36 @@ def main() -> int:
                     (aa_local_eos, chunk, type(error).__name__, str(error))
                 )
                 continue
-            for variant, hydro_index, run in scanned_runs:
-                if hydro_index not in (None, 0):
+            if task_assignments is not None:
+                if chunk not in task_assignments:
+                    source_skipped += 1
+                    aa_rejection_rows.append(
+                        (aa_local_eos, chunk, "UnexpectedTask", "task is absent from v2 manifest")
+                    )
                     continue
-                if variant in aa:
-                    chunk_runs[variant].append(run)
+                if chunk in accepted_task_ids:
+                    source_skipped += 1
+                    aa_rejection_rows.append(
+                        (aa_local_eos, chunk, "DuplicateTask", "task was already accepted from another source")
+                    )
+                    continue
+                try:
+                    for scanned in scanned_runs:
+                        if scanned.variant in aa:
+                            validate_v2_scanned_run(
+                                scanned,
+                                task_id=chunk,
+                                assignment=task_assignments[chunk],
+                            )
+                except ValueError as error:
+                    source_skipped += 1
+                    aa_rejection_rows.append(
+                        (aa_local_eos, chunk, "ManifestMismatch", str(error))
+                    )
+                    continue
+            for scanned in scanned_runs:
+                if scanned.variant in aa:
+                    chunk_runs[scanned.variant].append(scanned.run)
 
             if args.require_paired_aa:
                 expected = args.aa_events_per_chunk
@@ -515,6 +655,9 @@ def main() -> int:
                     continue
 
             source_used += 1
+            if task_assignments is not None:
+                accepted_task_ids.add(chunk)
+                accepted_hydro_counts[int(task_assignments[chunk]["hydro_slot"])] += 1
             for variant in AA_VARIANTS:
                 for run in chunk_runs[variant]:
                     aa[variant].add(run)
@@ -534,6 +677,38 @@ def main() -> int:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow(["aa_local_eos", "chunk_id", "reason", "detail"])
         writer.writerows(aa_rejection_rows)
+    if task_assignments is not None:
+        expected_hydro_counts = Counter(
+            int(task_assignments[task_id]["hydro_slot"])
+            for task_id in range(task_limit or 0)
+        )
+        with (args.out_dir / "aa_hydro_counts.tsv").open("w", newline="") as handle:
+            writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+            writer.writerow(
+                ["hydro_slot", "hydro_event_id", "ncoll", "expected_tasks", "accepted_tasks"]
+            )
+            for slot in sorted(expected_hydro_counts):
+                assignment = next(
+                    row
+                    for row in task_assignments.values()
+                    if int(row["hydro_slot"]) == slot
+                )
+                writer.writerow(
+                    [
+                        slot,
+                        assignment["hydro_event_id"],
+                        assignment["hydro_ncoll"],
+                        expected_hydro_counts[slot],
+                        accepted_hydro_counts[slot],
+                    ]
+                )
+        missing_prefix = set(range(task_limit or 0)) - accepted_task_ids
+        if args.require_complete_aa_prefix and missing_prefix:
+            preview = ",".join(str(task_id) for task_id in sorted(missing_prefix)[:20])
+            raise RuntimeError(
+                f"v2 AA prefix is incomplete: {len(missing_prefix)} missing/rejected tasks; "
+                f"first IDs: {preview}"
+            )
     overlay_path = args.out_dir / "oo5360_c0_5_prehydro_overlay_raa.tsv"
     with overlay_path.open("w", newline="") as handle:
         writer = None
