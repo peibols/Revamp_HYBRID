@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import importlib.util
+import io
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import unittest
+
+
+MODULE_PATH = Path(__file__).with_name("convert_oo_paired_to_root.py")
+SPEC = importlib.util.spec_from_file_location("convert_oo_paired_to_root", MODULE_PATH)
+assert SPEC is not None and SPEC.loader is not None
+converter = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = converter
+SPEC.loader.exec_module(converter)
+
+
+def event_text(px: float, weight: float = 2.5) -> bytes:
+    return (
+        "# event 0\n"
+        f"weight {weight} cross 17.5 X 0.2 Y -0.3\n"
+        "5 0 0 0 21 -2\n"
+        f"{px} 0 0 0.13957 211 0\n"
+        "1.0 0.2 0 0.13957 211 1\n"
+        "0.1 0.02 0 0.13957 -211 2\n"
+        "end\n"
+    ).encode()
+
+
+def add_member(tar: tarfile.TarFile, name: str, payload: bytes) -> None:
+    member = tarfile.TarInfo(name)
+    member.size = len(payload)
+    tar.addfile(member, io.BytesIO(payload))
+
+
+def make_archive(path: Path, with_weight: float = 2.5) -> None:
+    base = "runs/campaign/aa/hydro_03_C0-5"
+    pair_summary = (
+        "kind\ttask_id\tseed\tevents\tcentrality\thydro_index\tvariant\tuse_prehydro"
+        "\tprehydro_file\treturncode\ttimeout\tseconds\tdir\n"
+        "aa\t7\t12345\t1\tC0-5\t3\tno_prehydro\t0\t\t0\t0\t1.0\t/no\n"
+        "aa\t7\t12345\t1\tC0-5\t3\twith_prehydro\t1\tpre.tsv\t0\t0\t1.1\t/with\n"
+    ).encode()
+    summary_header = "variant\tuse_prehydro\tprehydro_file\treturncode\ttimeout\tseconds\tdir\n"
+    with tarfile.open(path, "w:gz") as tar:
+        add_member(tar, f"{base}/task_00007_pair_summary.tsv", pair_summary)
+        add_member(
+            tar,
+            f"{base}/task_00007/summary.tsv",
+            (summary_header + "no_prehydro\t0\t\t0\t0\t1.0\t/no\n").encode(),
+        )
+        add_member(tar, f"{base}/task_00007/HYBRID_Hadrons.out", event_text(4.0))
+        add_member(
+            tar,
+            f"{base}/task_00007_prehydro/summary.tsv",
+            (summary_header + "with_prehydro\t1\tpre.tsv\t0\t0\t1.1\t/with\n").encode(),
+        )
+        add_member(
+            tar,
+            f"{base}/task_00007_prehydro/HYBRID_Hadrons.out",
+            event_text(3.5, with_weight),
+        )
+
+
+class ConverterTest(unittest.TestCase):
+    def test_parse_strict_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "chunk_7.tar.gz"
+            make_archive(archive)
+            pair = converter.parse_paired_archive(archive, expected_chunk_id=7)
+        self.assertEqual(pair.seed, 12345)
+        self.assertEqual(pair.hydro_index, 3)
+        self.assertEqual(pair.no_prehydro.event_number, 0)
+        self.assertEqual(len(pair.no_prehydro.particles), 4)
+        self.assertEqual([particle.raw_label for particle in pair.no_prehydro.particles], [-2, 0, 1, 2])
+
+    def test_reject_variant_metadata_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "chunk_7.tar.gz"
+            make_archive(archive, with_weight=3.0)
+            with self.assertRaisesRegex(converter.ArchiveValidationError, "event weight"):
+                converter.parse_paired_archive(archive, expected_chunk_id=7)
+
+    def test_pair_id_distinguishes_overlapping_sources(self) -> None:
+        self.assertEqual(converter.stable_pair_id(0, 7), 7)
+        self.assertEqual(converter.stable_pair_id(1, 7), (1 << 48) | 7)
+        self.assertNotEqual(converter.stable_pair_id(0, 7), converter.stable_pair_id(1, 7))
+
+    @unittest.skipUnless(
+        shutil.which("root-config") and shutil.which("fastjet-config"),
+        "ROOT and FastJet are required",
+    )
+    def test_end_to_end_root_writer(self) -> None:
+        import awkward as ak
+        import uproot
+
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            source = work / "source"
+            (source / "outputs" / "aa").mkdir(parents=True)
+            (source / "status" / "aa").mkdir(parents=True)
+            make_archive(source / "outputs" / "aa" / "chunk_7.tar.gz")
+            (source / "status" / "aa" / "chunk_7.txt").write_text(
+                "kind=aa\ntask_id=7\nstatus=success\nexit_code=0\n"
+            )
+            output = work / "paired.root"
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "--source",
+                    f"synthetic={source}",
+                    "--output",
+                    str(output),
+                    "--build-dir",
+                    str(work / "build"),
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            with uproot.open(output) as root_file:
+                hadrons = root_file["noPrehydro/Hadrons"].arrays(library="ak")
+                self.assertEqual(ak.to_list(hadrons.hadronStatus[0]), [0, 1, -1])
+                self.assertEqual(ak.to_list(hadrons.hadronRawLabel[0]), [0, 1, 2])
+                self.assertEqual(int(hadrons.nHardMarkers[0]), 1)
+                jets = root_file["noPrehydro/Jets"].arrays(
+                    ["jet4Pt", "jet4RawPt", "jet4NegativeWakePt"], library="ak"
+                )
+                self.assertGreater(float(jets.jet4NegativeWakePt[0][0]), 0.0)
+                self.assertLess(float(jets.jet4Pt[0][0]), float(jets.jet4RawPt[0][0]))
+
+
+if __name__ == "__main__":
+    unittest.main()

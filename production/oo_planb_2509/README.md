@@ -3,6 +3,10 @@
 This directory contains the reproducible pre-equilibrium-medium construction
 used for the paired O16+O16 HYBRID campaign.
 
+The paired local-sample ROOT schema, wake-label mapping, anti-kT/Soft-Drop
+definitions, and conversion command are documented in
+[`ROOT_TREE_SCHEMA.md`](ROOT_TREE_SCHEMA.md).
+
 ## Published Prescription
 
 The implementation follows arXiv:2509.19430v2, Eqs. (2)-(4):
@@ -35,6 +39,7 @@ From this directory, with a staged hydro tree available at `staged_hydro/`:
 ```bash
 python3 analysis/test_2509_prehydro_public.py -v
 python3 analysis/test_analyze_oo_prehydro_pair.py -v
+python3 analysis/test_convert_oo_paired_to_root.py -v
 python3 cern_support/test_monitor_oo_1m_prehydro_raa.py -v
 python3 cern_support/test_run_chunk_job.py -v
 python3 cern_support/test_supervise_oo_50k.py -v
