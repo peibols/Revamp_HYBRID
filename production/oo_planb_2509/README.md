@@ -66,6 +66,12 @@ by repeating `--additional-aa-local-eos` on the analyzer. Each AA root is
 validated independently for strict paired completeness, then all accepted runs
 enter one `PythiaParallel` aggregate and one jackknife calculation.
 
+For monitoring more than one live AA root, repeat
+`--sync-additional-aa EOS_BASE LOCAL_EOS` together with the matching
+`--additional-aa-local-eos LOCAL_EOS`. The monitor synchronizes status first
+and downloads outputs only when a milestone is eligible. Static retained roots
+remain ordinary `--additional-aa-local-eos` inputs and are never overwritten.
+
 Large Condor arrays default to `TOLERATE_CHUNK_FAILURES=true`. A failed process
 still uploads `status=failed` and its original exit code, but the wrapper exits
 successfully to Condor so DAGMan does not remove unrelated processes. Milestone

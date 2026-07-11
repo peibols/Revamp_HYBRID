@@ -45,6 +45,17 @@ def parse_args() -> argparse.Namespace:
         help="expected chunks for each --additional-aa-local-eos",
     )
     parser.add_argument(
+        "--sync-additional-aa",
+        action="append",
+        nargs=2,
+        metavar=("EOS_BASE", "LOCAL_EOS"),
+        default=[],
+        help=(
+            "additional live AA EOS root and its matching local snapshot; "
+            "requires --sync-via-cernctl"
+        ),
+    )
+    parser.add_argument(
         "--pp-local-eos",
         type=Path,
         help="optional retained snapshot containing a separate pp denominator",
@@ -76,6 +87,21 @@ def parse_args() -> argparse.Namespace:
         )
     if any(value <= 0 for value in args.additional_aa_chunks):
         parser.error("--additional-aa-chunks values must be positive")
+    args.sync_additional_aa = [
+        (eos_base, Path(local_eos))
+        for eos_base, local_eos in args.sync_additional_aa
+    ]
+    if args.sync_additional_aa and not args.sync_via_cernctl:
+        parser.error("--sync-additional-aa requires --sync-via-cernctl")
+    sync_paths = [local_eos for _, local_eos in args.sync_additional_aa]
+    if len(sync_paths) != len(set(sync_paths)):
+        parser.error("each --sync-additional-aa local snapshot must be unique")
+    unknown_sync_paths = set(sync_paths) - set(args.additional_aa_local_eos)
+    if unknown_sync_paths:
+        parser.error(
+            "each --sync-additional-aa LOCAL_EOS must also be supplied with "
+            "--additional-aa-local-eos"
+        )
     return args
 
 
@@ -141,6 +167,36 @@ def sync_via_cernctl(
     local_tar = local_eos.parent / f"{local_eos.name}.snapshot.tar.gz"
     subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{cern_remote}:{remote_stage}", str(local_tar)], check=True)
     subprocess.run(["tar", "-xzf", str(local_tar), "-C", str(local_eos)], check=True)
+
+
+def sync_configured_aa_sources(
+    args: argparse.Namespace,
+    *,
+    eos_base: str,
+    local_eos: Path,
+    include_outputs: bool,
+) -> None:
+    sync_via_cernctl(
+        cernctl=args.cernctl,
+        cern_remote=args.cern_remote,
+        eos_base=eos_base,
+        local_eos=local_eos,
+        remote_stage=args.remote_stage,
+        include_outputs=include_outputs,
+        renew_kerberos=args.renew_kerberos,
+    )
+    for index, (additional_eos_base, additional_local_eos) in enumerate(
+        args.sync_additional_aa
+    ):
+        sync_via_cernctl(
+            cernctl=args.cernctl,
+            cern_remote=args.cern_remote,
+            eos_base=additional_eos_base,
+            local_eos=additional_local_eos,
+            remote_stage=f"{args.remote_stage}.additional{index}",
+            include_outputs=include_outputs,
+            renew_kerberos=False,
+        )
 
 
 def read_completed(state_path: Path) -> set[int]:
@@ -280,14 +336,11 @@ def monitor_once(args: argparse.Namespace) -> bool:
     if args.copy:
         copy_from_eos(eos_base, local_eos)
     if args.sync_via_cernctl:
-        sync_via_cernctl(
-            cernctl=args.cernctl,
-            cern_remote=args.cern_remote,
+        sync_configured_aa_sources(
+            args,
             eos_base=eos_base,
             local_eos=local_eos,
-            remote_stage=args.remote_stage,
             include_outputs=False,
-            renew_kerberos=args.renew_kerberos,
         )
 
     aa_status_success = len(successful_chunks(local_eos, "aa")) + sum(
@@ -316,14 +369,11 @@ def monitor_once(args: argparse.Namespace) -> bool:
         return False
 
     if args.sync_via_cernctl:
-        sync_via_cernctl(
-            cernctl=args.cernctl,
-            cern_remote=args.cern_remote,
+        sync_configured_aa_sources(
+            args,
             eos_base=eos_base,
             local_eos=local_eos,
-            remote_stage=args.remote_stage,
             include_outputs=True,
-            renew_kerberos=args.renew_kerberos,
         )
 
     aa_success = len(available_chunks(local_eos, "aa")) + sum(

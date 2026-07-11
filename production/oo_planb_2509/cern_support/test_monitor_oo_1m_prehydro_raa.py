@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,52 @@ class CombinedMonitorArgumentsTest(unittest.TestCase):
         argv = ["monitor", "--additional-aa-local-eos", "/tmp/aa10k"]
         with patch.object(sys, "argv", argv), self.assertRaises(SystemExit):
             monitor.parse_args()
+
+    def test_accepts_live_additional_source_sync(self) -> None:
+        argv = [
+            "monitor",
+            "--additional-aa-local-eos", "/tmp/aa20k",
+            "--additional-aa-chunks", "20000",
+            "--sync-via-cernctl",
+            "--sync-additional-aa", "/eos/aa20k", "/tmp/aa20k",
+        ]
+        with patch.object(sys, "argv", argv):
+            args = monitor.parse_args()
+        self.assertEqual(
+            args.sync_additional_aa,
+            [("/eos/aa20k", Path("/tmp/aa20k"))],
+        )
+
+    def test_rejects_sync_path_not_in_additional_sources(self) -> None:
+        argv = [
+            "monitor",
+            "--sync-via-cernctl",
+            "--sync-additional-aa", "/eos/aa20k", "/tmp/aa20k",
+        ]
+        with patch.object(sys, "argv", argv), self.assertRaises(SystemExit):
+            monitor.parse_args()
+
+    def test_syncs_primary_and_live_additional_sources(self) -> None:
+        args = SimpleNamespace(
+            cernctl="cernctl",
+            cern_remote="lxplus",
+            remote_stage="/tmp/snapshot.tar.gz",
+            renew_kerberos=True,
+            sync_additional_aa=[("/eos/aa20k", Path("/tmp/aa20k"))],
+        )
+        with patch.object(monitor, "sync_via_cernctl") as sync:
+            monitor.sync_configured_aa_sources(
+                args,
+                eos_base="/eos/primary",
+                local_eos=Path("/tmp/primary"),
+                include_outputs=True,
+            )
+        self.assertEqual(sync.call_count, 2)
+        primary_call, additional_call = sync.call_args_list
+        self.assertTrue(primary_call.kwargs["renew_kerberos"])
+        self.assertFalse(additional_call.kwargs["renew_kerberos"])
+        self.assertEqual(additional_call.kwargs["eos_base"], "/eos/aa20k")
+        self.assertEqual(additional_call.kwargs["local_eos"], Path("/tmp/aa20k"))
 
     def test_forwards_all_aa_sources_to_analyzer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
