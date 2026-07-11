@@ -742,7 +742,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             )
 
     with (out_dir / f"{args.prefix}_histograms.tsv").open("w", newline="") as stream:
-        writer = csv.writer(stream, delimiter="\t")
+        writer = csv.writer(stream, delimiter="\t", lineterminator="\n")
         writer.writerow(
             [
                 "radius",
@@ -767,7 +767,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         writer.writerows(histogram_rows)
 
     with (out_dir / f"{args.prefix}_summary.tsv").open("w", newline="") as stream:
-        writer = csv.writer(stream, delimiter="\t")
+        writer = csv.writer(stream, delimiter="\t", lineterminator="\n")
         writer.writerow(
             [
                 "radius",
@@ -790,7 +790,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         writer.writerows(summary_rows)
 
     with (out_dir / f"{args.prefix}_moments.tsv").open("w", newline="") as stream:
-        writer = csv.writer(stream, delimiter="\t")
+        writer = csv.writer(stream, delimiter="\t", lineterminator="\n")
         writer.writerow(
             [
                 "radius",
