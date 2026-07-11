@@ -53,6 +53,12 @@ merged weighted histogram is normalized once. Applying `weight * sigmaGen`
 event by event is invalid for this job layout and produces artificial
 high-pT suppression.
 
+RAA plots use a logarithmic pT axis and the fixed edges
+`4,5,7,10,14,24,36,50,80,150 GeV`. These edges were selected once from the
+8426-pair pilot by requiring the worse relative statistical uncertainty of the
+two variants to stay near 25%; the observed range was 18.7--24.9%. The edges
+remain fixed for later milestones rather than being retuned on each snapshot.
+
 ## Reproducibility Boundary
 
 This reproduces every pre-equilibrium-medium operation stated publicly in the

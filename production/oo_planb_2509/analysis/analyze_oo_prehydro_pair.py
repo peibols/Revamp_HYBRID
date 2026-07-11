@@ -14,7 +14,7 @@ import tarfile
 from typing import BinaryIO
 
 
-DEFAULT_BINS = [4, 5, 6, 8, 10, 15, 20, 30, 40, 60, 80, 110]
+DEFAULT_BINS = [4, 5, 7, 10, 14, 24, 36, 50, 80, 150]
 CHARGED_ABS = {211, 321, 2212}
 AA_VARIANTS = ["no_prehydro", "with_prehydro"]
 
@@ -284,6 +284,12 @@ def ratio_with_error(num: float, num_se: float, den: float, den_se: float) -> tu
     return ratio, abs(ratio) * math.sqrt(rel2)
 
 
+def logarithmic_bin_center(low: float, high: float) -> float:
+    if low <= 0.0 or high <= low:
+        raise ValueError(f"invalid logarithmic bin: [{low}, {high}]")
+    return math.sqrt(low * high)
+
+
 def write_variant_table(
     out_path: Path,
     bins: list[float],
@@ -312,7 +318,7 @@ def write_variant_table(
                 variant,
                 f"{bins[i]:.8g}",
                 f"{bins[i + 1]:.8g}",
-                f"{0.5 * (bins[i] + bins[i + 1]):.8g}",
+                f"{logarithmic_bin_center(bins[i], bins[i + 1]):.8g}",
                 f"{raa:.10g}",
                 f"{err:.10g}",
                 aa_stats.event_count,
@@ -354,15 +360,29 @@ def maybe_plot(out_dir: Path, overlay_tsv: Path) -> None:
         if not selected:
             continue
         x = [float(row["pt_center"]) for row in selected]
+        x_low = [value - float(row["pt_low"]) for value, row in zip(x, selected)]
+        x_high = [float(row["pt_high"]) - value for value, row in zip(x, selected)]
         y = [float(row["raa"]) for row in selected]
         ye = [float(row["stat_err"]) if row["stat_err"] != "nan" else math.nan for row in selected]
         style = styles[variant]
-        ax.errorbar(x, y, yerr=ye, linewidth=1.8, linestyle="-", capsize=2.5, **style)
+        ax.errorbar(
+            x,
+            y,
+            xerr=[x_low, x_high],
+            yerr=ye,
+            linewidth=1.8,
+            linestyle="-",
+            capsize=2.5,
+            **style,
+        )
     ax.axhline(1.0, color="0.55", linewidth=1.0)
     ax.set_xlabel(r"charged hadron $p_T$ [GeV]")
     ax.set_ylabel(r"$R_{\rm AA}$")
     ax.set_title(r"O16+O16 5.36 TeV, 0--5%, charged $\pi/K/p$, $|\eta|<1$")
-    ax.set_xlim(3.5, 112)
+    ax.set_xscale("log")
+    ax.set_xlim(3.8, 160)
+    ax.set_xticks([4, 5, 7, 10, 20, 50, 100, 150])
+    ax.set_xticklabels(["4", "5", "7", "10", "20", "50", "100", "150"])
     ax.set_ylim(0.0, 1.5)
     ax.grid(alpha=0.25)
     ax.legend(frameon=False, fontsize=9)

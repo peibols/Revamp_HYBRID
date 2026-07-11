@@ -73,5 +73,18 @@ class PythiaAggregateTest(unittest.TestCase):
         self.assertTrue(math.isclose(stats.standard_errors[0], 5.0))
 
 
+class PlotBinningTest(unittest.TestCase):
+    def test_uses_fixed_equal_precision_bins(self) -> None:
+        self.assertEqual(
+            analysis.DEFAULT_BINS,
+            [4, 5, 7, 10, 14, 24, 36, 50, 80, 150],
+        )
+
+    def test_uses_geometric_center_for_log_axis(self) -> None:
+        self.assertEqual(analysis.logarithmic_bin_center(4.0, 9.0), 6.0)
+        with self.assertRaises(ValueError):
+            analysis.logarithmic_bin_center(0.0, 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()
