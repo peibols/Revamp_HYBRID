@@ -25,7 +25,15 @@ PREHYDRO_EOS_FACTOR="${PREHYDRO_EOS_FACTOR:-15.626873635058152}"
 PREHYDRO_ATTRACTOR_TABLE="${PREHYDRO_ATTRACTOR_TABLE:-runtime/prehydro_attractor_table.dat}"
 PREHYDRO_VISCOUS_ANCHOR="${PREHYDRO_VISCOUS_ANCHOR:-true}"
 TOLERATE_CHUNK_FAILURE="${TOLERATE_CHUNK_FAILURE:-false}"
+AA_TASK_MANIFEST="${AA_TASK_MANIFEST:-}"
+STORE_PREHYDRO_TABLE="${STORE_PREHYDRO_TABLE:-true}"
 TASK_ID="${1:-${_CONDOR_PROCNO:-0}}"
+HYDRO_SLOT=""
+HYDRO_EVENT_ID=""
+HYDRO_NCOLL=""
+HYDRO_DIR=""
+HYDRO_PAYLOAD_KEY=""
+HYDRO_PAYLOAD_SHA256=""
 case "${TOLERATE_CHUNK_FAILURE}" in
   1|true|TRUE) TOLERATE_CHUNK_FAILURE=true ;;
   0|false|FALSE) TOLERATE_CHUNK_FAILURE=false ;;
@@ -48,7 +56,18 @@ finalize() {
   echo "status=$([[ $rc -eq 0 ]] && echo success || echo failed)" >> "$INITIAL_DIR/chunk_status.txt"
   echo "exit_code=$rc" >> "$INITIAL_DIR/chunk_status.txt"
   echo "date=$(date -Is)" >> "$INITIAL_DIR/chunk_status.txt"
+  if [[ -n "${HYDRO_EVENT_ID}" ]]; then
+    echo "hydro_slot=${HYDRO_SLOT}" >> "$INITIAL_DIR/chunk_status.txt"
+    echo "hydro_event_id=${HYDRO_EVENT_ID}" >> "$INITIAL_DIR/chunk_status.txt"
+    echo "hydro_ncoll=${HYDRO_NCOLL}" >> "$INITIAL_DIR/chunk_status.txt"
+    echo "hydro_dir=${HYDRO_DIR}" >> "$INITIAL_DIR/chunk_status.txt"
+    echo "hydro_payload_key=${HYDRO_PAYLOAD_KEY}" >> "$INITIAL_DIR/chunk_status.txt"
+    echo "hydro_payload_sha256=${HYDRO_PAYLOAD_SHA256}" >> "$INITIAL_DIR/chunk_status.txt"
+  fi
   if [[ -d "$WORK/$RUN_NAME" ]]; then
+    if [[ "${STORE_PREHYDRO_TABLE}" != "1" && "${STORE_PREHYDRO_TABLE}" != "true" && "${STORE_PREHYDRO_TABLE}" != "TRUE" ]]; then
+      find "$WORK/$RUN_NAME" -type f -name prehydro_table.tsv -delete
+    fi
     (
       cd "$WORK"
       find "$RUN_NAME" -type f \( \
@@ -79,6 +98,61 @@ fetch payloads/pythia8315_alma9_install.tar.gz pythia8315_alma9_install.tar.gz
 fetch payloads/mmli_runtime_alma9.tar.gz mmli_runtime_alma9.tar.gz
 tar -xzf pythia8315_alma9_install.tar.gz
 tar -xzf mmli_runtime_alma9.tar.gz
+if [[ "${KIND}" == "aa" && -n "${AA_TASK_MANIFEST}" ]]; then
+  if [[ ! -f "${AA_TASK_MANIFEST}" ]]; then
+    echo "AA task manifest not found in runtime: ${AA_TASK_MANIFEST}" >&2
+    exit 1
+  fi
+  IFS=$'\t' read -r HYDRO_SLOT HYDRO_EVENT_ID HYDRO_NCOLL HYDRO_DIR HYDRO_PAYLOAD_KEY HYDRO_PAYLOAD_SHA256 < <(
+    python3 - "${AA_TASK_MANIFEST}" "${TASK_ID}" <<'PY'
+import csv
+import sys
+
+path, requested = sys.argv[1], int(sys.argv[2])
+with open(path, newline="") as handle:
+    rows = [row for row in csv.DictReader(handle, delimiter="\t") if int(row["task_id"]) == requested]
+if len(rows) != 1:
+    raise SystemExit(f"{path}: expected one row for task {requested}, found {len(rows)}")
+row = rows[0]
+fields = (
+    "hydro_slot",
+    "hydro_event_id",
+    "hydro_ncoll",
+    "hydro_dir",
+    "hydro_payload_key",
+    "hydro_payload_sha256",
+)
+print("\t".join(row[field] for field in fields))
+PY
+  )
+  if [[ -z "${HYDRO_PAYLOAD_KEY}" || ! "${HYDRO_PAYLOAD_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Invalid hydro assignment for task ${TASK_ID}" >&2
+    exit 1
+  fi
+  fetch "payloads/${HYDRO_PAYLOAD_KEY}" assigned_hydro.tar.gz
+  echo "${HYDRO_PAYLOAD_SHA256}  assigned_hydro.tar.gz" | sha256sum -c -
+  mkdir -p runtime/staged_hydro
+  python3 - assigned_hydro.tar.gz runtime/staged_hydro "${HYDRO_DIR}" <<'PY'
+from pathlib import PurePosixPath
+import sys
+import tarfile
+
+archive_path, destination, expected_dir = sys.argv[1:]
+with tarfile.open(archive_path, "r:gz") as archive:
+    members = archive.getmembers()
+    if not members:
+        raise SystemExit("assigned hydro archive is empty")
+    for member in members:
+        path = PurePosixPath(member.name)
+        if path.is_absolute() or ".." in path.parts or not path.parts or path.parts[0] != expected_dir:
+            raise SystemExit(f"unsafe or unexpected hydro archive member: {member.name}")
+        if member.issym() or member.islnk() or member.isdev():
+            raise SystemExit(f"unsupported hydro archive member type: {member.name}")
+    archive.extractall(destination)
+PY
+  test -s "runtime/staged_hydro/${HYDRO_DIR}/evolution_all_xyeta.dat"
+  test -s "runtime/staged_hydro/${HYDRO_DIR}/NcollList.dat"
+fi
 PYTHIA_ROOT="$WORK/pythia8315_alma9_install"
 export PYTHIA8DATA="$PYTHIA_ROOT/share/Pythia8/xmldoc"
 export LD_LIBRARY_PATH="$PYTHIA_ROOT/lib:${LD_LIBRARY_PATH:-}"
@@ -142,6 +216,9 @@ args+=(
 )
 if [[ -n "$PREHYDRO_ATTRACTOR_TABLE" ]]; then
   args+=(--prehydro-attractor-table "$PREHYDRO_ATTRACTOR_TABLE")
+fi
+if [[ -n "$AA_TASK_MANIFEST" ]]; then
+  args+=(--aa-task-manifest "$AA_TASK_MANIFEST")
 fi
 if [[ "$PREHYDRO_VISCOUS_ANCHOR" == "0" || "$PREHYDRO_VISCOUS_ANCHOR" == "false" || "$PREHYDRO_VISCOUS_ANCHOR" == "FALSE" ]]; then
   args+=(--no-prehydro-viscous-anchor)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import math
 import os
@@ -322,6 +323,99 @@ def event_id_from_readme(hydro_dir: Path, fallback: int) -> int:
     return int(match.group(1)) if match else fallback
 
 
+AA_TASK_FIELDS = {
+    "task_id",
+    "hard_seed",
+    "milestone_block",
+    "hydro_slot",
+    "hydro_event_id",
+    "hydro_ncoll",
+    "hydro_dir",
+    "hydro_payload_key",
+    "hydro_payload_sha256",
+}
+
+
+def load_aa_task_assignment(path: Path, task_id: int) -> dict[str, str | int]:
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    selected: dict[str, str] | None = None
+    with path.open(newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        missing = AA_TASK_FIELDS - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"{path}: task manifest is missing {sorted(missing)}")
+        for row in reader:
+            try:
+                row_task_id = int(row["task_id"])
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"{path}: invalid task_id row") from error
+            if row_task_id == task_id:
+                if selected is not None:
+                    raise ValueError(f"{path}: duplicate task_id {task_id}")
+                selected = row
+    if selected is None:
+        raise ValueError(f"{path}: no assignment for task_id {task_id}")
+
+    integer_fields = (
+        "task_id",
+        "hard_seed",
+        "milestone_block",
+        "hydro_slot",
+        "hydro_event_id",
+        "hydro_ncoll",
+    )
+    assignment: dict[str, str | int] = dict(selected)
+    for field in integer_fields:
+        try:
+            assignment[field] = int(selected[field])
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{path}: invalid integer {field} for task {task_id}") from error
+    hydro_dir = str(assignment["hydro_dir"])
+    expected_dir = f"C0-5_event_{int(assignment['hydro_event_id']):05d}"
+    if hydro_dir != expected_dir or Path(hydro_dir).name != hydro_dir:
+        raise ValueError(
+            f"{path}: task {task_id} hydro_dir={hydro_dir!r}, expected {expected_dir!r}"
+        )
+    payload_sha = str(assignment["hydro_payload_sha256"])
+    if not re.fullmatch(r"[0-9a-f]{64}", payload_sha):
+        raise ValueError(f"{path}: task {task_id} has invalid hydro payload SHA256")
+    if int(assignment["hydro_ncoll"]) <= 0:
+        raise ValueError(f"{path}: task {task_id} has nonpositive Ncoll")
+    return assignment
+
+
+def read_staged_hydro_metadata(hydro_dir: Path) -> dict[str, int]:
+    readme = hydro_dir / "README_staged_event.txt"
+    if not readme.is_file():
+        raise FileNotFoundError(readme)
+    metadata: dict[str, str] = {}
+    for raw in readme.read_text(errors="strict").splitlines():
+        if "=" not in raw or raw.lstrip().startswith("#"):
+            continue
+        key, value = (part.strip() for part in raw.split("=", 1))
+        metadata[key] = value
+    required = ("hydro_slot", "event_id", "ncoll_positions")
+    missing = [key for key in required if key not in metadata]
+    if missing:
+        raise ValueError(f"{readme}: missing {missing}")
+    parsed = {key: int(metadata[key]) for key in required}
+    ncoll_path = hydro_dir / "NcollList.dat"
+    if not ncoll_path.is_file():
+        raise FileNotFoundError(ncoll_path)
+    actual_ncoll = sum(
+        1
+        for line in ncoll_path.read_text(errors="strict").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    if actual_ncoll != parsed["ncoll_positions"]:
+        raise ValueError(
+            f"{ncoll_path}: contains {actual_ncoll} positions, "
+            f"README records {parsed['ncoll_positions']}"
+        )
+    return parsed
+
+
 def generate_planb_prehydro(
     *,
     reference_hydro: Path,
@@ -443,6 +537,11 @@ def run_variant(
     prehydro_attractor: Callable[[float], float],
     prehydro_viscous_anchor: bool,
     event_id: int,
+    task_id: int,
+    hydro_slot: int,
+    hydro_ncoll: int,
+    hydro_payload_sha256: str,
+    centrality: str,
 ) -> dict[str, str | int | float]:
     run_dir.mkdir(parents=True, exist_ok=True)
     write_pythia_card(template, run_dir / "setup_pythia.cmnd", pthat_min, pthat_max, pdf_mode, lhapdf_set)
@@ -498,8 +597,12 @@ def run_variant(
         "dir": str(run_dir),
     }
     row = (
-        "variant\tuse_prehydro\tprehydro_file\treturncode\ttimeout\tseconds\tdir\n"
-        f"{variant}\t{int(use_prehydro)}\t{prehydro_file}\t{rc}\t{timed_out}\t{elapsed:.3f}\t{run_dir}\n"
+        "variant\tuse_prehydro\tprehydro_file\treturncode\ttimeout\tseconds\tdir\t"
+        "task_id\tseed\tcentrality\thydro_slot\thydro_event_id\thydro_ncoll\t"
+        "hydro_payload_sha256\n"
+        f"{variant}\t{int(use_prehydro)}\t{prehydro_file}\t{rc}\t{timed_out}\t"
+        f"{elapsed:.3f}\t{run_dir}\t{task_id}\t{seed}\t{centrality}\t{hydro_slot}\t"
+        f"{event_id}\t{hydro_ncoll}\t{hydro_payload_sha256}\n"
     )
     (run_dir / "summary.tsv").write_text(row)
     return result
@@ -518,6 +621,11 @@ def main() -> int:
     ap.add_argument("--timeout-s", type=int, default=7200)
     ap.add_argument("--run-name", required=True)
     ap.add_argument("--aa-centrality-index", type=int, default=-1, help="if nonnegative, force every AA task to this staged centrality index")
+    ap.add_argument(
+        "--aa-task-manifest",
+        type=Path,
+        help="v2 task-to-hydro assignment manifest (required by v2 AA jobs)",
+    )
     ap.add_argument("--run-prehydro-pair", action="store_true", help="for AA tasks, run no-prehydro and prehydro variants in the same job")
     ap.add_argument("--prehydro-tau-min", type=float, default=0.24)
     ap.add_argument("--prehydro-tau-grid", default=DEFAULT_PREHYDRO_TAU_GRID)
@@ -576,18 +684,52 @@ def main() -> int:
 
     seed = args.seed_offset + args.task_id
     if args.kind == "aa":
-        if args.aa_centrality_index >= 0:
+        if args.aa_task_manifest is not None:
+            assignment = load_aa_task_assignment(args.aa_task_manifest, args.task_id)
+            if int(assignment["hard_seed"]) != seed:
+                raise ValueError(
+                    f"task {args.task_id}: manifest hard seed {assignment['hard_seed']} "
+                    f"does not match seed offset result {seed}"
+                )
+            hydro_index = int(assignment["hydro_slot"])
+            cent = "C0-5"
+            hydro_dir = hydro_root / str(assignment["hydro_dir"])
+            event_id = int(assignment["hydro_event_id"])
+            hydro_ncoll = int(assignment["hydro_ncoll"])
+            hydro_payload_sha256 = str(assignment["hydro_payload_sha256"])
+            staged_metadata = read_staged_hydro_metadata(hydro_dir)
+            expected_metadata = {
+                "hydro_slot": hydro_index,
+                "event_id": event_id,
+                "ncoll_positions": hydro_ncoll,
+            }
+            if staged_metadata != expected_metadata:
+                raise ValueError(
+                    f"task {args.task_id}: staged hydro metadata {staged_metadata} "
+                    f"does not match manifest {expected_metadata}"
+                )
+            run_hydro_label = f"hydro_{hydro_index:03d}_{cent}_event_{event_id:05d}"
+        elif args.aa_centrality_index >= 0:
             if args.aa_centrality_index >= len(CENTRALITIES):
                 raise ValueError(f"--aa-centrality-index must be 0..{len(CENTRALITIES) - 1}")
             hydro_index = args.aa_centrality_index
+            cent = CENTRALITIES[hydro_index]
+            hydro_dir = hydro_root / f"{cent}_idx0"
+            event_id = event_id_from_readme(hydro_dir, args.task_id)
+            hydro_ncoll = -1
+            hydro_payload_sha256 = ""
+            run_hydro_label = f"hydro_{hydro_index:02d}_{cent}"
         else:
             hydro_index = args.task_id % len(CENTRALITIES)
-        cent = CENTRALITIES[hydro_index]
-        hydro_dir = hydro_root / f"{cent}_idx0"
+            cent = CENTRALITIES[hydro_index]
+            hydro_dir = hydro_root / f"{cent}_idx0"
+            event_id = event_id_from_readme(hydro_dir, args.task_id)
+            hydro_ncoll = -1
+            hydro_payload_sha256 = ""
+            run_hydro_label = f"hydro_{hydro_index:02d}_{cent}"
         if not (hydro_dir / "evolution_all_xyeta.dat").exists():
             raise FileNotFoundError(hydro_dir / "evolution_all_xyeta.dat")
-        event_id = event_id_from_readme(hydro_dir, args.task_id)
-        base_run_dir = work / args.run_name / "aa" / f"hydro_{hydro_index:02d}_{cent}" / f"task_{args.task_id:05d}"
+        base_run_dir = work / args.run_name / "aa" / run_hydro_label / f"task_{args.task_id:05d}"
         variants: list[tuple[str, Path, bool]] = [("no_prehydro", base_run_dir, False)]
         if args.run_prehydro_pair:
             variants.append(("with_prehydro", base_run_dir.with_name(f"task_{args.task_id:05d}_prehydro"), True))
@@ -596,6 +738,8 @@ def main() -> int:
         cent = "pp_reference"
         hydro_dir = None
         event_id = args.task_id
+        hydro_ncoll = -1
+        hydro_payload_sha256 = ""
         variants = [("pp_reference", work / args.run_name / "pp" / f"task_{args.task_id:05d}", False)]
 
     results = []
@@ -624,14 +768,24 @@ def main() -> int:
                 prehydro_attractor=prehydro_attractor,
                 prehydro_viscous_anchor=args.prehydro_viscous_anchor,
                 event_id=event_id,
+                task_id=args.task_id,
+                hydro_slot=hydro_index,
+                hydro_ncoll=hydro_ncoll,
+                hydro_payload_sha256=hydro_payload_sha256,
+                centrality=cent,
             )
         )
 
-    header = "kind\ttask_id\tseed\tevents\tcentrality\thydro_index\tvariant\tuse_prehydro\tprehydro_file\treturncode\ttimeout\tseconds\tdir\n"
+    header = (
+        "kind\ttask_id\tseed\tevents\tcentrality\thydro_index\thydro_event_id\t"
+        "hydro_ncoll\thydro_payload_sha256\tvariant\tuse_prehydro\tprehydro_file\t"
+        "returncode\ttimeout\tseconds\tdir\n"
+    )
     rows = []
     for result in results:
         rows.append(
             f"{args.kind}\t{args.task_id}\t{seed}\t{args.events}\t{cent}\t{hydro_index}\t"
+            f"{event_id}\t{hydro_ncoll}\t{hydro_payload_sha256}\t"
             f"{result['variant']}\t{result['use_prehydro']}\t{result['prehydro_file']}\t"
             f"{result['returncode']}\t{result['timeout']}\t{float(result['seconds']):.3f}\t{result['dir']}"
         )
