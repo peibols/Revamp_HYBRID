@@ -1,0 +1,341 @@
+#!/usr/bin/env python3
+"""Monitor, prefix-audit, and repair the 500-hydro OO v2 campaign."""
+
+from __future__ import annotations
+
+import argparse
+from collections import Counter
+import csv
+from datetime import datetime
+from pathlib import Path
+import re
+import subprocess
+import time
+
+
+DEFAULT_ROOT = Path("/raid5/data/yjlee/hybrid_dev")
+DEFAULT_WORK = DEFAULT_ROOT / "test/oo5360_v2_500hydro_50k_20260711"
+DEFAULT_SOURCE = DEFAULT_ROOT / "wt_main_moliere_lres_integration_clean"
+DEFAULT_CAMPAIGN = (
+    "hybrid_oo5360_c0_5_500hydro_no_moliere_paired_public2509_"
+    "planB_v2_50kAA_20260711"
+)
+DEFAULT_PP = DEFAULT_ROOT / "test/tmp_oo_10k_prehydro_raa_20260709/local_eos"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--work", type=Path, default=DEFAULT_WORK)
+    parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
+    parser.add_argument("--campaign", default=DEFAULT_CAMPAIGN)
+    parser.add_argument("--target", type=int, default=50_000)
+    parser.add_argument("--block-size", type=int, default=5_000)
+    parser.add_argument("--sleep-s", type=int, default=900)
+    parser.add_argument("--once", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--cernctl", default="/data/yjlee/cernLxplus/cernctl")
+    parser.add_argument("--cern-remote", default="lxplus")
+    parser.add_argument("--schedd", default="bigbird103.cern.ch")
+    parser.add_argument("--pp-local-eos", type=Path, default=DEFAULT_PP)
+    args = parser.parse_args()
+    if args.target <= 0 or args.block_size <= 0:
+        parser.error("--target and --block-size must be positive")
+    if args.target % args.block_size:
+        parser.error("--target must be divisible by --block-size")
+    if args.sleep_s <= 0:
+        parser.error("--sleep-s must be positive")
+    return args
+
+
+def log(message: str) -> None:
+    print(
+        f"{datetime.now().astimezone().isoformat(timespec='seconds')} {message}",
+        flush=True,
+    )
+
+
+def parse_status(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw in path.read_text(errors="replace").splitlines():
+        if "=" in raw:
+            key, value = raw.split("=", 1)
+            values[key] = value
+    return values
+
+
+def successful_ids(local_eos: Path) -> set[int]:
+    ids: set[int] = set()
+    for path in (local_eos / "status/aa").glob("chunk_*.txt"):
+        match = re.fullmatch(r"chunk_(\d+)\.txt", path.name)
+        if match and parse_status(path).get("status") == "success":
+            ids.add(int(match.group(1)))
+    return ids
+
+
+def output_ids(local_eos: Path) -> set[int]:
+    ids: set[int] = set()
+    for path in (local_eos / "outputs/aa").glob("chunk_*.tar.gz"):
+        match = re.fullmatch(r"chunk_(\d+)\.tar\.gz", path.name)
+        if match and path.stat().st_size > 0:
+            ids.add(int(match.group(1)))
+    return ids
+
+
+def ready_ids(local_eos: Path) -> set[int]:
+    return successful_ids(local_eos) & output_ids(local_eos)
+
+
+def query_jobs(args: argparse.Namespace) -> tuple[Counter[int], set[int]]:
+    constraint = f'regexp("{args.campaign}", Cmd)'
+    command = (
+        f"condor_q -name {args.schedd} -constraint '{constraint}' "
+        "-af JobStatus Args Cmd"
+    )
+    result = subprocess.run(
+        [args.cernctl, "run", "bash", "-lc", command],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    states: Counter[int] = Counter()
+    active_aa: set[int] = set()
+    for raw in result.stdout.splitlines():
+        fields = raw.split(maxsplit=2)
+        if not fields:
+            continue
+        status = int(fields[0])
+        states[status] += 1
+        if (
+            len(fields) == 3
+            and fields[1].isdigit()
+            and fields[2].endswith("/run_chunk_job.sh")
+        ):
+            active_aa.add(int(fields[1]))
+    return states, active_aa
+
+
+def sync_eos(args: argparse.Namespace, local_eos: Path) -> None:
+    eos_base = f"/eos/user/y/yjlee/{args.campaign}"
+    for member in ("status", "outputs"):
+        destination = local_eos / member
+        destination.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            [
+                "rsync",
+                "-a",
+                "--partial",
+                f"{args.cern_remote}:{eos_base}/{member}/",
+                f"{destination}/",
+            ],
+            check=True,
+        )
+
+
+def completed_milestones(path: Path) -> set[int]:
+    if not path.is_file():
+        return set()
+    with path.open() as handle:
+        return {
+            int(row["task_limit"])
+            for row in csv.DictReader(handle, delimiter="\t")
+        }
+
+
+def append_milestone(path: Path, task_limit: int, analysis_dir: Path) -> None:
+    exists = path.exists()
+    with path.open("a", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=("date", "task_limit", "percent", "analysis_dir"),
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        if not exists:
+            writer.writeheader()
+        writer.writerow(
+            {
+                "date": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "task_limit": task_limit,
+                "percent": task_limit * 100 // 50_000,
+                "analysis_dir": analysis_dir,
+            }
+        )
+
+
+def run_analysis(args: argparse.Namespace, local_eos: Path, task_limit: int) -> Path:
+    out_dir = args.work / "analysis_v2_milestones" / f"tasks_{task_limit:05d}"
+    analyzer = (
+        args.source
+        / "production/oo_planb_2509/analysis/analyze_oo_prehydro_pair.py"
+    )
+    manifest = args.work / "hydro_prepared/aa_task_manifest.tsv"
+    subprocess.run(
+        [
+            "python3",
+            str(analyzer),
+            "--local-eos",
+            str(local_eos),
+            "--pp-local-eos",
+            str(args.pp_local_eos),
+            "--out-dir",
+            str(out_dir),
+            "--require-paired-aa",
+            "--aa-events-per-chunk",
+            "1",
+            "--aa-task-manifest",
+            str(manifest),
+            "--aa-task-limit",
+            str(task_limit),
+            "--require-complete-aa-prefix",
+        ],
+        check=True,
+    )
+    return out_dir
+
+
+def render_retry_submit(template: str, id_file: str, tag: str) -> str:
+    queue = re.compile(r"^queue chunk_id from .+$", re.MULTILINE)
+    if not queue.search(template):
+        raise ValueError("AA submit template has no chunk-id queue statement")
+    rendered = queue.sub(f"queue chunk_id from {id_file}", template)
+    for field in ("output", "error", "log"):
+        pattern = re.compile(rf"^({field}\s*=\s*log/)([^\n]+)$", re.MULTILINE)
+        if not pattern.search(rendered):
+            raise ValueError(f"AA submit template has no {field} path")
+        rendered = pattern.sub(rf"\g<1>v2_retry_{tag}_\2", rendered, count=1)
+    return rendered
+
+
+def submit_retry(args: argparse.Namespace, ids: set[int]) -> None:
+    if not ids:
+        return
+    stamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
+    retry_dir = args.work / "v2_retries"
+    retry_dir.mkdir(parents=True, exist_ok=True)
+    id_path = retry_dir / f"retry_{stamp}_ids.txt"
+    submit_path = retry_dir / f"retry_{stamp}.sub"
+    id_path.write_text("".join(f"{task_id}\n" for task_id in sorted(ids)))
+    template = (args.work / "oo_no_moliere_aa.sub").read_text()
+    submit_path.write_text(render_retry_submit(template, id_path.name, stamp))
+    if args.dry_run:
+        log(f"dry run: would resubmit {len(ids)} task(s)")
+        return
+    afs = f"/afs/cern.ch/user/y/yjlee/cernLxplus_jobs/{args.campaign}"
+    subprocess.run(
+        [
+            "scp",
+            "-q",
+            "-o",
+            "BatchMode=yes",
+            str(id_path),
+            str(submit_path),
+            f"{args.cern_remote}:{afs}/",
+        ],
+        check=True,
+    )
+    command = (
+        "source /etc/profile.d/modules.sh 2>/dev/null || true; "
+        "module load lxbatch/eossubmit >/dev/null 2>&1; "
+        f"cd {afs} && condor_submit {submit_path.name}"
+    )
+    result = subprocess.run(
+        [args.cernctl, "run", "bash", "-lc", command],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    match = re.search(r"submitted to cluster (\d+)", result.stdout)
+    if not match:
+        raise RuntimeError(f"could not parse retry cluster: {result.stdout}")
+    with (retry_dir / "retry_submissions.tsv").open("a") as handle:
+        handle.write(
+            f"{datetime.now().astimezone().isoformat(timespec='seconds')}\t"
+            f"{match.group(1)}\t{len(ids)}\t{min(ids)}\t{max(ids)}\n"
+        )
+    log(f"resubmitted {len(ids)} task(s) as cluster {match.group(1)}")
+
+
+def rejected_ids(analysis_dir: Path) -> set[int]:
+    path = analysis_dir / "aa_rejections.tsv"
+    if not path.is_file():
+        return set()
+    with path.open() as handle:
+        return {
+            int(row["chunk_id"])
+            for row in csv.DictReader(handle, delimiter="\t")
+        }
+
+
+def supervise_once(args: argparse.Namespace) -> bool:
+    local_eos = args.work / "eos_snapshot"
+    seen_path = args.work / "v2_aa_queue_seen.txt"
+    state_path = args.work / "v2_milestones.tsv"
+    states, active_aa = query_jobs(args)
+    if active_aa and not seen_path.exists():
+        seen_path.write_text(
+            f"date={datetime.now().astimezone().isoformat(timespec='seconds')}\n"
+        )
+    sync_eos(args, local_eos)
+    ready = ready_ids(local_eos) & set(range(args.target))
+    log(
+        f"Condor states={dict(sorted(states.items()))}; "
+        f"active_AA={len(active_aa)} ready={len(ready)}/{args.target}"
+    )
+
+    done = completed_milestones(state_path)
+    for task_limit in range(args.block_size, args.target + 1, args.block_size):
+        if task_limit in done:
+            continue
+        if not set(range(task_limit)).issubset(ready):
+            break
+        try:
+            out_dir = run_analysis(args, local_eos, task_limit)
+        except subprocess.CalledProcessError as error:
+            log(f"strict prefix analysis failed for {task_limit}: {error}")
+            break
+        append_milestone(state_path, task_limit, out_dir)
+        log(f"strict milestone complete: {task_limit}/{args.target}")
+
+    if active_aa or not seen_path.exists():
+        return False
+
+    missing = set(range(args.target)) - ready
+    if missing:
+        submit_retry(args, missing)
+        return False
+
+    final_dir = args.work / "analysis_v2_milestones" / f"tasks_{args.target:05d}"
+    try:
+        if args.target not in completed_milestones(state_path):
+            final_dir = run_analysis(args, local_eos, args.target)
+            append_milestone(state_path, args.target, final_dir)
+    except subprocess.CalledProcessError:
+        malformed = rejected_ids(final_dir)
+        if not malformed:
+            raise RuntimeError("full strict audit failed without resubmittable task IDs")
+        submit_retry(args, malformed)
+        return False
+
+    (args.work / "v2_50k_strict_complete.txt").write_text(
+        f"date={datetime.now().astimezone().isoformat(timespec='seconds')}\n"
+        f"accepted_pairs={args.target}\nanalysis_dir={final_dir}\n"
+    )
+    log("v2 strict target complete")
+    return True
+
+
+def main() -> int:
+    args = parse_args()
+    while True:
+        try:
+            if supervise_once(args):
+                return 0
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+            log(f"supervisor iteration failed: {type(error).__name__}: {error}")
+        if args.once:
+            return 0
+        time.sleep(args.sleep_s)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
