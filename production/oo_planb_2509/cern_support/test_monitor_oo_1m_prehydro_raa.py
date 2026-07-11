@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import csv
 import sys
 import tempfile
 import unittest
@@ -123,6 +124,18 @@ class CombinedMonitorArgumentsTest(unittest.TestCase):
         self.assertIn("--additional-aa-local-eos", command)
         index = command.index("--additional-aa-local-eos")
         self.assertEqual(command[index + 1], "/tmp/aa10k")
+
+    def test_reads_only_analyzer_accepted_aa_chunks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            with (out_dir / "aa_sources.tsv").open("w", newline="") as handle:
+                writer = csv.writer(handle, delimiter="\t")
+                writer.writerow(
+                    ["aa_local_eos", "chunks_used", "chunks_skipped", "missing_outputs"]
+                )
+                writer.writerow(["/tmp/aa10k", 9999, 1, 0])
+                writer.writerow(["/tmp/aa20k", 16919, 1, 0])
+            self.assertEqual(monitor.read_analyzed_aa_chunks(out_dir), 26918)
 
 
 if __name__ == "__main__":

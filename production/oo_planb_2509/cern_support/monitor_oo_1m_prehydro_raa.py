@@ -297,6 +297,21 @@ def run_analyzer(
     )
 
 
+def read_analyzed_aa_chunks(out_dir: Path) -> int:
+    source_table = out_dir / "aa_sources.tsv"
+    with source_table.open() as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    if not rows:
+        raise ValueError(f"analyzer wrote no AA source rows to {source_table}")
+    try:
+        counts = [int(row["chunks_used"]) for row in rows]
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"invalid analyzer AA source table: {source_table}") from error
+    if any(count < 0 for count in counts):
+        raise ValueError(f"negative AA chunk count in {source_table}")
+    return sum(counts)
+
+
 def copy_figures(out_dir: Path, overleaf: Path, milestone: int) -> list[Path]:
     figure_dir = overleaf / "report/figures"
     figure_dir.mkdir(parents=True, exist_ok=True)
@@ -400,7 +415,6 @@ def monitor_once(args: argparse.Namespace) -> bool:
         )
         return False
 
-    aa_done = min(aa_success * args.aa_events, aa_chunks_total * args.aa_events)
     pp_done = min(pp_success * args.pp_events, args.pp_chunks * args.pp_events)
     for milestone in pending:
         stamp = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -413,11 +427,30 @@ def monitor_once(args: argparse.Namespace) -> bool:
             out_dir,
             args.aa_events,
         )
+        analyzed_aa_success = read_analyzed_aa_chunks(out_dir)
+        analyzed_completion = int(
+            100.0
+            * min(
+                analyzed_aa_success / aa_chunks_total,
+                pp_success / args.pp_chunks,
+            )
+        )
+        if milestone > analyzed_completion:
+            print(
+                f"analyzer accepted only {analyzed_aa_success}/{aa_chunks_total} "
+                f"AA pairs ({analyzed_completion}%); milestone {milestone}% "
+                "was not published"
+            )
+            continue
+        aa_done = min(
+            analyzed_aa_success * args.aa_events,
+            aa_chunks_total * args.aa_events,
+        )
         copied = copy_figures(out_dir, args.overleaf, milestone)
         block = status_block(
             campaign=args.campaign,
             milestone=milestone,
-            aa_success=aa_success,
+            aa_success=analyzed_aa_success,
             pp_success=pp_success,
             aa_chunks=aa_chunks_total,
             pp_chunks=args.pp_chunks,
@@ -431,7 +464,7 @@ def monitor_once(args: argparse.Namespace) -> bool:
         append_state(state_path, {
             "date": stamp,
             "milestone_pct": milestone,
-            "aa_success": aa_success,
+            "aa_success": analyzed_aa_success,
             "pp_success": pp_success,
             "aa_events": aa_done,
             "pp_events": pp_done,
@@ -446,7 +479,8 @@ def monitor_once(args: argparse.Namespace) -> bool:
             )
         print(
             f"updated milestone {milestone}%: "
-            f"aa={aa_success}/{aa_chunks_total} pp={pp_success}/{args.pp_chunks}"
+            f"aa={analyzed_aa_success}/{aa_chunks_total} "
+            f"pp={pp_success}/{args.pp_chunks}"
         )
     return True
 

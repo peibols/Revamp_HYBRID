@@ -459,6 +459,7 @@ def main() -> int:
     aa_chunks_skipped = 0
     aa_missing_outputs = 0
     aa_source_rows = []
+    aa_rejection_rows = []
     for aa_local_eos in aa_local_eos_sources:
         source_used = 0
         source_skipped = 0
@@ -469,9 +470,15 @@ def main() -> int:
                 source_missing += 1
                 continue
             chunk_runs = {variant: [] for variant in AA_VARIANTS}
-            for variant, hydro_index, run in scan_tar(
-                tar_path, "aa", bins, args.eta_max
-            ):
+            try:
+                scanned_runs = scan_tar(tar_path, "aa", bins, args.eta_max)
+            except (OSError, tarfile.TarError, ValueError) as error:
+                source_skipped += 1
+                aa_rejection_rows.append(
+                    (aa_local_eos, chunk, type(error).__name__, str(error))
+                )
+                continue
+            for variant, hydro_index, run in scanned_runs:
                 if hydro_index not in (None, 0):
                     continue
                 if variant in aa:
@@ -497,6 +504,14 @@ def main() -> int:
                 )
                 if not complete:
                     source_skipped += 1
+                    aa_rejection_rows.append(
+                        (
+                            aa_local_eos,
+                            chunk,
+                            "IncompletePair",
+                            "paired run or event count requirement failed",
+                        )
+                    )
                     continue
 
             source_used += 1
@@ -515,6 +530,10 @@ def main() -> int:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow(["aa_local_eos", "chunks_used", "chunks_skipped", "missing_outputs"])
         writer.writerows(aa_source_rows)
+    with (args.out_dir / "aa_rejections.tsv").open("w", newline="") as handle:
+        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+        writer.writerow(["aa_local_eos", "chunk_id", "reason", "detail"])
+        writer.writerows(aa_rejection_rows)
     overlay_path = args.out_dir / "oo5360_c0_5_prehydro_overlay_raa.tsv"
     with overlay_path.open("w", newline="") as handle:
         writer = None

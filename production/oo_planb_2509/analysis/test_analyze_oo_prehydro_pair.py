@@ -176,6 +176,58 @@ end
             self.assertTrue(all(row["aa_events"] == "2" for row in first_bin.values()))
             self.assertTrue(all(row["aa_runs"] == "2" for row in first_bin.values()))
 
+    def test_skips_success_archive_with_no_complete_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            valid = root / "valid"
+            invalid = root / "invalid"
+            pp = root / "pp"
+            output = root / "analysis"
+            self.make_snapshot(valid, "aa")
+            self.make_snapshot(invalid, "aa")
+            self.make_snapshot(pp, "pp")
+            incomplete = b""
+            with tarfile.open(
+                invalid / "outputs/aa/chunk_0.tar.gz", "w:gz"
+            ) as archive:
+                self.add_member(
+                    archive, "runs/task_00000/HYBRID_Hadrons.out", incomplete
+                )
+                self.add_member(
+                    archive,
+                    "runs/task_00000_prehydro/HYBRID_Hadrons.out",
+                    incomplete,
+                )
+
+            argv = [
+                "analyzer",
+                "--local-eos", str(valid),
+                "--additional-aa-local-eos", str(invalid),
+                "--pp-local-eos", str(pp),
+                "--out-dir", str(output),
+                "--require-paired-aa",
+                "--aa-events-per-chunk", "1",
+            ]
+            with patch.object(sys, "argv", argv), patch.object(
+                analysis, "maybe_plot"
+            ):
+                self.assertEqual(analysis.main(), 0)
+
+            with (output / "aa_sources.tsv").open() as handle:
+                source_rows = list(csv.DictReader(handle, delimiter="\t"))
+            self.assertEqual(
+                [row["chunks_used"] for row in source_rows], ["1", "0"]
+            )
+            self.assertEqual(
+                [row["chunks_skipped"] for row in source_rows], ["0", "1"]
+            )
+            with (output / "aa_rejections.tsv").open() as handle:
+                rejection_rows = list(csv.DictReader(handle, delimiter="\t"))
+            self.assertEqual(len(rejection_rows), 1)
+            self.assertEqual(rejection_rows[0]["chunk_id"], "0")
+            self.assertEqual(rejection_rows[0]["reason"], "ValueError")
+            self.assertIn("no complete PYTHIA events", rejection_rows[0]["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()
