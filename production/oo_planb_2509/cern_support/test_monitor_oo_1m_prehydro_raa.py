@@ -152,6 +152,39 @@ class CombinedMonitorArgumentsTest(unittest.TestCase):
             60,
         )
 
+    def test_copies_plot_and_audit_artifacts_for_a_milestone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "analysis"
+            overleaf = root / "overleaf"
+            out_dir.mkdir()
+            artifacts = {
+                "oo5360_c0_5_prehydro_overlay_raa.pdf": b"pdf",
+                "oo5360_c0_5_prehydro_overlay_raa.png": b"png",
+                "oo5360_c0_5_prehydro_overlay_raa.tsv": b"raa",
+                "aa_sources.tsv": b"sources",
+                "aa_rejections.tsv": b"rejections",
+            }
+            for name, content in artifacts.items():
+                (out_dir / name).write_bytes(content)
+            copied = monitor.copy_figures(out_dir, overleaf, 50)
+            figure_dir = overleaf / "report/figures"
+            self.assertEqual(len(copied), 10)
+            self.assertEqual(
+                (
+                    figure_dir
+                    / "20260709-oo-c0-5-paired-prehydro-raa-current.tsv"
+                ).read_bytes(),
+                b"raa",
+            )
+            self.assertEqual(
+                (
+                    figure_dir
+                    / "20260709-oo-c0-5-paired-prehydro-raa-050pct-rejections.tsv"
+                ).read_bytes(),
+                b"rejections",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

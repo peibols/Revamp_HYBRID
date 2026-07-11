@@ -328,12 +328,25 @@ def copy_figures(out_dir: Path, overleaf: Path, milestone: int) -> list[Path]:
     figure_dir = overleaf / "report/figures"
     figure_dir.mkdir(parents=True, exist_ok=True)
     copied: list[Path] = []
-    for suffix in ("pdf", "png"):
+    prefix = "20260709-oo-c0-5-paired-prehydro-raa"
+    for suffix in ("pdf", "png", "tsv"):
         source = out_dir / f"oo5360_c0_5_prehydro_overlay_raa.{suffix}"
         if not source.exists():
             continue
-        current = figure_dir / f"20260709-oo-c0-5-paired-prehydro-raa-current.{suffix}"
-        milestone_path = figure_dir / f"20260709-oo-c0-5-paired-prehydro-raa-{milestone:03d}pct.{suffix}"
+        current = figure_dir / f"{prefix}-current.{suffix}"
+        milestone_path = figure_dir / f"{prefix}-{milestone:03d}pct.{suffix}"
+        shutil.copy2(source, current)
+        shutil.copy2(source, milestone_path)
+        copied.extend([current, milestone_path])
+    for source_name, label in (
+        ("aa_sources.tsv", "sources"),
+        ("aa_rejections.tsv", "rejections"),
+    ):
+        source = out_dir / source_name
+        if not source.exists():
+            continue
+        current = figure_dir / f"{prefix}-current-{label}.tsv"
+        milestone_path = figure_dir / f"{prefix}-{milestone:03d}pct-{label}.tsv"
         shutil.copy2(source, current)
         shutil.copy2(source, milestone_path)
         copied.extend([current, milestone_path])
