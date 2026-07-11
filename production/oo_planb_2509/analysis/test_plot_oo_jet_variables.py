@@ -64,6 +64,25 @@ class JetWeightingTest(unittest.TestCase):
         np.testing.assert_allclose(ratio, [1.0, 1.0])
         self.assertTrue(np.all(np.isfinite(error)))
 
+    def test_pt_slices_partition_the_inclusive_selection(self) -> None:
+        pt = np.array([30.0, 40.0, 50.0, 60.0, 80.0, 90.0, np.nan])
+        low = plotter.jet_pt_selection(pt, 30.0, 50.0)
+        middle = plotter.jet_pt_selection(pt, 50.0, 80.0)
+        high = plotter.jet_pt_selection(pt, 80.0, None)
+        inclusive = plotter.jet_pt_selection(pt, 30.0, None)
+
+        np.testing.assert_array_equal(low, [False, True, True, False, False, False, False])
+        np.testing.assert_array_equal(middle, [False, False, False, True, True, False, False])
+        np.testing.assert_array_equal(high, [False, False, False, False, False, True, False])
+        np.testing.assert_array_equal(low | middle | high, inclusive)
+        self.assertFalse(np.any((low & middle) | (low & high) | (middle & high)))
+
+    def test_bounded_pt_histogram_uses_the_requested_edges(self) -> None:
+        spec = plotter.variable_specs(4, 30.0, 50.0)[0]
+        np.testing.assert_allclose(spec.edges, np.linspace(30.0, 50.0, 11))
+        self.assertEqual(spec.xscale, "linear")
+        self.assertEqual(plotter.pt_range_label(30.0, 50.0), r"$30<p_T^{\rm jet}\leq 50$ GeV")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -72,7 +72,9 @@ class MeanResult:
     weighted_entries: float
 
 
-def variable_specs(radius_digit: int, pt_min: float) -> list[VariableSpec]:
+def variable_specs(
+    radius_digit: int, pt_min: float, pt_max: float | None = None
+) -> list[VariableSpec]:
     if radius_digit == 4:
         mass_edges = np.array(
             [-32, -16, -8, -4, -2, 0, 2, 4, 6, 8, 10, 14, 20, 32, 64, 128, 256],
@@ -94,15 +96,22 @@ def variable_specs(radius_digit: int, pt_min: float) -> list[VariableSpec]:
     else:
         raise ValueError(f"unsupported radius digit {radius_digit}")
 
+    if pt_max is None:
+        pt_edges = np.geomspace(pt_min, 1600.0, 17)
+        pt_xscale = "log"
+    else:
+        pt_edges = np.linspace(pt_min, pt_max, 11)
+        pt_xscale = "linear"
+
     return [
         VariableSpec(
             "pt",
             "Pt",
             r"$p_T^{\mathrm{jet}}$ [GeV]",
             r"$d\sigma_{\mathrm{jet}}/dp_T$ [mb/GeV]",
-            np.geomspace(pt_min, 1600.0, 17),
+            pt_edges,
             "kinematics",
-            xscale="log",
+            xscale=pt_xscale,
             yscale="log",
         ),
         VariableSpec(
@@ -185,6 +194,21 @@ def variable_specs(radius_digit: int, pt_min: float) -> list[VariableSpec]:
             yscale="log",
         ),
     ]
+
+
+def jet_pt_selection(
+    pt_values: ak.Array | np.ndarray, pt_min: float, pt_max: float | None
+) -> ak.Array | np.ndarray:
+    selection = np.isfinite(pt_values) & (pt_values > pt_min)
+    if pt_max is not None:
+        selection = selection & (pt_values <= pt_max)
+    return selection
+
+
+def pt_range_label(pt_min: float, pt_max: float | None) -> str:
+    if pt_max is None:
+        return rf"$p_T^{{\rm jet}}>{pt_min:g}$ GeV"
+    return rf"${pt_min:g}<p_T^{{\rm jet}}\leq {pt_max:g}$ GeV"
 
 
 def jackknife_error(leave_one_out: np.ndarray) -> np.ndarray:
@@ -456,6 +480,7 @@ def plot_group(
     prefix: str,
     radius_digit: int,
     pt_min: float,
+    pt_max: float | None,
     specs: list[VariableSpec],
     histograms: dict[str, dict[str, HistogramResult]],
     ratios: dict[str, tuple[np.ndarray, np.ndarray]],
@@ -485,7 +510,7 @@ def plot_group(
     radius = radius_digit / 10.0
     figure.suptitle(
         rf"O16+O16 5.36 TeV, 0--5% diagnostic; anti-$k_T$ $R={radius:.1f}$, "
-        rf"4MomSub $p_T^{{\rm jet}}>{pt_min:g}$ GeV",
+        f"4MomSub {pt_range_label(pt_min, pt_max)}",
         fontsize=13,
         y=0.992,
     )
@@ -513,6 +538,11 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input-root", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--pt-min", type=float, default=30.0)
+    parser.add_argument(
+        "--pt-max",
+        type=float,
+        help="optional inclusive upper pT bound; the lower bound is exclusive",
+    )
     parser.add_argument("--prefix", default="oo5360_jet_variables_pt30")
     return parser
 
@@ -520,11 +550,17 @@ def make_parser() -> argparse.ArgumentParser:
 def run(args: argparse.Namespace) -> dict[str, object]:
     if args.pt_min <= 0.0:
         raise ValueError("--pt-min must be positive")
+    if args.pt_max is not None and args.pt_max <= args.pt_min:
+        raise ValueError("--pt-max must be greater than --pt-min")
     input_root = args.input_root.expanduser().resolve()
     out_dir = args.out_dir.expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    all_suffixes = {spec.branch_suffix for radius in (4, 8) for spec in variable_specs(radius, args.pt_min)}
+    all_suffixes = {
+        spec.branch_suffix
+        for radius in (4, 8)
+        for spec in variable_specs(radius, args.pt_min, args.pt_max)
+    }
     all_suffixes.add("SoftDropValid")
     tree_arrays: dict[str, ak.Array] = {}
     with uproot.open(input_root) as root_file:
@@ -566,6 +602,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "pairCount": len(pair_ids),
         "uniqueSeedCount": len(np.unique(pairs["seed"])),
         "ptMinGeV": args.pt_min,
+        "ptMaxGeV": args.pt_max,
+        "ptSelection": (
+            f"{args.pt_min:g} < corrected jet pT <= {args.pt_max:g} GeV"
+            if args.pt_max is not None
+            else f"corrected jet pT > {args.pt_min:g} GeV"
+        ),
         "selectionJetPtBranch": "4MomSub-corrected jetPt",
         "additionalJetEtaCut": None,
         "weightSum": weight_sum,
@@ -580,13 +622,13 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     }
 
     for radius_digit in (4, 8):
-        specs = variable_specs(radius_digit, args.pt_min)
+        specs = variable_specs(radius_digit, args.pt_min, args.pt_max)
         selections: dict[str, ak.Array] = {}
         selected_counts: dict[str, np.ndarray] = {}
         integrated: dict[str, IntegratedResult] = {}
         for variant in VARIANTS:
             pt_values = tree_arrays[variant][f"jet{radius_digit}Pt"]
-            selection = np.isfinite(pt_values) & (pt_values > args.pt_min)
+            selection = jet_pt_selection(pt_values, args.pt_min, args.pt_max)
             selections[variant] = selection
             counts = ak.to_numpy(ak.num(pt_values[selection], axis=1)).astype(np.float64)
             selected_counts[variant] = counts
@@ -736,6 +778,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 args.prefix,
                 radius_digit,
                 args.pt_min,
+                args.pt_max,
                 [spec for spec in specs if spec.group == group],
                 histograms,
                 ratios,

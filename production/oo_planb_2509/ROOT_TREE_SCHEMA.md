@@ -167,7 +167,13 @@ For the weighted no/with-prehydro jet-variable comparison, use
 `analysis/plot_oo_jet_variables.py`. It applies the one-event-run
 `PythiaParallel` normalization once, selects on the corrected jet pT, and uses
 a paired delete-one-run jackknife for distributions and ratios. Its weighting
-regression test is `analysis/test_plot_oo_jet_variables.py`.
+regression test is `analysis/test_plot_oo_jet_variables.py`. An optional
+`--pt-max` is inclusive while `--pt-min` remains exclusive. Consequently the
+three nonoverlapping campaign intervals are generated with `(30,50]`,
+`(50,80]`, and `(80,infinity)`. The companion
+`analysis/summarize_oo_jet_pt_slices.py` verifies their normalization metadata
+and exact cross-section closure to the inclusive `pT > 30` result before
+writing the combined table and figure.
 
 The negative-particle treatment follows the jet-level ghost-association and
 four-vector-subtraction construction described for 4MomSub in

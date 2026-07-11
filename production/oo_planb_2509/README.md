@@ -41,6 +41,7 @@ python3 analysis/test_2509_prehydro_public.py -v
 python3 analysis/test_analyze_oo_prehydro_pair.py -v
 python3 analysis/test_convert_oo_paired_to_root.py -v
 python3 analysis/test_plot_oo_jet_variables.py -v
+python3 analysis/test_summarize_oo_jet_pt_slices.py -v
 python3 cern_support/test_monitor_oo_1m_prehydro_raa.py -v
 python3 cern_support/test_run_chunk_job.py -v
 python3 cern_support/test_supervise_oo_50k.py -v
@@ -63,6 +64,14 @@ combined with the PYTHIA 8.315 `PythiaParallel` convention,
 merged weighted histogram is normalized once. Applying `weight * sigmaGen`
 event by event is invalid for this job layout and produces artificial
 high-pT suppression.
+
+The jet-variable analyzer accepts an optional inclusive upper boundary through
+`--pt-max`. The three campaign slices use the disjoint convention
+`30 < pT <= 50`, `50 < pT <= 80`, and `pT > 80 GeV`. Run the analyzer once per
+slice, then pass the three metadata files and the inclusive `pT > 30` metadata
+to `analysis/summarize_oo_jet_pt_slices.py`. The summary refuses gaps,
+overlaps, inconsistent normalization metadata, or sliced cross sections that
+do not close to the inclusive result.
 
 RAA plots use a logarithmic pT axis and the fixed edges
 `4,5,7,10,14,24,36,50,80,150 GeV`. These edges were selected once from the
