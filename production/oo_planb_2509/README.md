@@ -69,8 +69,10 @@ enter one `PythiaParallel` aggregate and one jackknife calculation.
 For monitoring more than one live AA root, repeat
 `--sync-additional-aa EOS_BASE LOCAL_EOS` together with the matching
 `--additional-aa-local-eos LOCAL_EOS`. The monitor synchronizes status first
-and downloads outputs only when a milestone is eligible. Static retained roots
-remain ordinary `--additional-aa-local-eos` inputs and are never overwritten.
+and downloads outputs only when a milestone is eligible. Synchronization uses
+incremental rsync, so unchanged archives are retained locally while repaired
+status and output files are refreshed. Static retained roots remain ordinary
+`--additional-aa-local-eos` inputs and are never overwritten.
 
 Large Condor arrays default to `TOLERATE_CHUNK_FAILURES=true`. A failed process
 still uploads `status=failed` and its original exit code, but the wrapper exits

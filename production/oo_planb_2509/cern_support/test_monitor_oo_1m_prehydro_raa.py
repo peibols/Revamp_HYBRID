@@ -75,6 +75,38 @@ class CombinedMonitorArgumentsTest(unittest.TestCase):
         self.assertEqual(additional_call.kwargs["eos_base"], "/eos/aa20k")
         self.assertEqual(additional_call.kwargs["local_eos"], Path("/tmp/aa20k"))
 
+    def test_live_sync_uses_incremental_rsync(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            local_eos = Path(tmp) / "snapshot"
+            with patch.object(monitor.subprocess, "run") as run:
+                monitor.sync_via_cernctl(
+                    cernctl="cernctl",
+                    cern_remote="lxplus",
+                    eos_base="/eos/aa20k",
+                    local_eos=local_eos,
+                    remote_stage="/tmp/legacy.tar.gz",
+                    include_outputs=True,
+                    renew_kerberos=True,
+                )
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(commands[0], ["cernctl", "kerberos"])
+        self.assertEqual(
+            commands[1],
+            [
+                "rsync", "-a", "--partial",
+                "lxplus:/eos/aa20k/status/",
+                f"{local_eos / 'status'}/",
+            ],
+        )
+        self.assertEqual(
+            commands[2],
+            [
+                "rsync", "-a", "--partial",
+                "lxplus:/eos/aa20k/outputs/",
+                f"{local_eos / 'outputs'}/",
+            ],
+        )
+
     def test_forwards_all_aa_sources_to_analyzer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)

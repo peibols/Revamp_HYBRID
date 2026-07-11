@@ -8,7 +8,6 @@ import csv
 from datetime import datetime
 from pathlib import Path
 import re
-import shlex
 import shutil
 import subprocess
 import time
@@ -156,17 +155,21 @@ def sync_via_cernctl(
     members = ["status"]
     if include_outputs:
         members.append("outputs")
-    remote_command = (
-        "set -euo pipefail; "
-        f"cd {shlex.quote(eos_base)}; "
-        f"rm -f {shlex.quote(remote_stage)}; "
-        f"tar --ignore-failed-read -czf {shlex.quote(remote_stage)} "
-        + " ".join(shlex.quote(member) for member in members)
-    )
-    subprocess.run([cernctl, "run", "bash", "-lc", remote_command], check=True)
-    local_tar = local_eos.parent / f"{local_eos.name}.snapshot.tar.gz"
-    subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{cern_remote}:{remote_stage}", str(local_tar)], check=True)
-    subprocess.run(["tar", "-xzf", str(local_tar), "-C", str(local_eos)], check=True)
+    # Keep the legacy argument so existing handoff commands remain compatible.
+    del remote_stage
+    for member in members:
+        destination = local_eos / member
+        destination.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            [
+                "rsync",
+                "-a",
+                "--partial",
+                f"{cern_remote}:{eos_base.rstrip('/')}/{member}/",
+                f"{destination}/",
+            ],
+            check=True,
+        )
 
 
 def sync_configured_aa_sources(
