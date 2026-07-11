@@ -163,6 +163,12 @@ Run the parser tests with:
 python3 production/oo_planb_2509/analysis/test_convert_oo_paired_to_root.py -v
 ```
 
+For the weighted no/with-prehydro jet-variable comparison, use
+`analysis/plot_oo_jet_variables.py`. It applies the one-event-run
+`PythiaParallel` normalization once, selects on the corrected jet pT, and uses
+a paired delete-one-run jackknife for distributions and ratios. Its weighting
+regression test is `analysis/test_plot_oo_jet_variables.py`.
+
 The negative-particle treatment follows the jet-level ghost-association and
 four-vector-subtraction construction described for 4MomSub in
 [arXiv:1612.05116](https://arxiv.org/abs/1612.05116). Its use for the negative

@@ -40,6 +40,7 @@ From this directory, with a staged hydro tree available at `staged_hydro/`:
 python3 analysis/test_2509_prehydro_public.py -v
 python3 analysis/test_analyze_oo_prehydro_pair.py -v
 python3 analysis/test_convert_oo_paired_to_root.py -v
+python3 analysis/test_plot_oo_jet_variables.py -v
 python3 cern_support/test_monitor_oo_1m_prehydro_raa.py -v
 python3 cern_support/test_run_chunk_job.py -v
 python3 cern_support/test_supervise_oo_50k.py -v
