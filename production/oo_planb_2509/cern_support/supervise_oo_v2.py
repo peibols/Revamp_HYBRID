@@ -7,9 +7,11 @@ import argparse
 from collections import Counter
 import csv
 from datetime import datetime
+import io
 from pathlib import Path
 import re
 import subprocess
+import tarfile
 import time
 
 
@@ -19,6 +21,9 @@ DEFAULT_SOURCE = DEFAULT_ROOT / "wt_main_moliere_lres_integration_clean"
 DEFAULT_CAMPAIGN = (
     "hybrid_oo5360_c0_5_500hydro_no_moliere_paired_public2509_"
     "planB_v2_50kAA_20260711"
+)
+DEFAULT_AFS_WORK = Path(
+    "/afs/cern.ch/user/y/yjlee/oo_v2_500hydro_50k_20260711"
 )
 DEFAULT_PP = DEFAULT_ROOT / "test/tmp_oo_10k_prehydro_raa_20260709/local_eos"
 
@@ -35,15 +40,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--cernctl", default="/data/yjlee/cernLxplus/cernctl")
     parser.add_argument("--cern-remote", default="lxplus")
-    parser.add_argument("--schedd", default="bigbird103.cern.ch")
+    parser.add_argument("--schedd", default="bigbird101.cern.ch")
+    parser.add_argument("--afs-work", type=Path, default=DEFAULT_AFS_WORK)
+    parser.add_argument("--max-jobs-per-submit", type=int, default=10_000)
     parser.add_argument("--pp-local-eos", type=Path, default=DEFAULT_PP)
     args = parser.parse_args()
     if args.target <= 0 or args.block_size <= 0:
         parser.error("--target and --block-size must be positive")
     if args.target % args.block_size:
         parser.error("--target must be divisible by --block-size")
-    if args.sleep_s <= 0:
-        parser.error("--sleep-s must be positive")
+    if args.sleep_s <= 0 or args.max_jobs_per_submit <= 0:
+        parser.error("--sleep-s and --max-jobs-per-submit must be positive")
     return args
 
 
@@ -72,12 +79,81 @@ def successful_ids(local_eos: Path) -> set[int]:
     return ids
 
 
+def parse_tsv_member(archive: tarfile.TarFile, name: str) -> list[dict[str, str]]:
+    member = archive.getmember(name)
+    stream = archive.extractfile(member)
+    if stream is None:
+        raise ValueError(f"archive member is not a regular file: {name}")
+    with io.TextIOWrapper(stream, encoding="utf-8", errors="replace") as handle:
+        return list(csv.DictReader(handle, delimiter="\t"))
+
+
+def paired_archive_is_complete(path: Path, task_id: int) -> bool:
+    task = f"task_{task_id:05d}"
+    required_suffixes = {
+        "baseline_summary": f"/{task}/summary.tsv",
+        "baseline_hadrons": f"/{task}/HYBRID_Hadrons.out",
+        "prehydro_summary": f"/{task}_prehydro/summary.tsv",
+        "prehydro_hadrons": f"/{task}_prehydro/HYBRID_Hadrons.out",
+        "pair_summary": f"/{task}_pair_summary.tsv",
+    }
+    try:
+        with tarfile.open(path, "r:gz") as archive:
+            members = archive.getmembers()
+            matched: dict[str, tarfile.TarInfo] = {}
+            for key, suffix in required_suffixes.items():
+                candidates = [member for member in members if member.name.endswith(suffix)]
+                if len(candidates) != 1 or not candidates[0].isfile():
+                    return False
+                matched[key] = candidates[0]
+            if matched["baseline_hadrons"].size <= 0 or matched["prehydro_hadrons"].size <= 0:
+                return False
+
+            pair_rows = parse_tsv_member(archive, matched["pair_summary"].name)
+            if len(pair_rows) != 2:
+                return False
+            if {row.get("variant") for row in pair_rows} != {
+                "no_prehydro",
+                "with_prehydro",
+            }:
+                return False
+            for row in pair_rows:
+                if (
+                    row.get("task_id") != str(task_id)
+                    or row.get("returncode") != "0"
+                    or row.get("timeout") != "0"
+                ):
+                    return False
+
+            for key, expected_variant in (
+                ("baseline_summary", "no_prehydro"),
+                ("prehydro_summary", "with_prehydro"),
+            ):
+                rows = parse_tsv_member(archive, matched[key].name)
+                if len(rows) != 1:
+                    return False
+                row = rows[0]
+                if (
+                    row.get("variant") != expected_variant
+                    or row.get("task_id") != str(task_id)
+                    or row.get("returncode") != "0"
+                    or row.get("timeout") != "0"
+                ):
+                    return False
+    except (KeyError, OSError, tarfile.TarError, UnicodeError, ValueError):
+        return False
+    return True
+
+
 def output_ids(local_eos: Path) -> set[int]:
     ids: set[int] = set()
     for path in (local_eos / "outputs/aa").glob("chunk_*.tar.gz"):
         match = re.fullmatch(r"chunk_(\d+)\.tar\.gz", path.name)
-        if match and path.stat().st_size > 0:
-            ids.add(int(match.group(1)))
+        if not match or path.stat().st_size <= 0:
+            continue
+        task_id = int(match.group(1))
+        if paired_archive_is_complete(path, task_id):
+            ids.add(task_id)
     return ids
 
 
@@ -86,10 +162,10 @@ def ready_ids(local_eos: Path) -> set[int]:
 
 
 def query_jobs(args: argparse.Namespace) -> tuple[Counter[int], set[int]]:
-    constraint = f'regexp("{args.campaign}", Cmd)'
+    constraint = f'regexp("{args.campaign}", Environment)'
     command = (
         f"condor_q -name {args.schedd} -constraint '{constraint}' "
-        "-af JobStatus Args Cmd"
+        "-af JobStatus Args"
     )
     result = subprocess.run(
         [args.cernctl, "run", "bash", "-lc", command],
@@ -100,16 +176,12 @@ def query_jobs(args: argparse.Namespace) -> tuple[Counter[int], set[int]]:
     states: Counter[int] = Counter()
     active_aa: set[int] = set()
     for raw in result.stdout.splitlines():
-        fields = raw.split(maxsplit=2)
-        if not fields:
+        fields = raw.split(maxsplit=1)
+        if len(fields) != 2:
             continue
         status = int(fields[0])
         states[status] += 1
-        if (
-            len(fields) == 3
-            and fields[1].isdigit()
-            and fields[2].endswith("/run_chunk_job.sh")
-        ):
+        if fields[1].isdigit():
             active_aa.add(int(fields[1]))
     return states, active_aa
 
@@ -206,53 +278,70 @@ def render_retry_submit(template: str, id_file: str, tag: str) -> str:
     return rendered
 
 
+def batched_ids(ids: set[int], batch_size: int) -> list[list[int]]:
+    ordered = sorted(ids)
+    return [
+        ordered[start : start + batch_size]
+        for start in range(0, len(ordered), batch_size)
+    ]
+
+
 def submit_retry(args: argparse.Namespace, ids: set[int]) -> None:
     if not ids:
         return
     stamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
     retry_dir = args.work / "v2_retries"
     retry_dir.mkdir(parents=True, exist_ok=True)
-    id_path = retry_dir / f"retry_{stamp}_ids.txt"
-    submit_path = retry_dir / f"retry_{stamp}.sub"
-    id_path.write_text("".join(f"{task_id}\n" for task_id in sorted(ids)))
     template = (args.work / "oo_no_moliere_aa.sub").read_text()
-    submit_path.write_text(render_retry_submit(template, id_path.name, stamp))
+    batches = batched_ids(ids, args.max_jobs_per_submit)
     if args.dry_run:
-        log(f"dry run: would resubmit {len(ids)} task(s)")
-        return
-    afs = f"/afs/cern.ch/user/y/yjlee/cernLxplus_jobs/{args.campaign}"
-    subprocess.run(
-        [
-            "scp",
-            "-q",
-            "-o",
-            "BatchMode=yes",
-            str(id_path),
-            str(submit_path),
-            f"{args.cern_remote}:{afs}/",
-        ],
-        check=True,
-    )
-    command = (
-        "source /etc/profile.d/modules.sh 2>/dev/null || true; "
-        "module load lxbatch/eossubmit >/dev/null 2>&1; "
-        f"cd {afs} && condor_submit {submit_path.name}"
-    )
-    result = subprocess.run(
-        [args.cernctl, "run", "bash", "-lc", command],
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-    match = re.search(r"submitted to cluster (\d+)", result.stdout)
-    if not match:
-        raise RuntimeError(f"could not parse retry cluster: {result.stdout}")
-    with (retry_dir / "retry_submissions.tsv").open("a") as handle:
-        handle.write(
-            f"{datetime.now().astimezone().isoformat(timespec='seconds')}\t"
-            f"{match.group(1)}\t{len(ids)}\t{min(ids)}\t{max(ids)}\n"
+        log(
+            f"dry run: would resubmit {len(ids)} task(s) "
+            f"in {len(batches)} cluster(s)"
         )
-    log(f"resubmitted {len(ids)} task(s) as cluster {match.group(1)}")
+        return
+    for part, batch in enumerate(batches):
+        tag = f"{stamp}_part{part:02d}"
+        id_path = retry_dir / f"retry_{tag}_ids.txt"
+        submit_path = retry_dir / f"retry_{tag}.sub"
+        id_path.write_text("".join(f"{task_id}\n" for task_id in batch))
+        submit_path.write_text(render_retry_submit(template, id_path.name, tag))
+        subprocess.run(
+            [
+                "scp",
+                "-q",
+                "-o",
+                "BatchMode=yes",
+                str(id_path),
+                str(submit_path),
+                f"{args.cern_remote}:{args.afs_work}/",
+            ],
+            check=True,
+        )
+        command = (
+            "source /etc/profile.d/modules.sh 2>/dev/null || true; "
+            "module load lxbatch/eossubmit >/dev/null 2>&1; "
+            f"cd {args.afs_work} && "
+            f"condor_submit -name {args.schedd} {submit_path.name}"
+        )
+        result = subprocess.run(
+            [args.cernctl, "run", "bash", "-lc", command],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        match = re.search(r"submitted to cluster (\d+)", result.stdout)
+        if not match:
+            raise RuntimeError(f"could not parse retry cluster: {result.stdout}")
+        with (retry_dir / "retry_submissions.tsv").open("a") as handle:
+            handle.write(
+                f"{datetime.now().astimezone().isoformat(timespec='seconds')}\t"
+                f"{match.group(1)}\t{len(batch)}\t{min(batch)}\t{max(batch)}\n"
+            )
+        log(
+            f"resubmitted {len(batch)} task(s) as cluster {match.group(1)} "
+            f"({part + 1}/{len(batches)})"
+        )
 
 
 def rejected_ids(analysis_dir: Path) -> set[int]:
