@@ -37,6 +37,7 @@ python3 analysis/test_2509_prehydro_public.py -v
 python3 analysis/test_analyze_oo_prehydro_pair.py -v
 python3 cern_support/test_monitor_oo_1m_prehydro_raa.py -v
 python3 cern_support/test_run_chunk_job.py -v
+python3 cern_support/test_supervise_oo_50k.py -v
 ```
 
 The test covers the attractor checksum and known values, implicit-equation
@@ -45,7 +46,9 @@ production options.
 
 `cern_support/monitor_oo_1m_prehydro_raa.py` supports an AA campaign with a
 separate retained pp snapshot through `--pp-local-eos`. Milestone analysis
-always enables strict one-event paired-AA completeness.
+always enables strict one-event paired-AA completeness. If more than one
+milestone has been crossed since the preceding poll, it analyzes only the
+highest one rather than rescanning the same snapshot.
 
 The RAA analyzer reconstructs each PYTHIA run's final `sigmaGen` and
 `weightSum` from `HYBRID_Hadrons.out`. Independent one-event AA runs are
@@ -78,7 +81,11 @@ Large Condor arrays default to `TOLERATE_CHUNK_FAILURES=true`. A failed process
 still uploads `status=failed` and its original exit code, but the wrapper exits
 successfully to Condor so DAGMan does not remove unrelated processes. Milestone
 analysis accepts only paired `status=success` archives; failed or missing task
-IDs are resubmitted explicitly after the array drains.
+IDs are resubmitted explicitly after the array drains. The campaign-specific
+`cern_support/supervise_oo_50k.py` waits for both guarded roots to drain,
+incrementally downloads them, audits their expected task IDs, runs the strict
+content analyzer, and resubmits missing, failed, or malformed live-root IDs
+until 50,000 parsed pairs are local.
 
 ## Reproducibility Boundary
 
