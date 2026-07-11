@@ -212,6 +212,18 @@ def read_completed(state_path: Path) -> set[int]:
     return done
 
 
+def highest_pending_milestone(
+    milestones: list[int], completion: int, completed: set[int]
+) -> int | None:
+    completed_through = max(completed, default=-1)
+    eligible = [
+        milestone
+        for milestone in milestones
+        if completed_through < milestone <= completion
+    ]
+    return max(eligible, default=None)
+
+
 def append_state(state_path: Path, row: dict[str, str | int]) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     exists = state_path.exists()
@@ -373,12 +385,8 @@ def monitor_once(args: argparse.Namespace) -> bool:
         )
     )
     done = read_completed(state_path)
-    candidates = [
-        milestone
-        for milestone in milestones
-        if milestone <= status_completion and milestone not in done
-    ]
-    if not candidates:
+    milestone = highest_pending_milestone(milestones, status_completion, done)
+    if milestone is None:
         print(
             f"status completion={status_completion}% "
             f"aa={aa_status_success}/{aa_chunks_total} "
@@ -402,12 +410,7 @@ def monitor_once(args: argparse.Namespace) -> bool:
     completion = int(
         100.0 * min(aa_success / aa_chunks_total, pp_success / args.pp_chunks)
     )
-    pending = [
-        milestone
-        for milestone in candidates
-        if milestone <= completion
-    ]
-    if not pending:
+    if milestone > completion:
         print(
             f"status reached {status_completion}%, but complete local status/output "
             f"pairs are at {completion}% (aa={aa_success}/{aa_chunks_total}, "
@@ -416,72 +419,71 @@ def monitor_once(args: argparse.Namespace) -> bool:
         return False
 
     pp_done = min(pp_success * args.pp_events, args.pp_chunks * args.pp_events)
-    for milestone in pending:
-        stamp = datetime.now().astimezone().isoformat(timespec="seconds")
-        out_dir = analysis_root / f"{milestone:03d}pct"
-        run_analyzer(
-            args.work,
-            local_eos,
-            args.additional_aa_local_eos,
-            pp_local_eos,
-            out_dir,
-            args.aa_events,
+    stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    out_dir = analysis_root / f"{milestone:03d}pct"
+    run_analyzer(
+        args.work,
+        local_eos,
+        args.additional_aa_local_eos,
+        pp_local_eos,
+        out_dir,
+        args.aa_events,
+    )
+    analyzed_aa_success = read_analyzed_aa_chunks(out_dir)
+    analyzed_completion = int(
+        100.0
+        * min(
+            analyzed_aa_success / aa_chunks_total,
+            pp_success / args.pp_chunks,
         )
-        analyzed_aa_success = read_analyzed_aa_chunks(out_dir)
-        analyzed_completion = int(
-            100.0
-            * min(
-                analyzed_aa_success / aa_chunks_total,
-                pp_success / args.pp_chunks,
-            )
-        )
-        if milestone > analyzed_completion:
-            print(
-                f"analyzer accepted only {analyzed_aa_success}/{aa_chunks_total} "
-                f"AA pairs ({analyzed_completion}%); milestone {milestone}% "
-                "was not published"
-            )
-            continue
-        aa_done = min(
-            analyzed_aa_success * args.aa_events,
-            aa_chunks_total * args.aa_events,
-        )
-        copied = copy_figures(out_dir, args.overleaf, milestone)
-        block = status_block(
-            campaign=args.campaign,
-            milestone=milestone,
-            aa_success=analyzed_aa_success,
-            pp_success=pp_success,
-            aa_chunks=aa_chunks_total,
-            pp_chunks=args.pp_chunks,
-            aa_events_done=aa_done,
-            pp_events_done=pp_done,
-            aa_total_events=aa_chunks_total * args.aa_events,
-            pp_total_events=args.pp_chunks * args.pp_events,
-            updated=stamp,
-        )
-        replace_status_block(tex_path, block)
-        append_state(state_path, {
-            "date": stamp,
-            "milestone_pct": milestone,
-            "aa_success": analyzed_aa_success,
-            "pp_success": pp_success,
-            "aa_events": aa_done,
-            "pp_events": pp_done,
-            "analysis_dir": str(out_dir),
-        })
-        if args.commit_overleaf:
-            commit_overleaf(
-                args.overleaf,
-                [tex_path, *copied],
-                f"Update OO 1M RAA milestone {milestone}pct",
-                args.push_overleaf,
-            )
+    )
+    if milestone > analyzed_completion:
         print(
-            f"updated milestone {milestone}%: "
-            f"aa={analyzed_aa_success}/{aa_chunks_total} "
-            f"pp={pp_success}/{args.pp_chunks}"
+            f"analyzer accepted only {analyzed_aa_success}/{aa_chunks_total} "
+            f"AA pairs ({analyzed_completion}%); milestone {milestone}% "
+            "was not published"
         )
+        return False
+    aa_done = min(
+        analyzed_aa_success * args.aa_events,
+        aa_chunks_total * args.aa_events,
+    )
+    copied = copy_figures(out_dir, args.overleaf, milestone)
+    block = status_block(
+        campaign=args.campaign,
+        milestone=milestone,
+        aa_success=analyzed_aa_success,
+        pp_success=pp_success,
+        aa_chunks=aa_chunks_total,
+        pp_chunks=args.pp_chunks,
+        aa_events_done=aa_done,
+        pp_events_done=pp_done,
+        aa_total_events=aa_chunks_total * args.aa_events,
+        pp_total_events=args.pp_chunks * args.pp_events,
+        updated=stamp,
+    )
+    replace_status_block(tex_path, block)
+    append_state(state_path, {
+        "date": stamp,
+        "milestone_pct": milestone,
+        "aa_success": analyzed_aa_success,
+        "pp_success": pp_success,
+        "aa_events": aa_done,
+        "pp_events": pp_done,
+        "analysis_dir": str(out_dir),
+    })
+    if args.commit_overleaf:
+        commit_overleaf(
+            args.overleaf,
+            [tex_path, *copied],
+            f"Update OO 1M RAA milestone {milestone}pct",
+            args.push_overleaf,
+        )
+    print(
+        f"updated milestone {milestone}%: "
+        f"aa={analyzed_aa_success}/{aa_chunks_total} "
+        f"pp={pp_success}/{args.pp_chunks}"
+    )
     return True
 
 

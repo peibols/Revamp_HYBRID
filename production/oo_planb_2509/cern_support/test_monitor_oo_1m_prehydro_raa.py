@@ -137,6 +137,21 @@ class CombinedMonitorArgumentsTest(unittest.TestCase):
                 writer.writerow(["/tmp/aa20k", 16919, 1, 0])
             self.assertEqual(monitor.read_analyzed_aa_chunks(out_dir), 26918)
 
+    def test_selects_only_highest_newly_reached_milestone(self) -> None:
+        milestones = [10, 20, 30, 40, 50, 60]
+        self.assertEqual(
+            monitor.highest_pending_milestone(milestones, 56, set()),
+            50,
+        )
+        self.assertEqual(
+            monitor.highest_pending_milestone(milestones, 56, {50}),
+            None,
+        )
+        self.assertEqual(
+            monitor.highest_pending_milestone(milestones, 64, {50}),
+            60,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
