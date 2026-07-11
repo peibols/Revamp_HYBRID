@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import math
+from pathlib import Path
+import tempfile
 import unittest
 
 import analyze_oo_prehydro_pair as analysis
@@ -84,6 +86,21 @@ class PlotBinningTest(unittest.TestCase):
         self.assertEqual(analysis.logarithmic_bin_center(4.0, 9.0), 6.0)
         with self.assertRaises(ValueError):
             analysis.logarithmic_bin_center(0.0, 1.0)
+
+
+class MultipleAaSourceTest(unittest.TestCase):
+    def test_accepts_distinct_sources_and_rejects_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            primary = Path(tmp) / "primary"
+            continuation = Path(tmp) / "continuation"
+            primary.mkdir()
+            continuation.mkdir()
+            self.assertEqual(
+                analysis.distinct_aa_sources(primary, [continuation]),
+                [primary, continuation],
+            )
+            with self.assertRaisesRegex(ValueError, "must be distinct"):
+                analysis.distinct_aa_sources(primary, [primary])
 
 
 if __name__ == "__main__":

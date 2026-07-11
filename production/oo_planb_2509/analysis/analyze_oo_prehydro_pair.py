@@ -290,6 +290,14 @@ def logarithmic_bin_center(low: float, high: float) -> float:
     return math.sqrt(low * high)
 
 
+def distinct_aa_sources(primary: Path, additional: list[Path]) -> list[Path]:
+    sources = [primary, *additional]
+    normalized = [path.resolve() for path in sources]
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("AA EOS snapshot paths must be distinct")
+    return sources
+
+
 def write_variant_table(
     out_path: Path,
     bins: list[float],
@@ -395,6 +403,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--local-eos", type=Path, required=True)
     parser.add_argument(
+        "--additional-aa-local-eos",
+        action="append",
+        type=Path,
+        default=[],
+        help="additional AA EOS snapshot to merge; may be repeated",
+    )
+    parser.add_argument(
         "--pp-local-eos",
         type=Path,
         help="optional separate EOS snapshot containing the pp denominator",
@@ -423,6 +438,9 @@ def main() -> int:
         copy_from_eos(args.eos_base, args.local_eos)
 
     bins = [float(x) for x in args.bins.split(",") if x]
+    aa_local_eos_sources = distinct_aa_sources(
+        args.local_eos, args.additional_aa_local_eos
+    )
     pp_local_eos = args.pp_local_eos or args.local_eos
     pp = PythiaAggregate(len(bins) - 1)
     aa = {variant: PythiaAggregate(len(bins) - 1) for variant in AA_VARIANTS}
@@ -439,45 +457,63 @@ def main() -> int:
     aa_chunks_used = 0
     aa_chunks_skipped = 0
     aa_missing_outputs = 0
-    for chunk in successful_chunks(args.local_eos, "aa"):
-        tar_path = args.local_eos / "outputs" / "aa" / f"chunk_{chunk}.tar.gz"
-        if not tar_path.is_file():
-            aa_missing_outputs += 1
-            continue
-        chunk_runs = {variant: [] for variant in AA_VARIANTS}
-        for variant, hydro_index, run in scan_tar(tar_path, "aa", bins, args.eta_max):
-            if hydro_index not in (None, 0):
+    aa_source_rows = []
+    for aa_local_eos in aa_local_eos_sources:
+        source_used = 0
+        source_skipped = 0
+        source_missing = 0
+        for chunk in successful_chunks(aa_local_eos, "aa"):
+            tar_path = aa_local_eos / "outputs" / "aa" / f"chunk_{chunk}.tar.gz"
+            if not tar_path.is_file():
+                source_missing += 1
                 continue
-            if variant in aa:
-                chunk_runs[variant].append(run)
+            chunk_runs = {variant: [] for variant in AA_VARIANTS}
+            for variant, hydro_index, run in scan_tar(
+                tar_path, "aa", bins, args.eta_max
+            ):
+                if hydro_index not in (None, 0):
+                    continue
+                if variant in aa:
+                    chunk_runs[variant].append(run)
 
-        if args.require_paired_aa:
-            expected = args.aa_events_per_chunk
-            event_counts = [
-                sum(run.event_count for run in chunk_runs[variant])
-                for variant in AA_VARIANTS
-            ]
-            one_run_per_variant = all(
-                len(chunk_runs[variant]) == 1 for variant in AA_VARIANTS
-            )
-            complete = (
-                one_run_per_variant
-                and (
-                    all(count == expected for count in event_counts)
-                    if expected > 0
-                    else event_counts[0] > 0 and event_counts[0] == event_counts[1]
+            if args.require_paired_aa:
+                expected = args.aa_events_per_chunk
+                event_counts = [
+                    sum(run.event_count for run in chunk_runs[variant])
+                    for variant in AA_VARIANTS
+                ]
+                one_run_per_variant = all(
+                    len(chunk_runs[variant]) == 1 for variant in AA_VARIANTS
                 )
-            )
-            if not complete:
-                aa_chunks_skipped += 1
-                continue
+                complete = (
+                    one_run_per_variant
+                    and (
+                        all(count == expected for count in event_counts)
+                        if expected > 0
+                        else event_counts[0] > 0
+                        and event_counts[0] == event_counts[1]
+                    )
+                )
+                if not complete:
+                    source_skipped += 1
+                    continue
 
-        aa_chunks_used += 1
-        for variant in AA_VARIANTS:
-            for run in chunk_runs[variant]:
-                aa[variant].add(run)
+            source_used += 1
+            for variant in AA_VARIANTS:
+                for run in chunk_runs[variant]:
+                    aa[variant].add(run)
+        aa_chunks_used += source_used
+        aa_chunks_skipped += source_skipped
+        aa_missing_outputs += source_missing
+        aa_source_rows.append(
+            (aa_local_eos, source_used, source_skipped, source_missing)
+        )
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    with (args.out_dir / "aa_sources.tsv").open("w", newline="") as handle:
+        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+        writer.writerow(["aa_local_eos", "chunks_used", "chunks_skipped", "missing_outputs"])
+        writer.writerows(aa_source_rows)
     overlay_path = args.out_dir / "oo5360_c0_5_prehydro_overlay_raa.tsv"
     with overlay_path.open("w", newline="") as handle:
         writer = None
@@ -499,6 +535,11 @@ def main() -> int:
     print(f"aa chunks used: {aa_chunks_used}")
     print(f"aa chunks skipped: {aa_chunks_skipped}")
     print(f"aa status entries missing output archives: {aa_missing_outputs}")
+    for source, used, skipped, missing in aa_source_rows:
+        print(
+            f"aa source: {source} used={used} skipped={skipped} "
+            f"missing_outputs={missing}"
+        )
     for variant in AA_VARIANTS:
         print(f"{variant} aa runs: {len(aa[variant].runs)}")
         print(f"{variant} aa events: {aa[variant].event_count}")

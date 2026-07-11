@@ -31,6 +31,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eos-base")
     parser.add_argument("--local-eos", type=Path)
     parser.add_argument(
+        "--additional-aa-local-eos",
+        action="append",
+        type=Path,
+        default=[],
+        help="additional local AA snapshot included in combined milestones",
+    )
+    parser.add_argument(
+        "--additional-aa-chunks",
+        action="append",
+        type=int,
+        default=[],
+        help="expected chunks for each --additional-aa-local-eos",
+    )
+    parser.add_argument(
         "--pp-local-eos",
         type=Path,
         help="optional retained snapshot containing a separate pp denominator",
@@ -55,6 +69,13 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.aa_events != 1:
         parser.error("--aa-events must be 1 for paired OO production")
+    if len(args.additional_aa_local_eos) != len(args.additional_aa_chunks):
+        parser.error(
+            "--additional-aa-local-eos and --additional-aa-chunks "
+            "must be repeated the same number of times"
+        )
+    if any(value <= 0 for value in args.additional_aa_chunks):
+        parser.error("--additional-aa-chunks values must be positive")
     return args
 
 
@@ -195,20 +216,24 @@ def replace_status_block(tex_path: Path, block: str) -> None:
 def run_analyzer(
     work: Path,
     local_eos: Path,
+    additional_aa_local_eos: list[Path],
     pp_local_eos: Path,
     out_dir: Path,
     aa_events: int,
 ) -> None:
     analyzer = work / "analysis/analyze_oo_prehydro_pair.py"
+    command = [
+        "python3", str(analyzer),
+        "--local-eos", str(local_eos),
+        "--pp-local-eos", str(pp_local_eos),
+        "--out-dir", str(out_dir),
+        "--require-paired-aa",
+        "--aa-events-per-chunk", str(aa_events),
+    ]
+    for source in additional_aa_local_eos:
+        command.extend(["--additional-aa-local-eos", str(source)])
     subprocess.run(
-        [
-            "python3", str(analyzer),
-            "--local-eos", str(local_eos),
-            "--pp-local-eos", str(pp_local_eos),
-            "--out-dir", str(out_dir),
-            "--require-paired-aa",
-            "--aa-events-per-chunk", str(aa_events),
-        ],
+        command,
         check=True,
     )
 
@@ -250,6 +275,7 @@ def monitor_once(args: argparse.Namespace) -> bool:
     state_path = args.work / f"monitor_{args.campaign}_state.tsv"
     tex_path = args.overleaf / args.tex
     milestones = [int(item) for item in args.milestones.split(",") if item.strip()]
+    aa_chunks_total = args.aa_chunks + sum(args.additional_aa_chunks)
 
     if args.copy:
         copy_from_eos(eos_base, local_eos)
@@ -264,11 +290,14 @@ def monitor_once(args: argparse.Namespace) -> bool:
             renew_kerberos=args.renew_kerberos,
         )
 
-    aa_status_success = len(successful_chunks(local_eos, "aa"))
+    aa_status_success = len(successful_chunks(local_eos, "aa")) + sum(
+        len(successful_chunks(source, "aa"))
+        for source in args.additional_aa_local_eos
+    )
     pp_status_success = len(successful_chunks(pp_local_eos, "pp"))
     status_completion = int(
         100.0 * min(
-            aa_status_success / args.aa_chunks,
+            aa_status_success / aa_chunks_total,
             pp_status_success / args.pp_chunks,
         )
     )
@@ -281,7 +310,7 @@ def monitor_once(args: argparse.Namespace) -> bool:
     if not candidates:
         print(
             f"status completion={status_completion}% "
-            f"aa={aa_status_success}/{args.aa_chunks} "
+            f"aa={aa_status_success}/{aa_chunks_total} "
             f"pp={pp_status_success}/{args.pp_chunks}; no new milestone"
         )
         return False
@@ -297,10 +326,13 @@ def monitor_once(args: argparse.Namespace) -> bool:
             renew_kerberos=args.renew_kerberos,
         )
 
-    aa_success = len(available_chunks(local_eos, "aa"))
+    aa_success = len(available_chunks(local_eos, "aa")) + sum(
+        len(available_chunks(source, "aa"))
+        for source in args.additional_aa_local_eos
+    )
     pp_success = len(available_chunks(pp_local_eos, "pp"))
     completion = int(
-        100.0 * min(aa_success / args.aa_chunks, pp_success / args.pp_chunks)
+        100.0 * min(aa_success / aa_chunks_total, pp_success / args.pp_chunks)
     )
     pending = [
         milestone
@@ -310,12 +342,12 @@ def monitor_once(args: argparse.Namespace) -> bool:
     if not pending:
         print(
             f"status reached {status_completion}%, but complete local status/output "
-            f"pairs are at {completion}% (aa={aa_success}/{args.aa_chunks}, "
+            f"pairs are at {completion}% (aa={aa_success}/{aa_chunks_total}, "
             f"pp={pp_success}/{args.pp_chunks})"
         )
         return False
 
-    aa_done = min(aa_success * args.aa_events, args.aa_chunks * args.aa_events)
+    aa_done = min(aa_success * args.aa_events, aa_chunks_total * args.aa_events)
     pp_done = min(pp_success * args.pp_events, args.pp_chunks * args.pp_events)
     for milestone in pending:
         stamp = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -323,6 +355,7 @@ def monitor_once(args: argparse.Namespace) -> bool:
         run_analyzer(
             args.work,
             local_eos,
+            args.additional_aa_local_eos,
             pp_local_eos,
             out_dir,
             args.aa_events,
@@ -333,11 +366,11 @@ def monitor_once(args: argparse.Namespace) -> bool:
             milestone=milestone,
             aa_success=aa_success,
             pp_success=pp_success,
-            aa_chunks=args.aa_chunks,
+            aa_chunks=aa_chunks_total,
             pp_chunks=args.pp_chunks,
             aa_events_done=aa_done,
             pp_events_done=pp_done,
-            aa_total_events=args.aa_chunks * args.aa_events,
+            aa_total_events=aa_chunks_total * args.aa_events,
             pp_total_events=args.pp_chunks * args.pp_events,
             updated=stamp,
         )
@@ -358,7 +391,10 @@ def monitor_once(args: argparse.Namespace) -> bool:
                 f"Update OO 1M RAA milestone {milestone}pct",
                 args.push_overleaf,
             )
-        print(f"updated milestone {milestone}%: aa={aa_success}/{args.aa_chunks} pp={pp_success}/{args.pp_chunks}")
+        print(
+            f"updated milestone {milestone}%: "
+            f"aa={aa_success}/{aa_chunks_total} pp={pp_success}/{args.pp_chunks}"
+        )
     return True
 
 

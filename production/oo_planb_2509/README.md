@@ -35,6 +35,7 @@ From this directory, with a staged hydro tree available at `staged_hydro/`:
 ```bash
 python3 analysis/test_2509_prehydro_public.py -v
 python3 analysis/test_analyze_oo_prehydro_pair.py -v
+python3 cern_support/test_monitor_oo_1m_prehydro_raa.py -v
 ```
 
 The test covers the attractor checksum and known values, implicit-equation
@@ -58,6 +59,11 @@ RAA plots use a logarithmic pT axis and the fixed edges
 8426-pair pilot by requiring the worse relative statistical uncertainty of the
 two variants to stay near 25%; the observed range was 18.7--24.9%. The edges
 remain fixed for later milestones rather than being retuned on each snapshot.
+
+A continuation campaign is merged without renaming its overlapping chunk IDs
+by repeating `--additional-aa-local-eos` on the analyzer. Each AA root is
+validated independently for strict paired completeness, then all accepted runs
+enter one `PythiaParallel` aggregate and one jackknife calculation.
 
 ## Reproducibility Boundary
 
