@@ -331,7 +331,7 @@ environment = "KIND=aa EOS_BASE=${EOS_BASE} SEED_OFFSET=${AA_SEED_OFFSET} EVENTS
 +JobFlavour = "${JOB_FLAVOUR}"
 request_cpus = 1
 request_memory = 4000
-request_disk = 20000000
+request_disk = 4000000
 queue chunk_id from aa_chunk_ids.txt
 EOF_SUB
 
@@ -347,7 +347,7 @@ environment = "KIND=pp EOS_BASE=${EOS_BASE} SEED_OFFSET=${PP_SEED_OFFSET} EVENTS
 +JobFlavour = "${JOB_FLAVOUR}"
 request_cpus = 1
 request_memory = 4000
-request_disk = 20000000
+request_disk = 4000000
 queue chunk_id from pp_chunk_ids.txt
 EOF_SUB
 
