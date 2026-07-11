@@ -2867,20 +2867,25 @@ void EnergyLoss::trans_kick(const std::array<double,4> &w, double w2, const std:
         double DelQ2 = kappa * temp*temp*temp * lore * (1. - vscalw) * step * 5.;
 
         double qfac = 0.;
-        // Only do kick if energy is greater than temperature
-        if (Ef * sqrt(wf2) > 0.) {
+        double qbeta = 0.;
+        const bool valid_rest_frame_energy =
+            std::isfinite(Ef) && Ef > 0. && std::isfinite(wf2) && wf2 > 0.;
+        // A zero local-rest-frame energy is a zero kick, not a valid 0/0 limit.
+        if (valid_rest_frame_energy) {
+            const double cutoff = Ef * sqrt(wf2);
             qfac = sqrt(-1. * log(nr_.rando())) * sqrt(DelQ2); // Box-Muller method
-            if (qfac > Ef * sqrt(wf2)) {
-                qfac = Ef * sqrt(wf2) - 0.00000001;
+            if (!std::isfinite(qfac)) {
+                qfac = 0.;
+            } else if (qfac > cutoff) {
+                qfac = std::nextafter(cutoff, 0.);
             }
-        }
 
-        double qbeta;
-        if (wf2 > 0.) qbeta = sqrt(1. - qfac * qfac / Ef / Ef / wf2) - 1.;
-        else qbeta = 0.;
-        if (qbeta != qbeta) {
-            std::cout << " qbeta= " << std::setprecision(6) << qbeta << " qfac= " << qfac << " Ef= " << Ef << " wf2= " << wf2 << " cutoff= " << Ef * sqrt(wf2) << std::endl;
-            std::cout << " W2= " << std::setprecision(6) << W2 << " lore= " << lore << " vscalw= " << vscalw << std::endl;
+            const double beta_argument = 1. - qfac * qfac / (Ef * Ef * wf2);
+            if (std::isfinite(beta_argument)) {
+                qbeta = sqrt(std::clamp(beta_argument, 0., 1.)) - 1.;
+            } else {
+                qfac = 0.;
+            }
         }
 
         double qphi = 2. * 3.141592654 * nr_.rando();

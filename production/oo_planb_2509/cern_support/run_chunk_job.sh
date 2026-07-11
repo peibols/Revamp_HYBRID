@@ -24,7 +24,13 @@ PREHYDRO_ETA_OVER_S="${PREHYDRO_ETA_OVER_S:-0.12}"
 PREHYDRO_EOS_FACTOR="${PREHYDRO_EOS_FACTOR:-15.626873635058152}"
 PREHYDRO_ATTRACTOR_TABLE="${PREHYDRO_ATTRACTOR_TABLE:-runtime/prehydro_attractor_table.dat}"
 PREHYDRO_VISCOUS_ANCHOR="${PREHYDRO_VISCOUS_ANCHOR:-true}"
+TOLERATE_CHUNK_FAILURE="${TOLERATE_CHUNK_FAILURE:-false}"
 TASK_ID="${1:-${_CONDOR_PROCNO:-0}}"
+case "${TOLERATE_CHUNK_FAILURE}" in
+  1|true|TRUE) TOLERATE_CHUNK_FAILURE=true ;;
+  0|false|FALSE) TOLERATE_CHUNK_FAILURE=false ;;
+  *) echo "TOLERATE_CHUNK_FAILURE must be true or false" >&2; exit 1 ;;
+esac
 if [[ "${RUN_PREHYDRO_PAIR}" == "1" || "${RUN_PREHYDRO_PAIR}" == "true" || "${RUN_PREHYDRO_PAIR}" == "TRUE" ]]; then
   if [[ -z "${PREHYDRO_ATTRACTOR_TABLE}" ]]; then
     echo "PREHYDRO_ATTRACTOR_TABLE is required for paired prehydro production" >&2
@@ -60,6 +66,10 @@ finalize() {
   fi
   put "$INITIAL_DIR/chunk_status.txt" "status/${KIND}/chunk_${TASK_ID}.txt" >/dev/null 2>&1 || true
   put "$INITIAL_DIR/chunk_output.tar.gz" "outputs/${KIND}/chunk_${TASK_ID}.tar.gz" >/dev/null 2>&1 || true
+  if [[ $rc -ne 0 && "${TOLERATE_CHUNK_FAILURE}" == "true" ]]; then
+    echo "chunk ${TASK_ID} failed with exit code ${rc}; failure retained in EOS status" >&2
+    exit 0
+  fi
   exit $rc
 }
 trap finalize EXIT

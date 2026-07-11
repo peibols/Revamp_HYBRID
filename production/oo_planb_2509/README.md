@@ -36,6 +36,7 @@ From this directory, with a staged hydro tree available at `staged_hydro/`:
 python3 analysis/test_2509_prehydro_public.py -v
 python3 analysis/test_analyze_oo_prehydro_pair.py -v
 python3 cern_support/test_monitor_oo_1m_prehydro_raa.py -v
+python3 cern_support/test_run_chunk_job.py -v
 ```
 
 The test covers the attractor checksum and known values, implicit-equation
@@ -64,6 +65,12 @@ A continuation campaign is merged without renaming its overlapping chunk IDs
 by repeating `--additional-aa-local-eos` on the analyzer. Each AA root is
 validated independently for strict paired completeness, then all accepted runs
 enter one `PythiaParallel` aggregate and one jackknife calculation.
+
+Large Condor arrays default to `TOLERATE_CHUNK_FAILURES=true`. A failed process
+still uploads `status=failed` and its original exit code, but the wrapper exits
+successfully to Condor so DAGMan does not remove unrelated processes. Milestone
+analysis accepts only paired `status=success` archives; failed or missing task
+IDs are resubmitted explicitly after the array drains.
 
 ## Reproducibility Boundary
 
