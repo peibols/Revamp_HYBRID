@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import csv
 import io
 import math
 from pathlib import Path
+import sys
+import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import analyze_oo_prehydro_pair as analysis
 
@@ -89,6 +93,37 @@ class PlotBinningTest(unittest.TestCase):
 
 
 class MultipleAaSourceTest(unittest.TestCase):
+    event = b"""# event 0
+weight 1 cross 2
+4.5 0 0 0.13957 211 0
+end
+"""
+
+    @staticmethod
+    def add_member(archive: tarfile.TarFile, name: str, payload: bytes) -> None:
+        member = tarfile.TarInfo(name)
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+
+    def make_snapshot(self, root: Path, kind: str) -> None:
+        status_dir = root / "status" / kind
+        output_dir = root / "outputs" / kind
+        status_dir.mkdir(parents=True)
+        output_dir.mkdir(parents=True)
+        (status_dir / "chunk_0.txt").write_text("status=success\n")
+        with tarfile.open(output_dir / "chunk_0.tar.gz", "w:gz") as archive:
+            if kind == "aa":
+                self.add_member(
+                    archive, "runs/task_00000/HYBRID_Hadrons.out", self.event
+                )
+                self.add_member(
+                    archive,
+                    "runs/task_00000_prehydro/HYBRID_Hadrons.out",
+                    self.event,
+                )
+            else:
+                self.add_member(archive, "runs/pp/HYBRID_Hadrons.out", self.event)
+
     def test_accepts_distinct_sources_and_rejects_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             primary = Path(tmp) / "primary"
@@ -101,6 +136,45 @@ class MultipleAaSourceTest(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "must be distinct"):
                 analysis.distinct_aa_sources(primary, [primary])
+
+    def test_merges_overlapping_chunk_ids_from_distinct_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "aa10k"
+            continuation = root / "aa20k"
+            pp = root / "pp1m"
+            output = root / "analysis"
+            self.make_snapshot(primary, "aa")
+            self.make_snapshot(continuation, "aa")
+            self.make_snapshot(pp, "pp")
+
+            argv = [
+                "analyzer",
+                "--local-eos", str(primary),
+                "--additional-aa-local-eos", str(continuation),
+                "--pp-local-eos", str(pp),
+                "--out-dir", str(output),
+                "--require-paired-aa",
+                "--aa-events-per-chunk", "1",
+            ]
+            with patch.object(sys, "argv", argv), patch.object(
+                analysis, "maybe_plot"
+            ):
+                self.assertEqual(analysis.main(), 0)
+
+            with (output / "aa_sources.tsv").open() as handle:
+                source_rows = list(csv.DictReader(handle, delimiter="\t"))
+            self.assertEqual([row["chunks_used"] for row in source_rows], ["1", "1"])
+            with (output / "oo5360_c0_5_prehydro_overlay_raa.tsv").open() as handle:
+                raa_rows = list(csv.DictReader(handle, delimiter="\t"))
+            first_bin = {
+                row["variant"]: row
+                for row in raa_rows
+                if row["pt_low"] == "4" and row["pt_high"] == "5"
+            }
+            self.assertEqual(set(first_bin), set(analysis.AA_VARIANTS))
+            self.assertTrue(all(row["aa_events"] == "2" for row in first_bin.values()))
+            self.assertTrue(all(row["aa_runs"] == "2" for row in first_bin.values()))
 
 
 if __name__ == "__main__":

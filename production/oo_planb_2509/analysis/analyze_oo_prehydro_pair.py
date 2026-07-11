@@ -353,7 +353,8 @@ def maybe_plot(out_dir: Path, overlay_tsv: Path) -> None:
         (out_dir / "plot_error.txt").write_text(str(exc) + "\n")
         return
 
-    rows = list(csv.DictReader(overlay_tsv.open(), delimiter="\t"))
+    with overlay_tsv.open() as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
     fig, ax = plt.subplots(figsize=(7.2, 5.0))
     styles = {
         "no_prehydro": {"label": "OO 0-5%, no prehydro", "color": "#0072B2", "marker": "o"},
@@ -520,7 +521,8 @@ def main() -> int:
         for variant in AA_VARIANTS:
             tmp_path = args.out_dir / f"oo5360_c0_5_{variant}_raa.tsv"
             write_variant_table(tmp_path, bins, variant, aa[variant], pp)
-            rows = list(csv.reader(tmp_path.open(), delimiter="\t"))
+            with tmp_path.open() as tmp_handle:
+                rows = list(csv.reader(tmp_handle, delimiter="\t"))
             if writer is None:
                 writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
                 writer.writerow(rows[0])
