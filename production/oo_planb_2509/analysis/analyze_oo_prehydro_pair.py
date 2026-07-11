@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import dataclass
 import math
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import tarfile
-from typing import BinaryIO, Iterable
+from typing import BinaryIO
 
 
 DEFAULT_BINS = [4, 5, 6, 8, 10, 15, 20, 30, 40, 60, 80, 110]
@@ -18,25 +19,90 @@ CHARGED_ABS = {211, 321, 2212}
 AA_VARIANTS = ["no_prehydro", "with_prehydro"]
 
 
-class RunningSpectrum:
+@dataclass(frozen=True)
+class PythiaRun:
+    histogram: list[float]
+    sigma_gen: float
+    weight_sum: float
+    event_count: int
+
+
+@dataclass(frozen=True)
+class SpectrumStats:
+    values: list[float]
+    standard_errors: list[float]
+    event_count: int
+    run_count: int
+    sigma_gen: float
+    weight_sum: float
+
+
+class PythiaAggregate:
+    """Merge independent PYTHIA runs using the PythiaParallel convention."""
+
     def __init__(self, n_bins: int) -> None:
-        self.n = 0
-        self.mean = [0.0] * n_bins
-        self.m2 = [0.0] * n_bins
+        self.runs: list[PythiaRun] = []
+        self.histogram = [0.0] * n_bins
+        self.weight_sum = 0.0
+        self.weighted_sigma_sum = 0.0
+        self.event_count = 0
 
-    def add(self, values: list[float]) -> None:
-        self.n += 1
-        for i, value in enumerate(values):
-            delta = value - self.mean[i]
-            self.mean[i] += delta / self.n
-            self.m2[i] += delta * (value - self.mean[i])
+    def add(self, run: PythiaRun) -> None:
+        if len(run.histogram) != len(self.histogram):
+            raise ValueError("PYTHIA run has the wrong number of histogram bins")
+        self.runs.append(run)
+        for i, value in enumerate(run.histogram):
+            self.histogram[i] += value
+        self.weight_sum += run.weight_sum
+        self.weighted_sigma_sum += run.weight_sum * run.sigma_gen
+        self.event_count += run.event_count
 
-    def mean_and_se(self) -> tuple[list[float], list[float], int]:
-        if self.n == 0:
-            return [math.nan] * len(self.mean), [math.nan] * len(self.mean), 0
-        if self.n == 1:
-            return list(self.mean), [math.nan] * len(self.mean), self.n
-        return list(self.mean), [math.sqrt(x / (self.n - 1) / self.n) for x in self.m2], self.n
+    @staticmethod
+    def _normalized(
+        histogram: list[float], weight_sum: float, weighted_sigma_sum: float
+    ) -> tuple[list[float], float]:
+        if weight_sum == 0.0:
+            return [math.nan] * len(histogram), math.nan
+        sigma_gen = weighted_sigma_sum / weight_sum
+        scale = sigma_gen / weight_sum
+        return [scale * value for value in histogram], sigma_gen
+
+    def stats(self) -> SpectrumStats:
+        values, sigma_gen = self._normalized(
+            self.histogram, self.weight_sum, self.weighted_sigma_sum
+        )
+        run_count = len(self.runs)
+        if run_count <= 1:
+            errors = [math.nan] * len(self.histogram)
+        else:
+            jackknife = [[] for _ in self.histogram]
+            for run in self.runs:
+                histogram = [
+                    total - contribution
+                    for total, contribution in zip(self.histogram, run.histogram)
+                ]
+                leave_one_out, _ = self._normalized(
+                    histogram,
+                    self.weight_sum - run.weight_sum,
+                    self.weighted_sigma_sum - run.weight_sum * run.sigma_gen,
+                )
+                for i, value in enumerate(leave_one_out):
+                    jackknife[i].append(value)
+            errors = []
+            for estimates in jackknife:
+                mean = sum(estimates) / run_count
+                variance = (run_count - 1) / run_count * sum(
+                    (value - mean) ** 2 for value in estimates
+                )
+                errors.append(math.sqrt(max(0.0, variance)))
+        return SpectrumStats(
+            values=values,
+            standard_errors=errors,
+            event_count=self.event_count,
+            run_count=run_count,
+            sigma_gen=sigma_gen,
+            weight_sum=self.weight_sum,
+        )
 
 
 def parse_status_file(path: Path) -> dict[str, str]:
@@ -81,22 +147,29 @@ def charge_sign_from_label(label: int) -> float:
     return -1.0 if label in (2, 3) else 1.0
 
 
-def parse_event_spectra(stream: BinaryIO, bins: list[float], eta_max: float) -> Iterable[list[float]]:
+def parse_pythia_run(stream: BinaryIO, bins: list[float], eta_max: float) -> PythiaRun:
     widths = [bins[i + 1] - bins[i] for i in range(len(bins) - 1)]
-    events: list[list[float]] = []
-    cross_values: list[float] = []
+    run_histogram = [0.0] * (len(bins) - 1)
     hist: list[float] | None = None
-    weight = 1.0
+    weight: float | None = None
     current_cross: float | None = None
+    final_cross: float | None = None
+    weight_sum = 0.0
+    event_count = 0
 
     def finish_event() -> None:
-        nonlocal hist, current_cross
+        nonlocal hist, weight, current_cross, final_cross, weight_sum, event_count
         if hist is None:
             return
-        events.append([value / widths[i] for i, value in enumerate(hist)])
-        if current_cross is not None:
-            cross_values.append(current_cross)
+        if weight is None or current_cross is None:
+            raise ValueError("event is missing its PYTHIA weight or sigmaGen value")
+        for i, value in enumerate(hist):
+            run_histogram[i] += weight * value / widths[i]
+        weight_sum += weight
+        final_cross = current_cross
+        event_count += 1
         hist = None
+        weight = None
         current_cross = None
 
     for raw in stream:
@@ -106,7 +179,7 @@ def parse_event_spectra(stream: BinaryIO, bins: list[float], eta_max: float) -> 
         if line.startswith("# event"):
             finish_event()
             hist = [0.0] * (len(bins) - 1)
-            weight = 1.0
+            weight = None
             current_cross = None
             continue
         if line.startswith("weight"):
@@ -134,13 +207,17 @@ def parse_event_spectra(stream: BinaryIO, bins: list[float], eta_max: float) -> 
         sign = charge_sign_from_label(label)
         for i in range(len(bins) - 1):
             if bins[i] <= pt < bins[i + 1]:
-                hist[i] += sign * weight
+                hist[i] += sign
                 break
 
     finish_event()
-    average_cross = sum(cross_values) / len(cross_values) if cross_values else 1.0
-    for event in events:
-        yield [average_cross * value for value in event]
+    if event_count == 0 or final_cross is None:
+        raise ValueError("HYBRID output contains no complete PYTHIA events")
+    if not math.isfinite(weight_sum) or weight_sum == 0.0:
+        raise ValueError(f"invalid PYTHIA weightSum reconstructed from output: {weight_sum}")
+    if not math.isfinite(final_cross):
+        raise ValueError(f"invalid final PYTHIA sigmaGen value: {final_cross}")
+    return PythiaRun(run_histogram, final_cross, weight_sum, event_count)
 
 
 def read_summary(text: str) -> dict[str, str] | None:
@@ -164,8 +241,8 @@ def scan_tar(
     kind: str,
     bins: list[float],
     eta_max: float,
-) -> list[tuple[str, int | None, list[float]]]:
-    found: list[tuple[str, int | None, list[float]]] = []
+) -> list[tuple[str, int | None, PythiaRun]]:
+    found: list[tuple[str, int | None, PythiaRun]] = []
     with tarfile.open(tar_path, "r:gz") as tar:
         summaries: dict[str, dict[str, str]] = {}
         for member in tar.getmembers():
@@ -191,8 +268,7 @@ def scan_tar(
             match = re.search(r"/hydro_(\d+)_", member.name)
             if match:
                 hydro_index = int(match.group(1))
-            for event in parse_event_spectra(extracted, bins, eta_max):
-                found.append((variant, hydro_index, event))
+            found.append((variant, hydro_index, parse_pythia_run(extracted, bins, eta_max)))
     return found
 
 
@@ -212,20 +288,26 @@ def write_variant_table(
     out_path: Path,
     bins: list[float],
     variant: str,
-    aa: RunningSpectrum,
-    pp: RunningSpectrum,
+    aa: PythiaAggregate,
+    pp: PythiaAggregate,
 ) -> None:
-    aa_mean, aa_se, aa_events = aa.mean_and_se()
-    pp_mean, pp_se, pp_events = pp.mean_and_se()
+    aa_stats = aa.stats()
+    pp_stats = pp.stats()
     with out_path.open("w", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow([
             "variant", "pt_low", "pt_high", "pt_center", "raa", "stat_err",
             "aa_events", "pp_events", "aa_spectrum", "aa_spectrum_stat_err",
-            "pp_spectrum", "pp_spectrum_stat_err",
+            "pp_spectrum", "pp_spectrum_stat_err", "aa_runs", "pp_runs",
+            "aa_sigma_gen", "pp_sigma_gen", "aa_weight_sum", "pp_weight_sum",
         ])
         for i in range(len(bins) - 1):
-            raa, err = ratio_with_error(aa_mean[i], aa_se[i], pp_mean[i], pp_se[i])
+            raa, err = ratio_with_error(
+                aa_stats.values[i],
+                aa_stats.standard_errors[i],
+                pp_stats.values[i],
+                pp_stats.standard_errors[i],
+            )
             writer.writerow([
                 variant,
                 f"{bins[i]:.8g}",
@@ -233,12 +315,18 @@ def write_variant_table(
                 f"{0.5 * (bins[i] + bins[i + 1]):.8g}",
                 f"{raa:.10g}",
                 f"{err:.10g}",
-                aa_events,
-                pp_events,
-                f"{aa_mean[i]:.10e}",
-                f"{aa_se[i]:.10e}",
-                f"{pp_mean[i]:.10e}",
-                f"{pp_se[i]:.10e}",
+                aa_stats.event_count,
+                pp_stats.event_count,
+                f"{aa_stats.values[i]:.10e}",
+                f"{aa_stats.standard_errors[i]:.10e}",
+                f"{pp_stats.values[i]:.10e}",
+                f"{pp_stats.standard_errors[i]:.10e}",
+                aa_stats.run_count,
+                pp_stats.run_count,
+                f"{aa_stats.sigma_gen:.10e}",
+                f"{pp_stats.sigma_gen:.10e}",
+                f"{aa_stats.weight_sum:.10e}",
+                f"{pp_stats.weight_sum:.10e}",
             ])
 
 
@@ -316,37 +404,58 @@ def main() -> int:
 
     bins = [float(x) for x in args.bins.split(",") if x]
     pp_local_eos = args.pp_local_eos or args.local_eos
-    pp = RunningSpectrum(len(bins) - 1)
-    aa = {variant: RunningSpectrum(len(bins) - 1) for variant in AA_VARIANTS}
+    pp = PythiaAggregate(len(bins) - 1)
+    aa = {variant: PythiaAggregate(len(bins) - 1) for variant in AA_VARIANTS}
 
+    pp_missing_outputs = 0
     for chunk in successful_chunks(pp_local_eos, "pp"):
         tar_path = pp_local_eos / "outputs" / "pp" / f"chunk_{chunk}.tar.gz"
-        for _, _, event in scan_tar(tar_path, "pp", bins, args.eta_max):
-            pp.add(event)
+        if not tar_path.is_file():
+            pp_missing_outputs += 1
+            continue
+        for _, _, run in scan_tar(tar_path, "pp", bins, args.eta_max):
+            pp.add(run)
 
     aa_chunks_used = 0
     aa_chunks_skipped = 0
+    aa_missing_outputs = 0
     for chunk in successful_chunks(args.local_eos, "aa"):
         tar_path = args.local_eos / "outputs" / "aa" / f"chunk_{chunk}.tar.gz"
-        chunk_events = {variant: [] for variant in AA_VARIANTS}
-        for variant, hydro_index, event in scan_tar(tar_path, "aa", bins, args.eta_max):
+        if not tar_path.is_file():
+            aa_missing_outputs += 1
+            continue
+        chunk_runs = {variant: [] for variant in AA_VARIANTS}
+        for variant, hydro_index, run in scan_tar(tar_path, "aa", bins, args.eta_max):
             if hydro_index not in (None, 0):
                 continue
             if variant in aa:
-                chunk_events[variant].append(event)
+                chunk_runs[variant].append(run)
 
         if args.require_paired_aa:
-            counts = [len(chunk_events[variant]) for variant in AA_VARIANTS]
             expected = args.aa_events_per_chunk
-            complete = all(count == expected for count in counts) if expected > 0 else counts[0] > 0 and counts[0] == counts[1]
+            event_counts = [
+                sum(run.event_count for run in chunk_runs[variant])
+                for variant in AA_VARIANTS
+            ]
+            one_run_per_variant = all(
+                len(chunk_runs[variant]) == 1 for variant in AA_VARIANTS
+            )
+            complete = (
+                one_run_per_variant
+                and (
+                    all(count == expected for count in event_counts)
+                    if expected > 0
+                    else event_counts[0] > 0 and event_counts[0] == event_counts[1]
+                )
+            )
             if not complete:
                 aa_chunks_skipped += 1
                 continue
 
         aa_chunks_used += 1
         for variant in AA_VARIANTS:
-            for event in chunk_events[variant]:
-                aa[variant].add(event)
+            for run in chunk_runs[variant]:
+                aa[variant].add(run)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     overlay_path = args.out_dir / "oo5360_c0_5_prehydro_overlay_raa.tsv"
@@ -362,12 +471,17 @@ def main() -> int:
             writer.writerows(rows[1:])
 
     maybe_plot(args.out_dir, overlay_path)
-    print(f"pp events: {pp.n}")
+    print("normalization: PYTHIA aggregate sigmaGen/weightSum (PythiaParallel convention)")
+    print(f"pp runs: {len(pp.runs)}")
+    print(f"pp events: {pp.event_count}")
+    print(f"pp status entries missing output archives: {pp_missing_outputs}")
     print(f"pp source: {pp_local_eos}")
     print(f"aa chunks used: {aa_chunks_used}")
     print(f"aa chunks skipped: {aa_chunks_skipped}")
+    print(f"aa status entries missing output archives: {aa_missing_outputs}")
     for variant in AA_VARIANTS:
-        print(f"{variant} aa events: {aa[variant].n}")
+        print(f"{variant} aa runs: {len(aa[variant].runs)}")
+        print(f"{variant} aa events: {aa[variant].event_count}")
     print(f"wrote {overlay_path}")
     return 0
 

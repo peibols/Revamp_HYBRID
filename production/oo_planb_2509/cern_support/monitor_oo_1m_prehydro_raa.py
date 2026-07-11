@@ -73,6 +73,18 @@ def successful_chunks(local_eos: Path, kind: str) -> set[int]:
     return chunks
 
 
+def available_chunks(local_eos: Path, kind: str) -> set[int]:
+    """Return successful chunks whose output archive is present locally."""
+    output_dir = local_eos / "outputs" / kind
+    outputs: set[int] = set()
+    if output_dir.exists():
+        for path in output_dir.glob("chunk_*.tar.gz"):
+            match = re.fullmatch(r"chunk_(\d+)\.tar\.gz", path.name)
+            if match:
+                outputs.add(int(match.group(1)))
+    return successful_chunks(local_eos, kind) & outputs
+
+
 def copy_from_eos(eos_base: str, local_eos: Path) -> None:
     local_eos.mkdir(parents=True, exist_ok=True)
     subprocess.run(
@@ -252,30 +264,62 @@ def monitor_once(args: argparse.Namespace) -> bool:
             renew_kerberos=args.renew_kerberos,
         )
 
-    aa_success = len(successful_chunks(local_eos, "aa"))
-    pp_success = len(successful_chunks(pp_local_eos, "pp"))
-    aa_done = min(aa_success * args.aa_events, args.aa_chunks * args.aa_events)
-    pp_done = min(pp_success * args.pp_events, args.pp_chunks * args.pp_events)
-    completion = int(100.0 * min(aa_success / args.aa_chunks, pp_success / args.pp_chunks))
+    aa_status_success = len(successful_chunks(local_eos, "aa"))
+    pp_status_success = len(successful_chunks(pp_local_eos, "pp"))
+    status_completion = int(
+        100.0 * min(
+            aa_status_success / args.aa_chunks,
+            pp_status_success / args.pp_chunks,
+        )
+    )
     done = read_completed(state_path)
-    pending = [milestone for milestone in milestones if milestone <= completion and milestone not in done]
-    if not pending:
-        print(f"completion={completion}% aa={aa_success}/{args.aa_chunks} pp={pp_success}/{args.pp_chunks}; no new milestone")
+    candidates = [
+        milestone
+        for milestone in milestones
+        if milestone <= status_completion and milestone not in done
+    ]
+    if not candidates:
+        print(
+            f"status completion={status_completion}% "
+            f"aa={aa_status_success}/{args.aa_chunks} "
+            f"pp={pp_status_success}/{args.pp_chunks}; no new milestone"
+        )
         return False
 
+    if args.sync_via_cernctl:
+        sync_via_cernctl(
+            cernctl=args.cernctl,
+            cern_remote=args.cern_remote,
+            eos_base=eos_base,
+            local_eos=local_eos,
+            remote_stage=args.remote_stage,
+            include_outputs=True,
+            renew_kerberos=args.renew_kerberos,
+        )
+
+    aa_success = len(available_chunks(local_eos, "aa"))
+    pp_success = len(available_chunks(pp_local_eos, "pp"))
+    completion = int(
+        100.0 * min(aa_success / args.aa_chunks, pp_success / args.pp_chunks)
+    )
+    pending = [
+        milestone
+        for milestone in candidates
+        if milestone <= completion
+    ]
+    if not pending:
+        print(
+            f"status reached {status_completion}%, but complete local status/output "
+            f"pairs are at {completion}% (aa={aa_success}/{args.aa_chunks}, "
+            f"pp={pp_success}/{args.pp_chunks})"
+        )
+        return False
+
+    aa_done = min(aa_success * args.aa_events, args.aa_chunks * args.aa_events)
+    pp_done = min(pp_success * args.pp_events, args.pp_chunks * args.pp_events)
     for milestone in pending:
         stamp = datetime.now().astimezone().isoformat(timespec="seconds")
         out_dir = analysis_root / f"{milestone:03d}pct"
-        if args.sync_via_cernctl:
-            sync_via_cernctl(
-                cernctl=args.cernctl,
-                cern_remote=args.cern_remote,
-                eos_base=eos_base,
-                local_eos=local_eos,
-                remote_stage=args.remote_stage,
-                include_outputs=True,
-                renew_kerberos=args.renew_kerberos,
-            )
         run_analyzer(
             args.work,
             local_eos,

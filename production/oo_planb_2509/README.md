@@ -34,6 +34,7 @@ From this directory, with a staged hydro tree available at `staged_hydro/`:
 
 ```bash
 python3 analysis/test_2509_prehydro_public.py -v
+python3 analysis/test_analyze_oo_prehydro_pair.py -v
 ```
 
 The test covers the attractor checksum and known values, implicit-equation
@@ -43,6 +44,14 @@ production options.
 `cern_support/monitor_oo_1m_prehydro_raa.py` supports an AA campaign with a
 separate retained pp snapshot through `--pp-local-eos`. Milestone analysis
 always enables strict one-event paired-AA completeness.
+
+The RAA analyzer reconstructs each PYTHIA run's final `sigmaGen` and
+`weightSum` from `HYBRID_Hadrons.out`. Independent one-event AA runs are
+combined with the PYTHIA 8.315 `PythiaParallel` convention,
+`sigmaGen = sum(weightSum_r * sigmaGen_r) / sum(weightSum_r)`, before the
+merged weighted histogram is normalized once. Applying `weight * sigmaGen`
+event by event is invalid for this job layout and produces artificial
+high-pT suppression.
 
 ## Reproducibility Boundary
 
