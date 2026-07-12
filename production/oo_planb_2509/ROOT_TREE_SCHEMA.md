@@ -16,7 +16,9 @@ to the C++ writer. The C++ writer uses ROOT and FastJet. Only archives with a
 local `status=success`, exactly one event in both variants, successful pair
 summary rows, and matching event number, PYTHIA weight, `sigmaGen`, hard
 vertex, seed, and hydro index enter the ROOT file. Every rejection is recorded
-in the audit TSV.
+in the audit TSV. For v2, pass `--aa-task-manifest`; the converter then also
+requires the seed, hydro slot, hydro event ID, Ncoll, and hydro-payload SHA256
+in both variant summaries to match the immutable task manifest.
 
 ## File layout
 
@@ -145,8 +147,8 @@ directory that a production monitor is actively updating.
 
 ```bash
 python3 production/oo_planb_2509/analysis/convert_oo_paired_to_root.py \
-  --source original=/path/to/frozen/original \
-  --source continuation=/path/to/frozen/continuation \
+  --source v2=/path/to/frozen/v2 \
+  --aa-task-manifest /path/to/aa_task_manifest.tsv \
   --output /path/to/oo_paired.root \
   --build-dir /raid5/data/yjlee/hybrid_dev/test/tmp_oo_root_build
 ```
@@ -155,7 +157,9 @@ The ROOT file embeds the source mapping, cuts, schema version, and conversion
 totals. The JSON summary adds the ROOT and FastJet versions, source-repository
 commit, command, output size, and SHA256. The converter validates all required
 trees, entry counts, and branches with uproot before atomically publishing the
-output.
+output. When supplied, the manifest path, row count, and SHA256 are also
+recorded in the JSON summary; accepted rows in the audit TSV retain the hydro
+event ID, Ncoll, and payload SHA256.
 
 Run the parser tests with:
 
@@ -169,10 +173,10 @@ For the weighted no/with-prehydro jet-variable comparison, use
 a paired delete-one-run jackknife for distributions and ratios. Its weighting
 regression test is `analysis/test_plot_oo_jet_variables.py`. An optional
 `--pt-max` is inclusive while `--pt-min` remains exclusive. Consequently the
-three nonoverlapping campaign intervals are generated with `(30,50]`,
-`(50,80]`, and `(80,infinity)`. The companion
+four nonoverlapping campaign intervals are generated with `(20,30]`,
+`(30,50]`, `(50,80]`, and `(80,infinity)`. The companion
 `analysis/summarize_oo_jet_pt_slices.py` verifies their normalization metadata
-and exact cross-section closure to the inclusive `pT > 30` result before
+and exact cross-section closure to the inclusive `pT > 20` result before
 writing the combined table and figure.
 
 The negative-particle treatment follows the jet-level ghost-association and

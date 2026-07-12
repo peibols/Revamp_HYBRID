@@ -41,11 +41,15 @@ def add_member(tar: tarfile.TarFile, name: str, payload: bytes) -> None:
 
 def make_archive(path: Path, with_weight: float = 2.5) -> None:
     base = "runs/campaign/aa/hydro_03_C0-5"
+    payload_sha256 = "a" * 64
     pair_summary = (
-        "kind\ttask_id\tseed\tevents\tcentrality\thydro_index\tvariant\tuse_prehydro"
+        "kind\ttask_id\tseed\tevents\tcentrality\thydro_index\thydro_event_id"
+        "\thydro_ncoll\thydro_payload_sha256\tvariant\tuse_prehydro"
         "\tprehydro_file\treturncode\ttimeout\tseconds\tdir\n"
-        "aa\t7\t12345\t1\tC0-5\t3\tno_prehydro\t0\t\t0\t0\t1.0\t/no\n"
-        "aa\t7\t12345\t1\tC0-5\t3\twith_prehydro\t1\tpre.tsv\t0\t0\t1.1\t/with\n"
+        f"aa\t7\t12345\t1\tC0-5\t3\t777\t42\t{payload_sha256}"
+        "\tno_prehydro\t0\t\t0\t0\t1.0\t/no\n"
+        f"aa\t7\t12345\t1\tC0-5\t3\t777\t42\t{payload_sha256}"
+        "\twith_prehydro\t1\tpre.tsv\t0\t0\t1.1\t/with\n"
     ).encode()
     summary_header = "variant\tuse_prehydro\tprehydro_file\treturncode\ttimeout\tseconds\tdir\n"
     with tarfile.open(path, "w:gz") as tar:
@@ -76,6 +80,9 @@ class ConverterTest(unittest.TestCase):
             pair = converter.parse_paired_archive(archive, expected_chunk_id=7)
         self.assertEqual(pair.seed, 12345)
         self.assertEqual(pair.hydro_index, 3)
+        self.assertEqual(pair.hydro_event_id, 777)
+        self.assertEqual(pair.hydro_ncoll, 42)
+        self.assertEqual(pair.hydro_payload_sha256, "a" * 64)
         self.assertEqual(pair.no_prehydro.event_number, 0)
         self.assertEqual(len(pair.no_prehydro.particles), 4)
         self.assertEqual([particle.raw_label for particle in pair.no_prehydro.particles], [-2, 0, 1, 2])
@@ -91,6 +98,29 @@ class ConverterTest(unittest.TestCase):
         self.assertEqual(converter.stable_pair_id(0, 7), 7)
         self.assertEqual(converter.stable_pair_id(1, 7), (1 << 48) | 7)
         self.assertNotEqual(converter.stable_pair_id(0, 7), converter.stable_pair_id(1, 7))
+
+    def test_validate_pair_against_v2_task_assignment(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "chunk_7.tar.gz"
+            make_archive(archive)
+            pair = converter.parse_paired_archive(archive, expected_chunk_id=7)
+        assignment = {
+            "hard_seed": "12345",
+            "hydro_slot": "3",
+            "hydro_event_id": "777",
+            "hydro_ncoll": "42",
+            "hydro_payload_sha256": "a" * 64,
+        }
+        converter.validate_pair_task_assignment(
+            pair, task_id=7, assignment=assignment
+        )
+        assignment["hydro_event_id"] = "778"
+        with self.assertRaisesRegex(
+            converter.ArchiveValidationError, "hydro_event_id"
+        ):
+            converter.validate_pair_task_assignment(
+                pair, task_id=7, assignment=assignment
+            )
 
     @unittest.skipUnless(
         shutil.which("root-config") and shutil.which("fastjet-config"),
@@ -110,6 +140,12 @@ class ConverterTest(unittest.TestCase):
                 "kind=aa\ntask_id=7\nstatus=success\nexit_code=0\n"
             )
             output = work / "paired.root"
+            manifest = work / "aa_task_manifest.tsv"
+            manifest.write_text(
+                "task_id\thard_seed\thydro_slot\thydro_event_id\thydro_ncoll"
+                "\thydro_payload_sha256\n"
+                f"7\t12345\t3\t777\t42\t{'a' * 64}\n"
+            )
             subprocess.run(
                 [
                     sys.executable,
@@ -120,6 +156,8 @@ class ConverterTest(unittest.TestCase):
                     str(output),
                     "--build-dir",
                     str(work / "build"),
+                    "--aa-task-manifest",
+                    str(manifest),
                 ],
                 check=True,
                 text=True,

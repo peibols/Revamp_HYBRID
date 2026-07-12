@@ -58,6 +58,9 @@ class HybridEvent:
 class PairedArchive:
     seed: int
     hydro_index: int
+    hydro_event_id: int | None
+    hydro_ncoll: int | None
+    hydro_payload_sha256: str | None
     no_prehydro: HybridEvent
     with_prehydro: HybridEvent
 
@@ -176,6 +179,28 @@ def read_tar_member(tar: tarfile.TarFile, member: tarfile.TarInfo) -> bytes:
     return extracted.read()
 
 
+def consistent_optional_pair_field(
+    rows_by_variant: dict[str, dict[str, str]],
+    key: str,
+    parser: type[int] | type[str],
+) -> int | str | None:
+    raw_values = [
+        rows_by_variant[variant].get(key, "").strip()
+        for variant in sorted(rows_by_variant)
+    ]
+    if not any(raw_values):
+        return None
+    if not all(raw_values):
+        raise ArchiveValidationError(f"paired variants do not both define {key}")
+    try:
+        values = {parser(value) for value in raw_values}
+    except ValueError as error:
+        raise ArchiveValidationError(f"paired variants have invalid {key}") from error
+    if len(values) != 1:
+        raise ArchiveValidationError(f"paired variants have different {key}")
+    return values.pop()
+
+
 def parse_paired_archive(path: Path, expected_chunk_id: int | None = None) -> PairedArchive:
     with tarfile.open(path, "r:gz") as tar:
         members = tar.getmembers()
@@ -216,6 +241,15 @@ def parse_paired_archive(path: Path, expected_chunk_id: int | None = None) -> Pa
                 )
         if len(seed_values) != 1 or len(hydro_values) != 1:
             raise ArchiveValidationError("paired variants have different seed or hydro index")
+        hydro_event_id = consistent_optional_pair_field(
+            rows_by_variant, "hydro_event_id", int
+        )
+        hydro_ncoll = consistent_optional_pair_field(
+            rows_by_variant, "hydro_ncoll", int
+        )
+        hydro_payload_sha256 = consistent_optional_pair_field(
+            rows_by_variant, "hydro_payload_sha256", str
+        )
 
         summary_variants: dict[str, str] = {}
         for member in members:
@@ -247,7 +281,58 @@ def parse_paired_archive(path: Path, expected_chunk_id: int | None = None) -> Pa
     no_prehydro = events_by_variant["no_prehydro"]
     with_prehydro = events_by_variant["with_prehydro"]
     validate_pair_metadata(no_prehydro, with_prehydro)
-    return PairedArchive(seed_values.pop(), hydro_values.pop(), no_prehydro, with_prehydro)
+    return PairedArchive(
+        seed_values.pop(),
+        hydro_values.pop(),
+        hydro_event_id if isinstance(hydro_event_id, int) else None,
+        hydro_ncoll if isinstance(hydro_ncoll, int) else None,
+        hydro_payload_sha256 if isinstance(hydro_payload_sha256, str) else None,
+        no_prehydro,
+        with_prehydro,
+    )
+
+
+def load_aa_task_manifest(path: Path) -> dict[int, dict[str, str]]:
+    with path.open(newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    required = {
+        "task_id",
+        "hard_seed",
+        "hydro_slot",
+        "hydro_event_id",
+        "hydro_ncoll",
+        "hydro_payload_sha256",
+    }
+    if not rows or not required.issubset(rows[0]):
+        raise ValueError(f"{path}: missing required v2 task-manifest columns")
+    assignments: dict[int, dict[str, str]] = {}
+    for row in rows:
+        task_id = int(row["task_id"])
+        if task_id in assignments:
+            raise ValueError(f"{path}: duplicate task_id {task_id}")
+        assignments[task_id] = row
+    return assignments
+
+
+def validate_pair_task_assignment(
+    pair: PairedArchive,
+    *,
+    task_id: int,
+    assignment: dict[str, str],
+) -> None:
+    expected_values: dict[str, int | str] = {
+        "seed": int(assignment["hard_seed"]),
+        "hydro_index": int(assignment["hydro_slot"]),
+        "hydro_event_id": int(assignment["hydro_event_id"]),
+        "hydro_ncoll": int(assignment["hydro_ncoll"]),
+        "hydro_payload_sha256": assignment["hydro_payload_sha256"],
+    }
+    for field, expected in expected_values.items():
+        actual = getattr(pair, field)
+        if actual != expected:
+            raise ArchiveValidationError(
+                f"task {task_id}: {field}={actual}, expected {expected}"
+            )
 
 
 def parse_source(value: str) -> Source:
@@ -509,6 +594,11 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--beta", type=float, default=0.0)
     parser.add_argument("--match-dr-fraction", type=float, default=0.5)
     parser.add_argument("--inventory", type=Path)
+    parser.add_argument(
+        "--aa-task-manifest",
+        type=Path,
+        help="optional v2 task manifest used to validate seed and hydro provenance",
+    )
     return parser
 
 
@@ -520,6 +610,16 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("--limit must be positive")
     if args.progress_every <= 0:
         raise ValueError("--progress-every must be positive")
+    task_manifest = (
+        args.aa_task_manifest.expanduser().resolve()
+        if args.aa_task_manifest is not None
+        else None
+    )
+    if task_manifest is not None and len(sources) != 1:
+        raise ValueError("--aa-task-manifest requires exactly one --source")
+    task_assignments = (
+        load_aa_task_manifest(task_manifest) if task_manifest is not None else None
+    )
 
     output = args.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -563,6 +663,9 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
         "pairId",
         "seed",
         "hydroIndex",
+        "hydroEventId",
+        "hydroNcoll",
+        "hydroPayloadSha256",
         "noPrehydroParticleRecords",
         "withPrehydroParticleRecords",
         "statusPath",
@@ -615,6 +718,9 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
                         "pairId": "",
                         "seed": "",
                         "hydroIndex": "",
+                        "hydroEventId": "",
+                        "hydroNcoll": "",
+                        "hydroPayloadSha256": "",
                         "noPrehydroParticleRecords": "",
                         "withPrehydroParticleRecords": "",
                         "statusPath": status_path or "",
@@ -636,6 +742,15 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
                         continue
                     try:
                         pair = parse_paired_archive(archive_path, expected_chunk_id=chunk)
+                        if task_assignments is not None:
+                            assignment = task_assignments.get(chunk)
+                            if assignment is None:
+                                raise ArchiveValidationError(
+                                    f"task {chunk}: missing from AA task manifest"
+                                )
+                            validate_pair_task_assignment(
+                                pair, task_id=chunk, assignment=assignment
+                            )
                         pair_id = stable_pair_id(source_index, chunk)
                         write_pair(process.stdin, pair_id, source_index, chunk, pair)
                     except (ArchiveValidationError, OSError, EOFError, tarfile.TarError, UnicodeError) as error:
@@ -650,6 +765,9 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
                     row["pairId"] = pair_id
                     row["seed"] = pair.seed
                     row["hydroIndex"] = pair.hydro_index
+                    row["hydroEventId"] = pair.hydro_event_id
+                    row["hydroNcoll"] = pair.hydro_ncoll
+                    row["hydroPayloadSha256"] = pair.hydro_payload_sha256
                     row["noPrehydroParticleRecords"] = len(pair.no_prehydro.particles)
                     row["withPrehydroParticleRecords"] = len(pair.with_prehydro.particles)
                     accepted += 1
@@ -727,6 +845,15 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
         "rootVersion": command_output(["root-config", "--version"]),
         "fastjetVersion": command_output(["fastjet-config", "--version"]),
         "inventory": str(args.inventory.resolve()) if args.inventory else None,
+        "aaTaskManifest": (
+            {
+                "path": str(task_manifest),
+                "sha256": sha256(task_manifest),
+                "rows": len(task_assignments),
+            }
+            if task_manifest is not None and task_assignments is not None
+            else None
+        ),
         "command": shlex.join(sys.argv),
     }
     summary_output.parent.mkdir(parents=True, exist_ok=True)
