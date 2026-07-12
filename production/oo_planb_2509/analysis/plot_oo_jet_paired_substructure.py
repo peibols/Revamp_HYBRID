@@ -1199,7 +1199,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
     transition_path = out_dir / f"{args.prefix}_softdrop_transitions.tsv"
     with transition_path.open("w", newline="") as stream:
-        writer = csv.writer(stream, delimiter="\t")
+        writer = csv.writer(stream, delimiter="\t", lineterminator="\n")
         writer.writerow(
             [
                 "radius",
@@ -1222,7 +1222,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
     fail_path = out_dir / f"{args.prefix}_softdrop_failure.tsv"
     with fail_path.open("w", newline="") as stream:
-        writer = csv.writer(stream, delimiter="\t")
+        writer = csv.writer(stream, delimiter="\t", lineterminator="\n")
         writer.writerow(
             [
                 "radius",
@@ -1243,7 +1243,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
     observable_path = out_dir / f"{args.prefix}_paired_observables.tsv"
     with observable_path.open("w", newline="") as stream:
-        writer = csv.writer(stream, delimiter="\t")
+        writer = csv.writer(stream, delimiter="\t", lineterminator="\n")
         writer.writerow(
             [
                 "radius",
@@ -1265,7 +1265,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
     contrast_path = out_dir / f"{args.prefix}_single_many_contrasts.tsv"
     with contrast_path.open("w", newline="") as stream:
-        writer = csv.writer(stream, delimiter="\t")
+        writer = csv.writer(stream, delimiter="\t", lineterminator="\n")
         writer.writerow(
             [
                 "radius",

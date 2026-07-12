@@ -200,6 +200,8 @@ class PairedSubstructureTest(unittest.TestCase):
                 (out_dir / "test_paired_single_many_contrasts.tsv").is_file()
             )
             self.assertTrue((out_dir / "test_paired_metadata.json").is_file())
+            for path in out_dir.glob("*.tsv"):
+                self.assertNotIn(b"\r\n", path.read_bytes())
 
 
 if __name__ == "__main__":
