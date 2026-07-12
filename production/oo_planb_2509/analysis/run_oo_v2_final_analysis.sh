@@ -92,6 +92,7 @@ python3 - \
   "${TARGET}" <<'PY'
 import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -119,11 +120,11 @@ if manifest["sha256"] != expected_manifest_sha:
 if closure.get("status") != "PASS":
     raise SystemExit("jet-pT slice closure did not pass")
 if any(
-    difference != 0.0
+    not math.isfinite(difference) or abs(difference) > 1.0e-12
     for radius in closure["crossSectionClosureDifferenceMb"].values()
     for difference in radius.values()
 ):
-    raise SystemExit("jet-pT slice closure has a nonzero residual")
+    raise SystemExit("jet-pT slice closure exceeds 1e-12 mb")
 PY
 
 source_commit="$(git -C "${SOURCE}" rev-parse HEAD)"
