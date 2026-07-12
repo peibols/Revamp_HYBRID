@@ -161,6 +161,13 @@ output. When supplied, the manifest path, row count, and SHA256 are also
 recorded in the JSON summary; accepted rows in the audit TSV retain the hydro
 event ID, Ncoll, and payload SHA256.
 
+For the 50,000-event v2 campaign,
+`analysis/run_oo_v2_final_analysis.sh` guards this conversion on the strict
+completion marker, runs the complete-prefix hadron RAA analysis, creates the
+manifest-validated ROOT file, produces the inclusive and four-slice jet
+comparisons, and requires exact 50,000-pair acceptance and zero slice-closure
+residual before writing its own completion marker.
+
 Run the parser tests with:
 
 ```bash
