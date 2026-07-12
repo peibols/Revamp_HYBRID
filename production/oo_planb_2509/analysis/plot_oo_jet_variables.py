@@ -16,7 +16,7 @@ import uproot
 
 
 VARIANTS = ("noPrehydro", "withPrehydro")
-RADIUS_DIGITS = (2, 4, 8)
+RADIUS_DIGITS = (1, 2, 4, 8)
 VARIANT_LABELS = {
     "noPrehydro": "No pre-hydro",
     "withPrehydro": "Plan B pre-hydro",
@@ -77,7 +77,16 @@ class MeanResult:
 def variable_specs(
     radius_digit: int, pt_min: float, pt_max: float | None = None
 ) -> list[VariableSpec]:
-    if radius_digit == 2:
+    if radius_digit == 1:
+        mass_edges = np.array(
+            [-8, -4, -2, -1, 0, 0.5, 1, 1.5, 2, 3, 4, 6, 10, 16, 32, 64],
+            dtype=float,
+        )
+        multiplicity_edges = np.arange(0.5, 41.5, 1.0)
+        rg_edges = np.linspace(0.0, 0.125, 21)
+        girth_edges = np.linspace(0.0, 0.08, 21)
+        max_kt_edges = np.geomspace(0.00125, 50.0, 20)
+    elif radius_digit == 2:
         mass_edges = np.array(
             [-16, -8, -4, -2, 0, 1, 2, 3, 4, 6, 8, 12, 20, 32, 64, 128],
             dtype=float,

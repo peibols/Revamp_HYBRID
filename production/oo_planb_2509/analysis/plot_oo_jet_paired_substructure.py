@@ -15,7 +15,7 @@ import numpy as np
 import uproot
 
 
-RADIUS_DIGITS = (2, 4, 8)
+RADIUS_DIGITS = (1, 2, 4, 8)
 FLAVORS = ("all", "quark", "gluon")
 FLAVOR_LABELS = {
     "all": "All jets",

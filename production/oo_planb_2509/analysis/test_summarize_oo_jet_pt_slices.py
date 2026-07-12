@@ -19,7 +19,7 @@ SPEC.loader.exec_module(summary)
 def metadata(
     low: float,
     high: float | None,
-    values: tuple[float, float, float, float, float, float],
+    values: tuple[float, float, float, float, float, float, float, float],
 ):
     common = {
         "inputRoot": "/sample.root",
@@ -37,35 +37,26 @@ def metadata(
         "ptMaxGeV": high,
     }
     common["radii"] = {
-        "0.2": {
+        radius: {
             "variants": {
-                "noPrehydro": {"integratedJetCrossSectionMb": values[0]},
-                "withPrehydro": {"integratedJetCrossSectionMb": values[1]},
+                "noPrehydro": {"integratedJetCrossSectionMb": values[index]},
+                "withPrehydro": {"integratedJetCrossSectionMb": values[index + 1]},
             }
-        },
-        "0.4": {
-            "variants": {
-                "noPrehydro": {"integratedJetCrossSectionMb": values[2]},
-                "withPrehydro": {"integratedJetCrossSectionMb": values[3]},
-            }
-        },
-        "0.8": {
-            "variants": {
-                "noPrehydro": {"integratedJetCrossSectionMb": values[4]},
-                "withPrehydro": {"integratedJetCrossSectionMb": values[5]},
-            }
-        },
+        }
+        for index, radius in zip(range(0, len(values), 2), summary.RADII)
     }
     return common
 
 
 class PtSliceSummaryTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.inclusive = metadata(30.0, None, (5.0, 4.5, 10.0, 9.0, 20.0, 18.0))
+        self.inclusive = metadata(
+            30.0, None, (2.5, 2.25, 5.0, 4.5, 10.0, 9.0, 20.0, 18.0)
+        )
         self.slices = [
-            metadata(30.0, 50.0, (3.5, 3.0, 7.0, 6.0, 14.0, 12.0)),
-            metadata(50.0, 80.0, (1.0, 1.0, 2.0, 2.0, 4.0, 4.0)),
-            metadata(80.0, None, (0.5, 0.5, 1.0, 1.0, 2.0, 2.0)),
+            metadata(30.0, 50.0, (1.75, 1.5, 3.5, 3.0, 7.0, 6.0, 14.0, 12.0)),
+            metadata(50.0, 80.0, (0.5, 0.5, 1.0, 1.0, 2.0, 2.0, 4.0, 4.0)),
+            metadata(80.0, None, (0.25, 0.25, 0.5, 0.5, 1.0, 1.0, 2.0, 2.0)),
         ]
 
     def test_valid_partition_closes_to_inclusive(self) -> None:

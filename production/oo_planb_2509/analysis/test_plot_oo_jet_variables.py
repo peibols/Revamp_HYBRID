@@ -83,11 +83,14 @@ class JetWeightingTest(unittest.TestCase):
         self.assertEqual(spec.xscale, "linear")
         self.assertEqual(plotter.pt_range_label(30.0, 50.0), r"$30<p_T^{\rm jet}\leq 50$ GeV")
 
-    def test_radius_02_has_dedicated_shape_ranges(self) -> None:
+    def test_radius_01_and_02_have_dedicated_shape_ranges(self) -> None:
+        radius_01 = {spec.key: spec for spec in plotter.variable_specs(1, 20.0)}
+        self.assertAlmostEqual(float(radius_01["rg"].edges[-1]), 0.125)
+        self.assertAlmostEqual(float(radius_01["girth"].edges[-1]), 0.08)
         specs = {spec.key: spec for spec in plotter.variable_specs(2, 20.0)}
         self.assertAlmostEqual(float(specs["rg"].edges[-1]), 0.25)
         self.assertAlmostEqual(float(specs["girth"].edges[-1]), 0.16)
-        self.assertEqual(plotter.RADIUS_DIGITS, (2, 4, 8))
+        self.assertEqual(plotter.RADIUS_DIGITS, (1, 2, 4, 8))
 
     def test_soft_drop_specs_reserve_equal_width_failure_bin(self) -> None:
         specs = {spec.key: spec for spec in plotter.variable_specs(4, 30.0)}

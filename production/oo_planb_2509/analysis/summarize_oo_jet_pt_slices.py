@@ -13,7 +13,7 @@ import numpy as np
 
 
 VARIANTS = ("noPrehydro", "withPrehydro")
-RADII = ("0.2", "0.4", "0.8")
+RADII = ("0.1", "0.2", "0.4", "0.8")
 VARIANT_LABELS = {
     "noPrehydro": "No pre-hydro",
     "withPrehydro": "Plan B pre-hydro",
@@ -153,7 +153,7 @@ def plot_summary(out_path: Path, slices: list[dict[str, object]]) -> None:
     figure, axes = plt.subplots(
         2,
         len(RADII),
-        figsize=(16.2, 7.6),
+        figsize=(20.0, 7.6),
         sharex="col",
         gridspec_kw={"height_ratios": [2.25, 1.0], "hspace": 0.08, "wspace": 0.24},
     )

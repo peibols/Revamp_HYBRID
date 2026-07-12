@@ -157,9 +157,11 @@ definition.
 
 Schema v3 adds the normal-only fragmentation and hard-parton-match branches.
 Schema v4 adds the complete `jet1*` branch family and corresponding event,
-pair, and conversion totals for R=0.1. The existing nonlinear substructure
-campaign plots remain scoped to R=0.2, R=0.4, and R=0.8; R=0.1 is included in
-the inclusive jet-RAA workflow.
+pair, and conversion totals for R=0.1. The weighted jet spectra, nonlinear
+substructure overlays, migration-safe paired Soft Drop and momentum-dispersion
+audit, pT-slice closure, and inclusive jet-RAA workflow all include R=0.1,
+R=0.2, R=0.4, and R=0.8. The effective-charge response remains scoped to
+R=0.2, R=0.4, and R=0.8.
 The preferred final-state effective-charge proxy is
 
 ```text
