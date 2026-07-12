@@ -58,6 +58,11 @@ class V2SupervisorTest(unittest.TestCase):
             self.write_paired_archive(root / "outputs/aa/chunk_3.tar.gz", 3)
             self.assertEqual(MODULE.ready_ids(root), {1})
 
+    def test_campaign_constraint_owns_exact_output_base(self) -> None:
+        constraint = MODULE.campaign_constraint("campaign_a")
+        self.assertIn("(^| )EOS_BASE=/eos/user/y/yjlee/campaign_a( |$)", constraint)
+        self.assertNotIn("PAYLOAD_EOS_BASE", constraint)
+
     def test_partial_pair_archive_is_not_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

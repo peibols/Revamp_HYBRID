@@ -169,10 +169,15 @@ def ready_ids(local_eos: Path) -> set[int]:
     return successful_ids(local_eos) & output_ids(local_eos)
 
 
+def campaign_constraint(campaign: str) -> str:
+    eos_token = re.escape(f"EOS_BASE=/eos/user/y/yjlee/{campaign}")
+    return f'regexp("(^| ){eos_token}( |$)", Environment)'
+
+
 def query_jobs(
     args: argparse.Namespace,
 ) -> tuple[Counter[int], set[int], set[int]]:
-    constraint = f'regexp("{args.campaign}", Environment)'
+    constraint = campaign_constraint(args.campaign)
     command = (
         f"condor_q -name {args.schedd} -constraint '{constraint}' "
         "-af JobStatus Args"
@@ -217,9 +222,7 @@ def remove_terminal_holds(
             f"{len(strict_ready)} strict-ready, {len(needs_retry)} need retry"
         )
         return set()
-    constraint = (
-        f'regexp("{args.campaign}", Environment) && JobStatus == 5'
-    )
+    constraint = f"{campaign_constraint(args.campaign)} && JobStatus == 5"
     command = (
         f"condor_rm -name {args.schedd} -constraint '{constraint}'"
     )
