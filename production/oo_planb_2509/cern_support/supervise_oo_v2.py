@@ -370,12 +370,12 @@ def render_retry_submit(
             raise ValueError(
                 f"AA submit template has no supported {field} path"
             )
-    log_pattern = re.compile(r"^(log\s*=\s*log/)([^\n]+)$", re.MULTILINE)
-    if not log_pattern.search(rendered):
-        raise ValueError("AA submit template has no log path")
-    rendered = log_pattern.sub(
-        rf"\g<1>v2_retry_{tag}_\2", rendered, count=1
+    log_pattern = re.compile(
+        r"^log\s*=\s*(?:log/[^\n]+|/dev/null)\s*$", re.MULTILINE
     )
+    if not log_pattern.search(rendered):
+        raise ValueError("AA submit template has no supported log path")
+    rendered = log_pattern.sub("log = /dev/null", rendered, count=1)
     if retry_timeout_s is not None:
         timeout_pattern = re.compile(r"\bTIMEOUT_S=\d+\b")
         if len(timeout_pattern.findall(rendered)) != 1:

@@ -87,6 +87,7 @@ queue chunk_id from aa_chunk_ids.txt
         self.assertIn("queue chunk_id from retry_ids.txt", rendered)
         self.assertIn("output = log/v2_retry_stamp_aa.$(ClusterId).out", rendered)
         self.assertIn("error = log/v2_retry_stamp_aa.$(ClusterId).err", rendered)
+        self.assertIn("log = /dev/null", rendered)
         self.assertIn("TIMEOUT_S=72000", rendered)
         self.assertIn('transfer_output_files = ""', rendered)
 
@@ -109,7 +110,7 @@ queue chunk_id from aa_chunk_ids.txt
         )
         self.assertIn("output = /dev/null", rendered)
         self.assertIn("error = /dev/null", rendered)
-        self.assertIn("log = log/v2_retry_stamp_aa.$(ClusterId).log", rendered)
+        self.assertIn("log = /dev/null", rendered)
         self.assertIn("queue chunk_id from retry_ids.txt", rendered)
         self.assertIn('transfer_output_files = ""', rendered)
 
