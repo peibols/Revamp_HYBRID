@@ -27,7 +27,7 @@ PARTICLE_RECORD = struct.Struct("<ddddii")
 PAIR_MAGIC = b"OOPAIR1\0"
 CHUNK_PATTERN = re.compile(r"chunk_(\d+)\.(?:tar\.gz|txt)$")
 ALLOWED_LABELS = {-2, 0, 1, 2, 3}
-SCHEMA_VERSION = "oo-paired-root-v2"
+SCHEMA_VERSION = "oo-paired-root-v3"
 JET_RADIUS_DIGITS = (2, 4, 8)
 
 
@@ -484,9 +484,22 @@ def validate_root(path: Path, expected_pairs: int) -> dict[str, int]:
                 "Rg",
                 "Mult",
                 "PtD",
+                "EffectiveMultiplicity",
+                "LeadingFraction",
+                "NormalPtD",
+                "NormalEffectiveMultiplicity",
+                "LeadingNormalFraction",
                 "G",
                 "mass",
                 "MaxKt",
+                "NSD",
+                "HardPartonId",
+                "HardPartonPt",
+                "HardPartonDR",
+                "PairMatchIndex",
+                "PairMatchDR",
+                "PairMatchOtherPt",
+                "PairMatchOtherHardPartonId",
             )
         )
     required_trees = {
@@ -804,6 +817,7 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
             "softDropZCut": args.z_cut,
             "softDropBeta": args.beta,
             "pairMatchDRFraction": args.match_dr_fraction,
+            "hardPartonMatchDRFraction": 1.0,
         },
         "output": str(output),
         "outputBytes": output.stat().st_size,

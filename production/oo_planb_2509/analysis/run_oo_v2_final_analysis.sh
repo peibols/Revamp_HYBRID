@@ -19,6 +19,7 @@ ROOT_OUT="${OUT}/root/oo5360_c0_5_planb_v2_50k.root"
 JET20_OUT="${OUT}/jets/inclusive_pt20"
 JET30_OUT="${OUT}/jets/inclusive_pt30"
 JET_SLICE_OUT="${OUT}/jets/pt_slices"
+JET_CHARGE_OUT="${OUT}/jets/charge_response"
 FINAL_MARKER="${OUT}/v2_final_analysis_complete.txt"
 
 test -s "${STRICT_MARKER}"
@@ -29,7 +30,8 @@ test -d "${PP_LOCAL_EOS}/outputs/pp"
 test -s "${TASK_MANIFEST}"
 
 mkdir -p "${RAA_OUT}" "$(dirname -- "${ROOT_OUT}")" \
-  "${JET20_OUT}" "${JET30_OUT}" "${JET_SLICE_OUT}" "${BUILD_DIR}"
+  "${JET20_OUT}" "${JET30_OUT}" "${JET_SLICE_OUT}" "${JET_CHARGE_OUT}" \
+  "${BUILD_DIR}"
 
 python3 "${SCRIPT_DIR}/analyze_oo_prehydro_pair.py" \
   --local-eos "${LOCAL_EOS}" \
@@ -73,6 +75,25 @@ python3 "${SCRIPT_DIR}/plot_oo_jet_variables.py" \
 python3 "${SCRIPT_DIR}/plot_oo_jet_variables.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_SLICE_OUT}" \
   --pt-min 80 --prefix oo5360_v2_50k_jet_variables_pt80plus
+
+python3 "${SCRIPT_DIR}/plot_oo_jet_charge_response.py" \
+  --input-root "${ROOT_OUT}" --out-dir "${JET_CHARGE_OUT}" \
+  --pt-min 20 --prefix oo5360_v2_50k_jet_charge_response_pt20
+python3 "${SCRIPT_DIR}/plot_oo_jet_charge_response.py" \
+  --input-root "${ROOT_OUT}" --out-dir "${JET_CHARGE_OUT}" \
+  --pt-min 30 --prefix oo5360_v2_50k_jet_charge_response_pt30
+python3 "${SCRIPT_DIR}/plot_oo_jet_charge_response.py" \
+  --input-root "${ROOT_OUT}" --out-dir "${JET_CHARGE_OUT}" \
+  --pt-min 20 --pt-max 30 --prefix oo5360_v2_50k_jet_charge_response_pt20to30
+python3 "${SCRIPT_DIR}/plot_oo_jet_charge_response.py" \
+  --input-root "${ROOT_OUT}" --out-dir "${JET_CHARGE_OUT}" \
+  --pt-min 30 --pt-max 50 --prefix oo5360_v2_50k_jet_charge_response_pt30to50
+python3 "${SCRIPT_DIR}/plot_oo_jet_charge_response.py" \
+  --input-root "${ROOT_OUT}" --out-dir "${JET_CHARGE_OUT}" \
+  --pt-min 50 --pt-max 80 --prefix oo5360_v2_50k_jet_charge_response_pt50to80
+python3 "${SCRIPT_DIR}/plot_oo_jet_charge_response.py" \
+  --input-root "${ROOT_OUT}" --out-dir "${JET_CHARGE_OUT}" \
+  --pt-min 80 --prefix oo5360_v2_50k_jet_charge_response_pt80plus
 
 python3 "${SCRIPT_DIR}/summarize_oo_jet_pt_slices.py" \
   --slice-metadata \
@@ -141,6 +162,7 @@ raa_dir=${RAA_OUT}
 jet_pt20_dir=${JET20_OUT}
 jet_pt30_dir=${JET30_OUT}
 jet_slice_dir=${JET_SLICE_OUT}
+jet_charge_response_dir=${JET_CHARGE_OUT}
 status=PASS
 EOF
 echo "Wrote ${FINAL_MARKER}"

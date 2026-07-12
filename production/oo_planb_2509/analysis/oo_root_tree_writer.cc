@@ -29,7 +29,7 @@
 namespace {
 
 constexpr std::array<char, 8> kPairMagic{'O', 'O', 'P', 'A', 'I', 'R', '1', '\0'};
-constexpr const char *kSchemaVersion = "oo-paired-root-v2";
+constexpr const char *kSchemaVersion = "oo-paired-root-v3";
 
 #pragma pack(push, 1)
 struct PairHeader {
@@ -366,6 +366,11 @@ struct JetRecord {
   int n_sd = 0;
   int mult = 0;
   double pt_d = std::numeric_limits<double>::quiet_NaN();
+  double effective_multiplicity = std::numeric_limits<double>::quiet_NaN();
+  double leading_fraction = std::numeric_limits<double>::quiet_NaN();
+  double normal_pt_d = std::numeric_limits<double>::quiet_NaN();
+  double normal_effective_multiplicity = std::numeric_limits<double>::quiet_NaN();
+  double leading_normal_fraction = std::numeric_limits<double>::quiet_NaN();
   double girth = std::numeric_limits<double>::quiet_NaN();
   double signed_girth = std::numeric_limits<double>::quiet_NaN();
   double max_kt = std::numeric_limits<double>::quiet_NaN();
@@ -381,9 +386,13 @@ struct JetRecord {
   int n_negative_wake = 0;
   int n_negative_thermal = 0;
   int n_hadronized_holes = 0;
+  int hard_parton_id = 0;
+  double hard_parton_pt = std::numeric_limits<double>::quiet_NaN();
+  double hard_parton_dr = std::numeric_limits<double>::quiet_NaN();
   int pair_match_index = -1;
   double pair_match_dr = std::numeric_limits<double>::quiet_NaN();
   double pair_match_other_pt = std::numeric_limits<double>::quiet_NaN();
+  int pair_match_other_hard_parton_id = 0;
 };
 
 struct SoftDropResult {
@@ -533,16 +542,22 @@ std::vector<JetRecord> make_jets(const std::vector<ParticleRecord> &particles, d
     record.mult = static_cast<int>(constituents.size());
     double scalar_pt = 0.0;
     double sum_pt_squared = 0.0;
+    double leading_pt = 0.0;
+    double normal_sum_pt_squared = 0.0;
+    double leading_normal_pt = 0.0;
     double girth_numerator = 0.0;
     for (const fastjet::PseudoJet &constituent : constituents) {
       const auto &info = constituent.user_info<HadronInfo>();
       const double pt = constituent.pt();
       scalar_pt += pt;
       sum_pt_squared += pt * pt;
+      leading_pt = std::max(leading_pt, pt);
       girth_numerator += pt * constituent.delta_R(raw_jet);
       if (info.raw_label == 0) {
         ++record.n_normal;
         record.normal_pt += pt;
+        normal_sum_pt_squared += pt * pt;
+        leading_normal_pt = std::max(leading_normal_pt, pt);
       } else if (info.raw_label == 1) {
         ++record.n_positive_wake;
         record.positive_wake_pt += pt;
@@ -550,8 +565,16 @@ std::vector<JetRecord> make_jets(const std::vector<ParticleRecord> &particles, d
     }
     if (scalar_pt > 0.0) {
       record.pt_d = std::sqrt(sum_pt_squared) / scalar_pt;
+      record.effective_multiplicity = scalar_pt * scalar_pt / sum_pt_squared;
+      record.leading_fraction = leading_pt / scalar_pt;
       record.girth = girth_numerator / scalar_pt;
       record.wake_fraction = record.positive_wake_pt / scalar_pt;
+    }
+    if (record.normal_pt > 0.0 && normal_sum_pt_squared > 0.0) {
+      record.normal_pt_d = std::sqrt(normal_sum_pt_squared) / record.normal_pt;
+      record.normal_effective_multiplicity =
+          record.normal_pt * record.normal_pt / normal_sum_pt_squared;
+      record.leading_normal_fraction = leading_normal_pt / record.normal_pt;
     }
 
     double negative_px = 0.0;
@@ -615,6 +638,53 @@ std::vector<JetRecord> make_jets(const std::vector<ParticleRecord> &particles, d
   return records;
 }
 
+void match_hard_partons(std::vector<JetRecord> &jets,
+                        const std::vector<ParticleRecord> &particles, double radius) {
+  struct Candidate {
+    double distance;
+    int jet_index;
+    int particle_index;
+  };
+  std::vector<std::size_t> marker_indices;
+  for (std::size_t particle_index = 0; particle_index < particles.size(); ++particle_index) {
+    if (particles[particle_index].raw_label == -2) {
+      marker_indices.push_back(particle_index);
+    }
+  }
+  std::vector<Candidate> candidates;
+  for (std::size_t jet_index = 0; jet_index < jets.size(); ++jet_index) {
+    for (const std::size_t particle_index : marker_indices) {
+      const ParticleRecord &particle = particles[particle_index];
+      const double marker_eta = pseudo_eta(particle.px, particle.py, particle.pz);
+      const double marker_phi = std::atan2(particle.py, particle.px);
+      const double distance =
+          delta_r(jets[jet_index].raw_eta, jets[jet_index].raw_phi, marker_eta, marker_phi);
+      if (std::isfinite(distance) && distance < radius) {
+        candidates.push_back(Candidate{distance, static_cast<int>(jet_index),
+                                       static_cast<int>(particle_index)});
+      }
+    }
+  }
+  std::sort(candidates.begin(), candidates.end(),
+            [](const Candidate &first, const Candidate &second) {
+              return first.distance < second.distance;
+            });
+  std::vector<bool> jet_used(jets.size(), false);
+  std::vector<bool> particle_used(particles.size(), false);
+  for (const Candidate &candidate : candidates) {
+    if (jet_used[candidate.jet_index] || particle_used[candidate.particle_index]) {
+      continue;
+    }
+    jet_used[candidate.jet_index] = true;
+    particle_used[candidate.particle_index] = true;
+    JetRecord &jet = jets[candidate.jet_index];
+    const ParticleRecord &particle = particles[candidate.particle_index];
+    jet.hard_parton_id = particle.pdg_id;
+    jet.hard_parton_pt = std::hypot(particle.px, particle.py);
+    jet.hard_parton_dr = candidate.distance;
+  }
+}
+
 void match_jets(std::vector<JetRecord> &no_prehydro, std::vector<JetRecord> &with_prehydro,
                 double radius, double max_fraction) {
   struct Candidate {
@@ -651,9 +721,11 @@ void match_jets(std::vector<JetRecord> &no_prehydro, std::vector<JetRecord> &wit
     no_jet.pair_match_index = candidate.with_index;
     no_jet.pair_match_dr = candidate.distance;
     no_jet.pair_match_other_pt = with_jet.pt;
+    no_jet.pair_match_other_hard_parton_id = with_jet.hard_parton_id;
     with_jet.pair_match_index = candidate.no_index;
     with_jet.pair_match_dr = candidate.distance;
     with_jet.pair_match_other_pt = no_jet.pt;
+    with_jet.pair_match_other_hard_parton_id = no_jet.hard_parton_id;
   }
 }
 
@@ -682,6 +754,11 @@ class RadiusBranches {
     branch(tree, "NSD", n_sd_);
     branch(tree, "Mult", mult_);
     branch(tree, "PtD", pt_d_);
+    branch(tree, "EffectiveMultiplicity", effective_multiplicity_);
+    branch(tree, "LeadingFraction", leading_fraction_);
+    branch(tree, "NormalPtD", normal_pt_d_);
+    branch(tree, "NormalEffectiveMultiplicity", normal_effective_multiplicity_);
+    branch(tree, "LeadingNormalFraction", leading_normal_fraction_);
     branch(tree, "G", girth_);
     branch(tree, "SignedG", signed_girth_);
     branch(tree, "MaxKt", max_kt_);
@@ -697,9 +774,13 @@ class RadiusBranches {
     branch(tree, "NNegativeWake", n_negative_wake_);
     branch(tree, "NNegativeThermal", n_negative_thermal_);
     branch(tree, "NHadronizedHoles", n_hadronized_holes_);
+    branch(tree, "HardPartonId", hard_parton_id_);
+    branch(tree, "HardPartonPt", hard_parton_pt_);
+    branch(tree, "HardPartonDR", hard_parton_dr_);
     branch(tree, "PairMatchIndex", pair_match_index_);
     branch(tree, "PairMatchDR", pair_match_dr_);
     branch(tree, "PairMatchOtherPt", pair_match_other_pt_);
+    branch(tree, "PairMatchOtherHardPartonId", pair_match_other_hard_parton_id_);
   }
 
   void assign(const std::vector<JetRecord> &records) {
@@ -728,6 +809,11 @@ class RadiusBranches {
       n_sd_.push_back(record.n_sd);
       mult_.push_back(record.mult);
       push(pt_d_, record.pt_d);
+      push(effective_multiplicity_, record.effective_multiplicity);
+      push(leading_fraction_, record.leading_fraction);
+      push(normal_pt_d_, record.normal_pt_d);
+      push(normal_effective_multiplicity_, record.normal_effective_multiplicity);
+      push(leading_normal_fraction_, record.leading_normal_fraction);
       push(girth_, record.girth);
       push(signed_girth_, record.signed_girth);
       push(max_kt_, record.max_kt);
@@ -743,9 +829,13 @@ class RadiusBranches {
       n_negative_wake_.push_back(record.n_negative_wake);
       n_negative_thermal_.push_back(record.n_negative_thermal);
       n_hadronized_holes_.push_back(record.n_hadronized_holes);
+      hard_parton_id_.push_back(record.hard_parton_id);
+      push(hard_parton_pt_, record.hard_parton_pt);
+      push(hard_parton_dr_, record.hard_parton_dr);
       pair_match_index_.push_back(record.pair_match_index);
       push(pair_match_dr_, record.pair_match_dr);
       push(pair_match_other_pt_, record.pair_match_other_pt);
+      pair_match_other_hard_parton_id_.push_back(record.pair_match_other_hard_parton_id);
     }
   }
 
@@ -784,17 +874,20 @@ class RadiusBranches {
             &raw_eta_,      &raw_y_,             &raw_phi_,
             &raw_pt_,       &raw_mass_,           &zg_,
             &rg_,           &sd_pt_,              &sd_mass_,
-            &pt_d_,         &girth_,              &signed_girth_,
+            &pt_d_,         &effective_multiplicity_, &leading_fraction_,
+            &normal_pt_d_,  &normal_effective_multiplicity_,
+            &leading_normal_fraction_, &girth_,   &signed_girth_,
             &max_kt_,       &max_kt_z_,           &max_kt_rg_,
             &max_kt_primary_, &normal_pt_,        &positive_wake_pt_,
             &negative_wake_pt_, &wake_fraction_,  &pair_match_dr_,
-            &pair_match_other_pt_};
+            &pair_match_other_pt_, &hard_parton_pt_, &hard_parton_dr_};
   }
 
   std::vector<std::vector<int> *> int_vectors() {
     return {&soft_drop_valid_, &n_sd_,              &mult_,
             &n_normal_,        &n_positive_wake_,   &n_negative_wake_,
-            &n_negative_thermal_, &n_hadronized_holes_, &pair_match_index_};
+            &n_negative_thermal_, &n_hadronized_holes_, &hard_parton_id_,
+            &pair_match_index_, &pair_match_other_hard_parton_id_};
   }
 
   std::string prefix_;
@@ -802,11 +895,15 @@ class RadiusBranches {
   std::vector<float> raw_eta_, raw_y_, raw_phi_, raw_pt_, raw_mass_;
   std::vector<float> zg_, rg_, sd_pt_, sd_mass_;
   std::vector<int> soft_drop_valid_, n_sd_, mult_;
-  std::vector<float> pt_d_, girth_, signed_girth_;
+  std::vector<float> pt_d_, effective_multiplicity_, leading_fraction_;
+  std::vector<float> normal_pt_d_, normal_effective_multiplicity_;
+  std::vector<float> leading_normal_fraction_, girth_, signed_girth_;
   std::vector<float> max_kt_, max_kt_z_, max_kt_rg_, max_kt_primary_;
   std::vector<float> normal_pt_, positive_wake_pt_, negative_wake_pt_, wake_fraction_;
   std::vector<int> n_normal_, n_positive_wake_, n_negative_wake_, n_negative_thermal_;
-  std::vector<int> n_hadronized_holes_, pair_match_index_;
+  std::vector<int> n_hadronized_holes_, hard_parton_id_, pair_match_index_;
+  std::vector<int> pair_match_other_hard_parton_id_;
+  std::vector<float> hard_parton_pt_, hard_parton_dr_;
   std::vector<float> pair_match_dr_, pair_match_other_pt_;
 };
 
@@ -952,8 +1049,12 @@ void write_metadata(TFile &output, const Options &options, std::uint64_t pair_co
   jet_definition.Write();
   TNamed substructure_definition(
       "substructureDefinition",
-      "positive constituents only; Cambridge/Aachen reclustering; Soft Drop first passing hardest-branch split; MaxKt over full C/A tree");
+      "positive constituents only; Cambridge/Aachen reclustering; Soft Drop first passing hardest-branch split; MaxKt over full C/A tree; normal-only effective multiplicity excludes wake hadrons");
   substructure_definition.Write();
+  TNamed hard_parton_definition(
+      "hardPartonMatchDefinition",
+      "one-to-one nearest-axis matching of raw-label -2 outgoing hard-parton markers to raw jet axes within DeltaR<R");
+  hard_parton_definition.Write();
   TParameter<double>("rawJetPtMin", options.raw_jet_pt_min).Write();
   TParameter<double>("jetAbsEtaMax", options.jet_abs_eta_max).Write();
   TParameter<double>("softDropZCut", options.z_cut).Write();
@@ -1047,6 +1148,12 @@ int run(const Options &options) {
     auto with_jets4 = make_jets(with_particles, 0.4, options);
     auto no_jets8 = make_jets(no_particles, 0.8, options);
     auto with_jets8 = make_jets(with_particles, 0.8, options);
+    match_hard_partons(no_jets2, no_particles, 0.2);
+    match_hard_partons(with_jets2, with_particles, 0.2);
+    match_hard_partons(no_jets4, no_particles, 0.4);
+    match_hard_partons(with_jets4, with_particles, 0.4);
+    match_hard_partons(no_jets8, no_particles, 0.8);
+    match_hard_partons(with_jets8, with_particles, 0.8);
     match_jets(no_jets2, with_jets2, 0.2, options.match_dr_fraction);
     match_jets(no_jets4, with_jets4, 0.4, options.match_dr_fraction);
     match_jets(no_jets8, with_jets8, 0.8, options.match_dr_fraction);

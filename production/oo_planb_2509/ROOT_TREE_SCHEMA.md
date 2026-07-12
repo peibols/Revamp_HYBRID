@@ -118,8 +118,14 @@ Replace `X` by `2`, `4`, or `8` for R=0.2, R=0.4, or R=0.8:
 | `jetXZg`, `jetXRg` | first Soft Drop passing split |
 | `jetXMult` | number of normal plus positive-wake constituents |
 | `jetXPtD` | `sqrt(sum_i pT_i^2) / sum_i pT_i` |
+| `jetXEffectiveMultiplicity` | `1/jetXPtD^2` for normal plus positive-wake constituents |
+| `jetXLeadingFraction` | leading positive-constituent pT divided by positive scalar pT |
+| `jetXNormalPtD` | momentum dispersion using raw-label-0 hadrons only |
+| `jetXNormalEffectiveMultiplicity` | `1/jetXNormalPtD^2`, excluding all wake hadrons |
+| `jetXLeadingNormalFraction` | leading raw-label-0 hadron pT divided by normal scalar pT |
 | `jetXG` | `sum_i pT_i DeltaR(i,jet) / sum_i pT_i` |
 | `jetXMaxKt` | largest `min(pT1,pT2) DeltaR12` in the full C/A tree |
+| `jetXHardPartonId`, `jetXHardPartonPt`, `jetXHardPartonDR` | one-to-one matched outgoing hard-parton marker truth tag |
 
 Soft Drop reclusters the positive constituents with Cambridge/Aachen and
 follows the harder-pT branch. The parameters are `z_cut=0.1`, `beta=0`, and
@@ -137,8 +143,31 @@ the requested `MaxKt` searches the full binary tree.
 
 Jets in the paired variants are matched one-to-one by increasing raw-axis
 distance with `DeltaR < R/2`. `PairMatchIndex`, `PairMatchDR`, and
-`PairMatchOtherPt` permit direct no/with-prehydro comparisons. `-1` means no
-match.
+`PairMatchOtherPt` permit direct no/with-prehydro comparisons.
+`PairMatchOtherHardPartonId` records the marker tag on the matched jet so that
+flavor-tagged analyses can require the same outgoing marker in both variants.
+`PairMatchIndex=-1` means no match.
+
+Outgoing hard-parton markers are matched independently to each variant by
+increasing raw-axis distance with `DeltaR < R`. Each marker and jet can be used
+only once. `HardPartonId=0` and non-finite pT/distance mean that no marker was
+matched. Absolute PDG IDs 1--6 identify a quark tag and ID 21 identifies a
+gluon tag. This is generator truth, not an experimentally accessible flavor
+definition.
+
+Schema v3 adds the normal-only fragmentation and hard-parton-match branches.
+The preferred final-state effective-charge proxy is
+
+```text
+N_eff_normal = (sum_normal pT)^2 / sum_normal(pT^2)
+             = 1 / NormalPtD^2.
+```
+
+It is one for a single normal constituent and grows when momentum is shared
+among many normal constituents. Excluding raw labels 1--3 prevents the wake
+from manufacturing apparent shower charges. It is still a final-state
+hadron-level proxy: it does not equal the number of active or medium-resolved
+shower partons at the hydro start.
 
 ## Running
 
@@ -185,6 +214,18 @@ four nonoverlapping campaign intervals are generated with `(20,30]`,
 `analysis/summarize_oo_jet_pt_slices.py` verifies their normalization metadata
 and exact cross-section closure to the inclusive `pT > 20` result before
 writing the combined table and figure.
+
+For the matched effective-charge sensitivity study, use
+`analysis/plot_oo_jet_charge_response.py`. It selects and bins on the
+no-prehydro jet, requires its one-to-one Plan-B match, and measures
+`1 - pT(Plan B)/pT(no prehydro)`. Positive values mean additional loss from
+turning on prehydro. Results are provided versus wake-excluded effective
+multiplicity, leading-normal fraction, `NSD+1`, and maximum-kT splitting for
+all, quark-tagged, and gluon-tagged jets. Quark/gluon subsets require identical
+hard-marker PDG IDs in both variants. The nominal pair-axis requirement is
+`DeltaR<R/2`; `--max-pair-match-dr-fraction` supports stricter robustness
+checks. Conditional means use the biased PYTHIA event weight once, and
+uncertainties use a paired delete-one-run jackknife.
 
 The negative-particle treatment follows the jet-level ghost-association and
 four-vector-subtraction construction described for 4MomSub in

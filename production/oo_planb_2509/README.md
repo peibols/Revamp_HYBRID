@@ -41,6 +41,7 @@ python3 analysis/test_2509_prehydro_public.py -v
 python3 analysis/test_analyze_oo_prehydro_pair.py -v
 python3 analysis/test_convert_oo_paired_to_root.py -v
 python3 analysis/test_plot_oo_jet_variables.py -v
+python3 analysis/test_plot_oo_jet_charge_response.py -v
 python3 analysis/test_summarize_oo_jet_pt_slices.py -v
 python3 cern_support/test_monitor_oo_1m_prehydro_raa.py -v
 python3 cern_support/test_run_chunk_job.py -v
@@ -72,6 +73,15 @@ slice, then pass the three metadata files and the inclusive `pT > 30` metadata
 to `analysis/summarize_oo_jet_pt_slices.py`. The summary refuses gaps,
 overlaps, inconsistent normalization metadata, or sliced cross sections that
 do not close to the inclusive result.
+
+`analysis/plot_oo_jet_charge_response.py` tests whether the incremental
+prehydro shift depends on a single-core versus many-core fragmentation proxy.
+Its primary proxy is the wake-excluded effective multiplicity
+`N_eff=(sum pT)^2/sum(pT^2)` of normal hadrons. It selects and bins using the
+no-prehydro jet, then measures `1-pT(Plan B)/pT(no prehydro)` for the matched
+jet. Quark/gluon subsets require the same outgoing hard-marker PDG ID in both
+variants. This is a final-state correlation study; a causal count of charges
+active at hydro start requires retaining the shower formation timeline.
 
 RAA plots use a logarithmic pT axis and the fixed edges
 `4,5,7,10,14,24,36,50,80,150 GeV`. These edges were selected once from the

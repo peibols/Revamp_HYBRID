@@ -173,6 +173,16 @@ class ConverterTest(unittest.TestCase):
                         "jet2Pt",
                         "jet2RawPt",
                         "jet2NegativeWakePt",
+                        "jet2NormalPtD",
+                        "jet2NormalEffectiveMultiplicity",
+                        "jet2LeadingNormalFraction",
+                        "jet2HardPartonId",
+                        "jet2HardPartonPt",
+                        "jet2HardPartonDR",
+                        "jet2PairMatchIndex",
+                        "jet2PairMatchDR",
+                        "jet2PairMatchOtherPt",
+                        "jet2PairMatchOtherHardPartonId",
                         "jet4Pt",
                         "jet4RawPt",
                         "jet4NegativeWakePt",
@@ -181,6 +191,18 @@ class ConverterTest(unittest.TestCase):
                 )
                 self.assertGreater(float(jets.jet2NegativeWakePt[0][0]), 0.0)
                 self.assertLess(float(jets.jet2Pt[0][0]), float(jets.jet2RawPt[0][0]))
+                self.assertAlmostEqual(float(jets.jet2NormalPtD[0][0]), 1.0)
+                self.assertAlmostEqual(
+                    float(jets.jet2NormalEffectiveMultiplicity[0][0]), 1.0
+                )
+                self.assertAlmostEqual(float(jets.jet2LeadingNormalFraction[0][0]), 1.0)
+                self.assertEqual(int(jets.jet2HardPartonId[0][0]), 21)
+                self.assertAlmostEqual(float(jets.jet2HardPartonPt[0][0]), 5.0)
+                self.assertLess(float(jets.jet2HardPartonDR[0][0]), 0.2)
+                self.assertEqual(int(jets.jet2PairMatchIndex[0][0]), 0)
+                self.assertLess(float(jets.jet2PairMatchDR[0][0]), 0.1)
+                self.assertGreater(float(jets.jet2PairMatchOtherPt[0][0]), 0.0)
+                self.assertEqual(int(jets.jet2PairMatchOtherHardPartonId[0][0]), 21)
                 self.assertGreater(float(jets.jet4NegativeWakePt[0][0]), 0.0)
                 self.assertLess(float(jets.jet4Pt[0][0]), float(jets.jet4RawPt[0][0]))
 
