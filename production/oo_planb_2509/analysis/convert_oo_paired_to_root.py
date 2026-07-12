@@ -27,7 +27,8 @@ PARTICLE_RECORD = struct.Struct("<ddddii")
 PAIR_MAGIC = b"OOPAIR1\0"
 CHUNK_PATTERN = re.compile(r"chunk_(\d+)\.(?:tar\.gz|txt)$")
 ALLOWED_LABELS = {-2, 0, 1, 2, 3}
-SCHEMA_VERSION = "oo-paired-root-v1"
+SCHEMA_VERSION = "oo-paired-root-v2"
+JET_RADIUS_DIGITS = (2, 4, 8)
 
 
 class ArchiveValidationError(ValueError):
@@ -460,73 +461,39 @@ def sha256(path: Path) -> str:
 def validate_root(path: Path, expected_pairs: int) -> dict[str, int]:
     import uproot
 
+    hadron_branches = {
+        "pairId",
+        "eventWeight",
+        "hadronPt",
+        "hadronEta",
+        "hadronPhi",
+        "hadronStatus",
+        "hadronRawLabel",
+        "hadronID",
+    }
+    jet_branches = {"pairId"}
+    for radius_digit in JET_RADIUS_DIGITS:
+        jet_branches.add(f"nJet{radius_digit}")
+        jet_branches.update(
+            f"jet{radius_digit}{suffix}"
+            for suffix in (
+                "Eta",
+                "Phi",
+                "Pt",
+                "Zg",
+                "Rg",
+                "Mult",
+                "PtD",
+                "G",
+                "mass",
+                "MaxKt",
+            )
+        )
     required_trees = {
-        "noPrehydro/Hadrons": {
-            "pairId",
-            "eventWeight",
-            "hadronPt",
-            "hadronEta",
-            "hadronPhi",
-            "hadronStatus",
-            "hadronRawLabel",
-            "hadronID",
-        },
-        "withPrehydro/Hadrons": {
-            "pairId",
-            "eventWeight",
-            "hadronPt",
-            "hadronEta",
-            "hadronPhi",
-            "hadronStatus",
-            "hadronRawLabel",
-            "hadronID",
-        },
-        "noPrehydro/Jets": {
-            "pairId",
-            "jet4Eta",
-            "jet4Phi",
-            "jet4Pt",
-            "jet4Zg",
-            "jet4Rg",
-            "jet4Mult",
-            "jet4PtD",
-            "jet4G",
-            "jet4mass",
-            "jet4MaxKt",
-            "jet8Eta",
-            "jet8Phi",
-            "jet8Pt",
-            "jet8Zg",
-            "jet8Rg",
-            "jet8Mult",
-            "jet8PtD",
-            "jet8G",
-            "jet8mass",
-            "jet8MaxKt",
-        },
-        "withPrehydro/Jets": {
-            "pairId",
-            "jet4Eta",
-            "jet4Phi",
-            "jet4Pt",
-            "jet4Zg",
-            "jet4Rg",
-            "jet4Mult",
-            "jet4PtD",
-            "jet4G",
-            "jet4mass",
-            "jet4MaxKt",
-            "jet8Eta",
-            "jet8Phi",
-            "jet8Pt",
-            "jet8Zg",
-            "jet8Rg",
-            "jet8Mult",
-            "jet8PtD",
-            "jet8G",
-            "jet8mass",
-            "jet8MaxKt",
-        },
+        "noPrehydro/Hadrons": hadron_branches,
+        "withPrehydro/Hadrons": hadron_branches,
+        "noPrehydro/Jets": jet_branches,
+        "withPrehydro/Jets": jet_branches,
         "Pairs": {"pairId", "sourceIndex", "chunkId", "eventWeight"},
     }
     result: dict[str, int] = {}
@@ -548,6 +515,8 @@ def validate_root(path: Path, expected_pairs: int) -> dict[str, int]:
             "pairCount",
             "noPrehydroHadronCount",
             "withPrehydroHadronCount",
+            "noPrehydroJet2Count",
+            "withPrehydroJet2Count",
             "noPrehydroJet4Count",
             "withPrehydroJet4Count",
             "noPrehydroJet8Count",
@@ -827,7 +796,7 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
         "rootTotals": root_totals,
         "jetConfiguration": {
             "algorithm": "anti-kt E-scheme",
-            "radii": [0.4, 0.8],
+            "radii": [0.2, 0.4, 0.8],
             "rawJetPtMinGeV": args.raw_jet_pt_min,
             "jetAbsEtaMax": args.jet_abs_eta_max,
             "constituentPtMinGeV": 0.0,

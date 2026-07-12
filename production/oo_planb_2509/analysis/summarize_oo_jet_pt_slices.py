@@ -13,6 +13,7 @@ import numpy as np
 
 
 VARIANTS = ("noPrehydro", "withPrehydro")
+RADII = ("0.2", "0.4", "0.8")
 VARIANT_LABELS = {
     "noPrehydro": "No pre-hydro",
     "withPrehydro": "Plan B pre-hydro",
@@ -72,7 +73,7 @@ def validate_slices(
     checks.append("slice boundaries form one exclusive-lower/inclusive-upper partition")
 
     closure: dict[str, dict[str, float]] = {}
-    for radius in ("0.4", "0.8"):
+    for radius in RADII:
         closure[radius] = {}
         for variant in VARIANTS:
             sliced = sum(
@@ -86,7 +87,9 @@ def validate_slices(
             if not math.isclose(sliced, expected, rel_tol=1.0e-12, abs_tol=1.0e-14):
                 raise ValueError(f"R={radius} {variant} slices do not close to inclusive")
             closure[radius][variant] = difference
-    checks.append("all four sliced cross-section sums reproduce the inclusive result")
+    checks.append(
+        "all four pT slices reproduce the inclusive result for every radius and variant"
+    )
 
     return {
         "status": "PASS",
@@ -116,7 +119,7 @@ def write_summary(
             ]
         )
         for item in slices:
-            for radius in ("0.4", "0.8"):
+            for radius in RADII:
                 ratio = item["radii"][radius]["integratedPreOverNoRatio"]
                 ratio_error = item["radii"][radius]["integratedPreOverNoRatioError"]
                 for variant in VARIANTS:
@@ -149,12 +152,12 @@ def plot_summary(out_path: Path, slices: list[dict[str, object]]) -> None:
     x = np.arange(len(slices), dtype=float)
     figure, axes = plt.subplots(
         2,
-        2,
-        figsize=(11.5, 7.6),
+        len(RADII),
+        figsize=(16.2, 7.6),
         sharex="col",
         gridspec_kw={"height_ratios": [2.25, 1.0], "hspace": 0.08, "wspace": 0.24},
     )
-    for column, radius in enumerate(("0.4", "0.8")):
+    for column, radius in enumerate(RADII):
         upper = axes[0, column]
         lower = axes[1, column]
         for offset, variant in zip((-0.08, 0.08), VARIANTS):
@@ -196,7 +199,7 @@ def plot_summary(out_path: Path, slices: list[dict[str, object]]) -> None:
         upper.set_title(rf"anti-$k_T$ $R={radius}$", fontsize=12)
         upper.grid(alpha=0.22)
         lower.grid(alpha=0.22)
-        lower.set_ylim(0.92, 1.02)
+        lower.set_ylim(0.90, 1.03)
         lower.set_xticks(x, labels)
         lower.set_xlabel(r"corrected jet $p_T$ interval [GeV]")
         lower.set_ylabel("Plan B / no pre-hydro")

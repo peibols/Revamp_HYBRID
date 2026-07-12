@@ -16,6 +16,7 @@ import uproot
 
 
 VARIANTS = ("noPrehydro", "withPrehydro")
+RADIUS_DIGITS = (2, 4, 8)
 VARIANT_LABELS = {
     "noPrehydro": "No pre-hydro",
     "withPrehydro": "Plan B pre-hydro",
@@ -75,7 +76,16 @@ class MeanResult:
 def variable_specs(
     radius_digit: int, pt_min: float, pt_max: float | None = None
 ) -> list[VariableSpec]:
-    if radius_digit == 4:
+    if radius_digit == 2:
+        mass_edges = np.array(
+            [-16, -8, -4, -2, 0, 1, 2, 3, 4, 6, 8, 12, 20, 32, 64, 128],
+            dtype=float,
+        )
+        multiplicity_edges = np.arange(0.5, 61.5, 2.0)
+        rg_edges = np.linspace(0.0, 0.25, 21)
+        girth_edges = np.linspace(0.0, 0.16, 21)
+        max_kt_edges = np.geomspace(0.0025, 100.0, 20)
+    elif radius_digit == 4:
         mass_edges = np.array(
             [-32, -16, -8, -4, -2, 0, 2, 4, 6, 8, 10, 14, 20, 32, 64, 128, 256],
             dtype=float,
@@ -558,7 +568,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
     all_suffixes = {
         spec.branch_suffix
-        for radius in (4, 8)
+        for radius in RADIUS_DIGITS
         for spec in variable_specs(radius, args.pt_min, args.pt_max)
     }
     all_suffixes.add("SoftDropValid")
@@ -579,7 +589,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
         for variant in VARIANTS:
             branch_names = ["pairId", "eventWeight", "sigmaGen"]
-            for radius_digit in (4, 8):
+            for radius_digit in RADIUS_DIGITS:
                 branch_names.extend(f"jet{radius_digit}{suffix}" for suffix in sorted(all_suffixes))
             arrays = root_file[f"{variant}/Jets"].arrays(branch_names, library="ak")
             if not np.array_equal(ak.to_numpy(arrays.pairId), pair_ids):
@@ -621,7 +631,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "radii": {},
     }
 
-    for radius_digit in (4, 8):
+    for radius_digit in RADIUS_DIGITS:
         specs = variable_specs(radius_digit, args.pt_min, args.pt_max)
         selections: dict[str, ak.Array] = {}
         selected_counts: dict[str, np.ndarray] = {}

@@ -77,7 +77,7 @@ sign for raw labels 2 and 3.
 ## Jet reconstruction
 
 Jets are reconstructed independently in the two event variants with FastJet
-anti-kT, E-scheme recombination, for `R=0.4` and `R=0.8`.
+anti-kT, E-scheme recombination, for `R=0.2`, `R=0.4`, and `R=0.8`.
 
 - There is no constituent pT or eta cut. Zero-pT records and raw label `-2`
   markers are excluded.
@@ -97,7 +97,7 @@ four-momentum-subtracted values. A negative `jet4mass` means that subtraction
 made the corrected four-vector spacelike; it is deliberately preserved rather
 than clipped. `jet4RawPt`, `jet4RawEta`, `jet4RawPhi`, and `jet4RawMass`
 retain the positive-constituent jet before subtraction. The same convention
-applies to every `jet8*` branch.
+applies to every `jet2*` and `jet8*` branch.
 
 The nonlinear substructure observables are calculated from normal plus
 positive-wake constituents. Negative contributions cannot be inserted into a
@@ -110,7 +110,7 @@ the requested `G` is the positive-constituent girth.
 
 ## Jet branches
 
-Replace `X` by `4` or `8` for R=0.4 or R=0.8:
+Replace `X` by `2`, `4`, or `8` for R=0.2, R=0.4, or R=0.8:
 
 | Branch | Definition |
 | --- | --- |
@@ -165,8 +165,8 @@ For the 50,000-event v2 campaign,
 `analysis/run_oo_v2_final_analysis.sh` guards this conversion on the strict
 completion marker, runs the complete-prefix hadron RAA analysis, creates the
 manifest-validated ROOT file, produces the inclusive and four-slice jet
-comparisons, and requires exact 50,000-pair acceptance and zero slice-closure
-residual before writing its own completion marker.
+comparisons, and requires exact 50,000-pair acceptance and slice closure within
+`1e-12` mb before writing its own completion marker.
 
 Run the parser tests with:
 

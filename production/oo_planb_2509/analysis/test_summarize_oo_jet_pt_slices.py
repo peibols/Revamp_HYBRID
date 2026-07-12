@@ -16,7 +16,11 @@ sys.modules[SPEC.name] = summary
 SPEC.loader.exec_module(summary)
 
 
-def metadata(low: float, high: float | None, values: tuple[float, float, float, float]):
+def metadata(
+    low: float,
+    high: float | None,
+    values: tuple[float, float, float, float, float, float],
+):
     common = {
         "inputRoot": "/sample.root",
         "inputBytes": 123,
@@ -33,16 +37,22 @@ def metadata(low: float, high: float | None, values: tuple[float, float, float, 
         "ptMaxGeV": high,
     }
     common["radii"] = {
-        "0.4": {
+        "0.2": {
             "variants": {
                 "noPrehydro": {"integratedJetCrossSectionMb": values[0]},
                 "withPrehydro": {"integratedJetCrossSectionMb": values[1]},
             }
         },
-        "0.8": {
+        "0.4": {
             "variants": {
                 "noPrehydro": {"integratedJetCrossSectionMb": values[2]},
                 "withPrehydro": {"integratedJetCrossSectionMb": values[3]},
+            }
+        },
+        "0.8": {
+            "variants": {
+                "noPrehydro": {"integratedJetCrossSectionMb": values[4]},
+                "withPrehydro": {"integratedJetCrossSectionMb": values[5]},
             }
         },
     }
@@ -51,16 +61,17 @@ def metadata(low: float, high: float | None, values: tuple[float, float, float, 
 
 class PtSliceSummaryTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.inclusive = metadata(30.0, None, (10.0, 9.0, 20.0, 18.0))
+        self.inclusive = metadata(30.0, None, (5.0, 4.5, 10.0, 9.0, 20.0, 18.0))
         self.slices = [
-            metadata(30.0, 50.0, (7.0, 6.0, 14.0, 12.0)),
-            metadata(50.0, 80.0, (2.0, 2.0, 4.0, 4.0)),
-            metadata(80.0, None, (1.0, 1.0, 2.0, 2.0)),
+            metadata(30.0, 50.0, (3.5, 3.0, 7.0, 6.0, 14.0, 12.0)),
+            metadata(50.0, 80.0, (1.0, 1.0, 2.0, 2.0, 4.0, 4.0)),
+            metadata(80.0, None, (0.5, 0.5, 1.0, 1.0, 2.0, 2.0)),
         ]
 
     def test_valid_partition_closes_to_inclusive(self) -> None:
         result = summary.validate_slices(self.slices, self.inclusive)
         self.assertEqual(result["status"], "PASS")
+        self.assertEqual(set(result["crossSectionClosureDifferenceMb"]), set(summary.RADII))
         self.assertEqual(summary.range_label(self.slices[-1]), ">80")
 
     def test_boundary_gap_is_rejected(self) -> None:
