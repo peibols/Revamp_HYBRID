@@ -70,8 +70,10 @@ class ChunkFailureToleranceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             eos = root / "mock_eos/eos/test/campaign"
-            payloads = eos / "payloads"
+            payloads = root / "mock_eos/eos/test/shared/payloads"
+            runtime_payloads = root / "mock_eos/eos/test/runtime/payloads"
             (payloads / "hydro/C0-5").mkdir(parents=True)
+            runtime_payloads.mkdir(parents=True)
             fake_bin = root / "fake_bin"
             fake_bin.mkdir()
             xrdcp = fake_bin / "xrdcp"
@@ -145,7 +147,9 @@ out.mkdir(parents=True)
                 f"7\t900007\t1\t12\t345\t2\tC0-5_event_00345\t"
                 f"hydro/C0-5/event_00345.tar.gz\t{digest}\n"
             )
-            with tarfile.open(payloads / "mmli_runtime_alma9.tar.gz", "w:gz") as archive:
+            with tarfile.open(
+                runtime_payloads / "mmli_runtime_alma9.tar.gz", "w:gz"
+            ) as archive:
                 archive.add(runtime_root / "runtime", arcname="runtime")
                 archive.add(runtime_root / "bin", arcname="bin")
 
@@ -157,6 +161,8 @@ out.mkdir(parents=True)
                     "PATH": f"{fake_bin}:{env['PATH']}",
                     "MOCK_EOS": str(root / "mock_eos"),
                     "EOS_BASE": "/eos/test/campaign",
+                    "PAYLOAD_EOS_BASE": "/eos/test/shared",
+                    "RUNTIME_PAYLOAD_EOS_BASE": "/eos/test/runtime",
                     "KIND": "aa",
                     "SEED_OFFSET": "900000",
                     "EVENTS": "1",

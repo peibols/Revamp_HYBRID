@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--work", type=Path, default=DEFAULT_WORK)
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
     parser.add_argument("--campaign", default=DEFAULT_CAMPAIGN)
+    parser.add_argument("--task-id-start", type=int, default=0)
     parser.add_argument("--target", type=int, default=50_000)
     parser.add_argument("--block-size", type=int, default=5_000)
     parser.add_argument("--sleep-s", type=int, default=900)
@@ -46,8 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--retry-timeout-s", type=int, default=72_000)
     parser.add_argument("--pp-local-eos", type=Path, default=DEFAULT_PP)
     args = parser.parse_args()
-    if args.target <= 0 or args.block_size <= 0:
-        parser.error("--target and --block-size must be positive")
+    if args.task_id_start < 0 or args.target <= 0 or args.block_size <= 0:
+        parser.error("--task-id-start must be nonnegative; target/block size positive")
     if args.target % args.block_size:
         parser.error("--target must be divisible by --block-size")
     if (
@@ -262,7 +263,14 @@ def completed_milestones(path: Path) -> set[int]:
         }
 
 
-def append_milestone(path: Path, task_limit: int, analysis_dir: Path) -> None:
+def append_milestone(
+    path: Path,
+    task_limit: int,
+    analysis_dir: Path,
+    *,
+    task_start: int,
+    target: int,
+) -> None:
     exists = path.exists()
     with path.open("a", newline="") as handle:
         writer = csv.DictWriter(
@@ -277,14 +285,18 @@ def append_milestone(path: Path, task_limit: int, analysis_dir: Path) -> None:
             {
                 "date": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "task_limit": task_limit,
-                "percent": task_limit * 100 // 50_000,
+                "percent": (task_limit - task_start) * 100 // target,
                 "analysis_dir": analysis_dir,
             }
         )
 
 
 def run_analysis(args: argparse.Namespace, local_eos: Path, task_limit: int) -> Path:
-    out_dir = args.work / "analysis_v2_milestones" / f"tasks_{task_limit:05d}"
+    out_dir = (
+        args.work
+        / "analysis_v2_milestones"
+        / f"tasks_{args.task_id_start:05d}_{task_limit:05d}"
+    )
     analyzer = (
         args.source
         / "production/oo_planb_2509/analysis/analyze_oo_prehydro_pair.py"
@@ -305,6 +317,8 @@ def run_analysis(args: argparse.Namespace, local_eos: Path, task_limit: int) -> 
             "1",
             "--aa-task-manifest",
             str(manifest),
+            "--aa-task-start",
+            str(args.task_id_start),
             "--aa-task-limit",
             str(task_limit),
             "--require-complete-aa-prefix",
@@ -467,7 +481,9 @@ def supervise_once(args: argparse.Namespace) -> bool:
             f"date={datetime.now().astimezone().isoformat(timespec='seconds')}\n"
         )
     sync_eos(args, local_eos)
-    ready = ready_ids(local_eos) & set(range(args.target))
+    task_stop = args.task_id_start + args.target
+    expected_ids = set(range(args.task_id_start, task_stop))
+    ready = ready_ids(local_eos) & expected_ids
     log(
         f"Condor states={dict(sorted(states.items()))}; "
         f"active_AA={len(active_aa)} ready={len(ready)}/{args.target}"
@@ -475,32 +491,51 @@ def supervise_once(args: argparse.Namespace) -> bool:
     active_aa -= remove_terminal_holds(args, held_aa, ready)
 
     done = completed_milestones(state_path)
-    for task_limit in range(args.block_size, args.target + 1, args.block_size):
+    for completed_count in range(
+        args.block_size, args.target + 1, args.block_size
+    ):
+        task_limit = args.task_id_start + completed_count
         if task_limit in done:
             continue
-        if not set(range(task_limit)).issubset(ready):
+        if not set(range(args.task_id_start, task_limit)).issubset(ready):
             break
         try:
             out_dir = run_analysis(args, local_eos, task_limit)
         except subprocess.CalledProcessError as error:
             log(f"strict prefix analysis failed for {task_limit}: {error}")
             break
-        append_milestone(state_path, task_limit, out_dir)
-        log(f"strict milestone complete: {task_limit}/{args.target}")
+        append_milestone(
+            state_path,
+            task_limit,
+            out_dir,
+            task_start=args.task_id_start,
+            target=args.target,
+        )
+        log(f"strict milestone complete: {completed_count}/{args.target}")
 
     if active_aa or not seen_path.exists():
         return False
 
-    missing = set(range(args.target)) - ready
+    missing = expected_ids - ready
     if missing:
         submit_retry(args, missing)
         return False
 
-    final_dir = args.work / "analysis_v2_milestones" / f"tasks_{args.target:05d}"
+    final_dir = (
+        args.work
+        / "analysis_v2_milestones"
+        / f"tasks_{args.task_id_start:05d}_{task_stop:05d}"
+    )
     try:
-        if args.target not in completed_milestones(state_path):
-            final_dir = run_analysis(args, local_eos, args.target)
-            append_milestone(state_path, args.target, final_dir)
+        if task_stop not in completed_milestones(state_path):
+            final_dir = run_analysis(args, local_eos, task_stop)
+            append_milestone(
+                state_path,
+                task_stop,
+                final_dir,
+                task_start=args.task_id_start,
+                target=args.target,
+            )
     except subprocess.CalledProcessError:
         malformed = rejected_ids(final_dir)
         if not malformed:
@@ -510,6 +545,8 @@ def supervise_once(args: argparse.Namespace) -> bool:
 
     (args.work / "v2_50k_strict_complete.txt").write_text(
         f"date={datetime.now().astimezone().isoformat(timespec='seconds')}\n"
+        f"task_id_start={args.task_id_start}\n"
+        f"task_id_stop={task_stop}\n"
         f"accepted_pairs={args.target}\nanalysis_dir={final_dir}\n"
     )
     log("v2 strict target complete")

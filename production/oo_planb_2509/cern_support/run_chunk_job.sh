@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 EOS_BASE="${EOS_BASE:?EOS_BASE is required}"
+PAYLOAD_EOS_BASE="${PAYLOAD_EOS_BASE:-$EOS_BASE}"
+RUNTIME_PAYLOAD_EOS_BASE="${RUNTIME_PAYLOAD_EOS_BASE:-$PAYLOAD_EOS_BASE}"
 KIND="${KIND:?KIND is required: aa or pp}"
 SEED_OFFSET="${SEED_OFFSET:?SEED_OFFSET is required}"
 EVENTS="${EVENTS:?EVENTS is required}"
@@ -47,7 +49,12 @@ if [[ "${RUN_PREHYDRO_PAIR}" == "1" || "${RUN_PREHYDRO_PAIR}" == "true" || "${RU
 fi
 WORK="$PWD/work"
 INITIAL_DIR="$PWD"
-fetch() { xrdcp -f "root://eosuser.cern.ch/${EOS_BASE}/$1" "$2"; }
+fetch_from() {
+  local base="$1"
+  local key="$2"
+  local destination="$3"
+  xrdcp -f "root://eosuser.cern.ch/${base}/$key" "$destination"
+}
 put() { xrdcp -f "$1" "root://eosuser.cern.ch/${EOS_BASE}/$2"; }
 finalize() {
   rc=$?; set +e
@@ -94,8 +101,12 @@ finalize() {
 trap finalize EXIT
 mkdir -p "$WORK"
 cd "$WORK"
-fetch payloads/pythia8315_alma9_install.tar.gz pythia8315_alma9_install.tar.gz
-fetch payloads/mmli_runtime_alma9.tar.gz mmli_runtime_alma9.tar.gz
+fetch_from "$PAYLOAD_EOS_BASE" \
+  payloads/pythia8315_alma9_install.tar.gz \
+  pythia8315_alma9_install.tar.gz
+fetch_from "$RUNTIME_PAYLOAD_EOS_BASE" \
+  payloads/mmli_runtime_alma9.tar.gz \
+  mmli_runtime_alma9.tar.gz
 tar -xzf pythia8315_alma9_install.tar.gz
 tar -xzf mmli_runtime_alma9.tar.gz
 if [[ "${KIND}" == "aa" && -n "${AA_TASK_MANIFEST}" ]]; then
@@ -129,7 +140,9 @@ PY
     echo "Invalid hydro assignment for task ${TASK_ID}" >&2
     exit 1
   fi
-  fetch "payloads/${HYDRO_PAYLOAD_KEY}" assigned_hydro.tar.gz
+  fetch_from "$PAYLOAD_EOS_BASE" \
+    "payloads/${HYDRO_PAYLOAD_KEY}" \
+    assigned_hydro.tar.gz
   echo "${HYDRO_PAYLOAD_SHA256}  assigned_hydro.tar.gz" | sha256sum -c -
   mkdir -p runtime/staged_hydro
   python3 - assigned_hydro.tar.gz runtime/staged_hydro "${HYDRO_DIR}" <<'PY'

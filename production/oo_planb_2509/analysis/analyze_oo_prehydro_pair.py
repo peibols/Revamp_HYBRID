@@ -324,8 +324,10 @@ def load_aa_task_manifest(path: Path) -> dict[int, dict[str, str]]:
         if task_id in assignments:
             raise ValueError(f"{path}: duplicate task_id {task_id}")
         assignments[task_id] = row
-    if set(assignments) != set(range(len(assignments))):
-        raise ValueError(f"{path}: task IDs must be contiguous from zero")
+    task_min = min(assignments)
+    task_stop = task_min + len(assignments)
+    if set(assignments) != set(range(task_min, task_stop)):
+        raise ValueError(f"{path}: task IDs must form one contiguous range")
     return assignments
 
 
@@ -516,9 +518,14 @@ def main() -> int:
         help="v2 task manifest used to validate task/hydro/seed provenance",
     )
     parser.add_argument(
+        "--aa-task-start",
+        type=int,
+        help="first task ID in the selected half-open manifest range",
+    )
+    parser.add_argument(
         "--aa-task-limit",
         type=int,
-        help="analyze the manifest prefix [0, limit); use 5000,10000,... for v2 milestones",
+        help="exclusive task ID at the end of the selected manifest range",
     )
     parser.add_argument(
         "--require-complete-aa-prefix",
@@ -539,17 +546,30 @@ def main() -> int:
         if args.aa_task_manifest is not None
         else None
     )
-    if args.aa_task_limit is not None and task_assignments is None:
-        parser.error("--aa-task-limit requires --aa-task-manifest")
+    if (
+        args.aa_task_start is not None or args.aa_task_limit is not None
+    ) and task_assignments is None:
+        parser.error("--aa-task-start/--aa-task-limit require --aa-task-manifest")
     if args.require_complete_aa_prefix and task_assignments is None:
         parser.error("--require-complete-aa-prefix requires --aa-task-manifest")
+    task_start = (
+        args.aa_task_start
+        if args.aa_task_start is not None
+        else min(task_assignments) if task_assignments is not None else None
+    )
     task_limit = (
         args.aa_task_limit
         if args.aa_task_limit is not None
-        else len(task_assignments) if task_assignments is not None else None
+        else max(task_assignments) + 1 if task_assignments is not None else None
     )
-    if task_limit is not None and not 0 < task_limit <= len(task_assignments or {}):
-        parser.error("--aa-task-limit must be within the task manifest")
+    if task_start is not None and task_limit is not None:
+        selected_task_ids = set(range(task_start, task_limit))
+        if task_start < 0 or task_limit <= task_start:
+            parser.error("selected AA task range must be nonempty and nonnegative")
+        if not selected_task_ids.issubset(task_assignments or {}):
+            parser.error("selected AA task range must be within the task manifest")
+    else:
+        selected_task_ids = set()
     aa_local_eos_sources = distinct_aa_sources(
         args.local_eos, args.additional_aa_local_eos
     )
@@ -578,7 +598,7 @@ def main() -> int:
         source_skipped = 0
         source_missing = 0
         for chunk in successful_chunks(aa_local_eos, "aa"):
-            if task_limit is not None and chunk >= task_limit:
+            if task_limit is not None and not task_start <= chunk < task_limit:
                 continue
             tar_path = aa_local_eos / "outputs" / "aa" / f"chunk_{chunk}.tar.gz"
             if not tar_path.is_file():
@@ -680,7 +700,7 @@ def main() -> int:
     if task_assignments is not None:
         expected_hydro_counts = Counter(
             int(task_assignments[task_id]["hydro_slot"])
-            for task_id in range(task_limit or 0)
+            for task_id in selected_task_ids
         )
         with (args.out_dir / "aa_hydro_counts.tsv").open("w", newline="") as handle:
             writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
@@ -702,7 +722,7 @@ def main() -> int:
                         accepted_hydro_counts[slot],
                     ]
                 )
-        missing_prefix = set(range(task_limit or 0)) - accepted_task_ids
+        missing_prefix = selected_task_ids - accepted_task_ids
         if args.require_complete_aa_prefix and missing_prefix:
             preview = ",".join(str(task_id) for task_id in sorted(missing_prefix)[:20])
             raise RuntimeError(

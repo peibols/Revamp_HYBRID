@@ -116,10 +116,20 @@ RAA plots use a logarithmic pT axis and the fixed edges
 two variants to stay near 25%; the observed range was 18.7--24.9%. The edges
 remain fixed for later milestones rather than being retuned on each snapshot.
 
-A continuation campaign is merged without renaming its overlapping chunk IDs
-by repeating `--additional-aa-local-eos` on the analyzer. Each AA root is
-validated independently for strict paired completeness, then all accepted runs
-enter one `PythiaParallel` aggregate and one jackknife calculation.
+A V2 continuation uses globally unique task IDs and hard seeds. Generate its
+manifest with `cern_support/extend_oo_v2_task_manifest.py`; for the second 50k,
+the ranges are task IDs `50000--99999`, hard seeds `950000--999999`, and
+milestone blocks `11--20`. The hydro assignment is repeated exactly, preserving
+the first campaign's Ncoll-weighted exposure to all 500 hydro events. The
+analyzer and supervisor accept shifted half-open task ranges through
+`--aa-task-start` and `--aa-task-limit`.
+
+The wrapper separates physics output storage from immutable input storage.
+`EOS_BASE` receives the new status and output archives, `PAYLOAD_EOS_BASE`
+provides the pinned PYTHIA 8.315 and hydro archives, and
+`RUNTIME_PAYLOAD_EOS_BASE` can provide a continuation-specific runtime with its
+embedded manifest. This avoids copying the roughly 1 GB hydro payload set for
+each continuation campaign.
 
 For monitoring more than one live AA root, repeat
 `--sync-additional-aa EOS_BASE LOCAL_EOS` together with the matching

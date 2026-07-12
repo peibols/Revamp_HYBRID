@@ -92,6 +92,51 @@ class PlotBinningTest(unittest.TestCase):
             analysis.logarithmic_bin_center(0.0, 1.0)
 
 
+class ShiftedManifestTest(unittest.TestCase):
+    @staticmethod
+    def write_manifest(path: Path, task_ids: list[int]) -> None:
+        with path.open("w", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=[
+                    "task_id",
+                    "hard_seed",
+                    "hydro_slot",
+                    "hydro_event_id",
+                    "hydro_ncoll",
+                    "hydro_payload_sha256",
+                ],
+                delimiter="\t",
+                lineterminator="\n",
+            )
+            writer.writeheader()
+            for task_id in task_ids:
+                writer.writerow(
+                    {
+                        "task_id": task_id,
+                        "hard_seed": 900_000 + task_id,
+                        "hydro_slot": 0,
+                        "hydro_event_id": 1,
+                        "hydro_ncoll": 2,
+                        "hydro_payload_sha256": "a" * 64,
+                    }
+                )
+
+    def test_accepts_shifted_contiguous_task_range(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.tsv"
+            self.write_manifest(path, [50_000, 50_001])
+            assignments = analysis.load_aa_task_manifest(path)
+            self.assertEqual(set(assignments), {50_000, 50_001})
+
+    def test_rejects_shifted_manifest_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.tsv"
+            self.write_manifest(path, [50_000, 50_002])
+            with self.assertRaisesRegex(ValueError, "one contiguous range"):
+                analysis.load_aa_task_manifest(path)
+
+
 class MultipleAaSourceTest(unittest.TestCase):
     event = b"""# event 0
 weight 1 cross 2

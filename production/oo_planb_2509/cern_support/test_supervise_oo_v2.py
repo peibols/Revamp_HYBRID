@@ -139,6 +139,33 @@ queue chunk_id from aa_chunk_ids.txt
         self.assertEqual(command[:3], ["cernctl", "run", "bash"])
         self.assertIn("condor_rm", command[-1])
 
+    def test_shifted_analysis_passes_global_task_range(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args = type(
+                "Args",
+                (),
+                {
+                    "work": root / "work",
+                    "source": root / "source",
+                    "pp_local_eos": root / "pp",
+                    "task_id_start": 50_000,
+                },
+            )()
+            with patch.object(MODULE.subprocess, "run") as run:
+                output = MODULE.run_analysis(args, root / "eos", 55_000)
+            command = run.call_args.args[0]
+            self.assertEqual(
+                output,
+                root / "work/analysis_v2_milestones/tasks_50000_55000",
+            )
+            self.assertEqual(
+                command[command.index("--aa-task-start") + 1], "50000"
+            )
+            self.assertEqual(
+                command[command.index("--aa-task-limit") + 1], "55000"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
