@@ -324,8 +324,9 @@ executable = run_chunk_job.sh
 arguments = \$(chunk_id)
 should_transfer_files = YES
 when_to_transfer_output = ON_EXIT
-output = log/oo_no_moliere_aa.\$(ClusterId).\$(ProcId).out
-error = log/oo_no_moliere_aa.\$(ClusterId).\$(ProcId).err
+# Physics archives and status records are uploaded to EOS by the wrapper.
+output = /dev/null
+error = /dev/null
 log = log/oo_no_moliere_aa.\$(ClusterId).log
 environment = "KIND=aa EOS_BASE=${EOS_BASE} SEED_OFFSET=${AA_SEED_OFFSET} EVENTS=${AA_EVENTS} RUN_NAME=${RUN_NAME} PTHAT_MIN=${PTHAT_MIN} PTHAT_MAX=${PTHAT_MAX} PDF_MODE=${AA_PDF_MODE} LHAPDF_SET=${AA_LHAPDF_SET} LHAPDF_CVMFS_VIEW=${LHAPDF_CVMFS_VIEW} AA_CENTRALITY_INDEX=${AA_CENTRALITY_INDEX} AA_TASK_MANIFEST=${AA_TASK_MANIFEST_RUNTIME} RUN_PREHYDRO_PAIR=${RUN_PREHYDRO_PAIR} PREHYDRO_TAU_MIN=${PREHYDRO_TAU_MIN} PREHYDRO_TAU_GRID=${PREHYDRO_TAU_GRID} PREHYDRO_ETA_OVER_S=${PREHYDRO_ETA_OVER_S} PREHYDRO_EOS_FACTOR=${PREHYDRO_EOS_FACTOR} PREHYDRO_ATTRACTOR_TABLE=${PREHYDRO_ATTRACTOR_TABLE_RUNTIME} PREHYDRO_VISCOUS_ANCHOR=${PREHYDRO_VISCOUS_ANCHOR} STORE_PREHYDRO_TABLE=${STORE_PREHYDRO_TABLE} TOLERATE_CHUNK_FAILURE=${TOLERATE_CHUNK_FAILURES} TIMEOUT_S=${TIMEOUT_S}"
 +JobFlavour = "${JOB_FLAVOUR}"
@@ -340,8 +341,9 @@ executable = run_chunk_job.sh
 arguments = \$(chunk_id)
 should_transfer_files = YES
 when_to_transfer_output = ON_EXIT
-output = log/oo_no_moliere_pp.\$(ClusterId).\$(ProcId).out
-error = log/oo_no_moliere_pp.\$(ClusterId).\$(ProcId).err
+# Physics archives and status records are uploaded to EOS by the wrapper.
+output = /dev/null
+error = /dev/null
 log = log/oo_no_moliere_pp.\$(ClusterId).log
 environment = "KIND=pp EOS_BASE=${EOS_BASE} SEED_OFFSET=${PP_SEED_OFFSET} EVENTS=${PP_EVENTS} RUN_NAME=${RUN_NAME} PTHAT_MIN=${PTHAT_MIN} PTHAT_MAX=${PTHAT_MAX} PDF_MODE=${PP_PDF_MODE} LHAPDF_SET=${PP_LHAPDF_SET} LHAPDF_CVMFS_VIEW=${LHAPDF_CVMFS_VIEW} RUN_PREHYDRO_PAIR=false TOLERATE_CHUNK_FAILURE=${TOLERATE_CHUNK_FAILURES} TIMEOUT_S=${TIMEOUT_S}"
 +JobFlavour = "${JOB_FLAVOUR}"

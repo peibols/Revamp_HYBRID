@@ -91,6 +91,23 @@ queue chunk_id from aa_chunk_ids.txt
         batches = MODULE.batched_ids({8, 1, 5, 2, 9}, 2)
         self.assertEqual(batches, [[1, 2], [5, 8], [9]])
 
+    def test_retry_submit_accepts_discarded_stdio(self) -> None:
+        template = """output = /dev/null
+error = /dev/null
+log = log/aa.$(ClusterId).log
+queue chunk_id from aa_chunk_ids.txt
+"""
+        rendered = MODULE.render_retry_submit(
+            template + 'environment = "TIMEOUT_S=39600"\n',
+            "retry_ids.txt",
+            "stamp",
+            retry_timeout_s=72_000,
+        )
+        self.assertIn("output = /dev/null", rendered)
+        self.assertIn("error = /dev/null", rendered)
+        self.assertIn("log = log/v2_retry_stamp_aa.$(ClusterId).log", rendered)
+        self.assertIn("queue chunk_id from retry_ids.txt", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

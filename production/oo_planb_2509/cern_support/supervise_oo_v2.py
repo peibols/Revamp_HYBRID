@@ -282,11 +282,26 @@ def render_retry_submit(
     if not queue.search(template):
         raise ValueError("AA submit template has no chunk-id queue statement")
     rendered = queue.sub(f"queue chunk_id from {id_file}", template)
-    for field in ("output", "error", "log"):
+    for field in ("output", "error"):
         pattern = re.compile(rf"^({field}\s*=\s*log/)([^\n]+)$", re.MULTILINE)
-        if not pattern.search(rendered):
-            raise ValueError(f"AA submit template has no {field} path")
-        rendered = pattern.sub(rf"\g<1>v2_retry_{tag}_\2", rendered, count=1)
+        if pattern.search(rendered):
+            rendered = pattern.sub(
+                rf"\g<1>v2_retry_{tag}_\2", rendered, count=1
+            )
+            continue
+        null_pattern = re.compile(
+            rf"^{field}\s*=\s*/dev/null\s*$", re.MULTILINE
+        )
+        if not null_pattern.search(rendered):
+            raise ValueError(
+                f"AA submit template has no supported {field} path"
+            )
+    log_pattern = re.compile(r"^(log\s*=\s*log/)([^\n]+)$", re.MULTILINE)
+    if not log_pattern.search(rendered):
+        raise ValueError("AA submit template has no log path")
+    rendered = log_pattern.sub(
+        rf"\g<1>v2_retry_{tag}_\2", rendered, count=1
+    )
     if retry_timeout_s is not None:
         timeout_pattern = re.compile(r"\bTIMEOUT_S=\d+\b")
         if len(timeout_pattern.findall(rendered)) != 1:
