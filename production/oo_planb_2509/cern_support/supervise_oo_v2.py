@@ -168,7 +168,9 @@ def ready_ids(local_eos: Path) -> set[int]:
     return successful_ids(local_eos) & output_ids(local_eos)
 
 
-def query_jobs(args: argparse.Namespace) -> tuple[Counter[int], set[int]]:
+def query_jobs(
+    args: argparse.Namespace,
+) -> tuple[Counter[int], set[int], set[int]]:
     constraint = f'regexp("{args.campaign}", Environment)'
     command = (
         f"condor_q -name {args.schedd} -constraint '{constraint}' "
@@ -182,15 +184,54 @@ def query_jobs(args: argparse.Namespace) -> tuple[Counter[int], set[int]]:
     )
     states: Counter[int] = Counter()
     active_aa: set[int] = set()
+    held_aa: set[int] = set()
     for raw in result.stdout.splitlines():
         fields = raw.split(maxsplit=1)
         if len(fields) != 2:
             continue
         status = int(fields[0])
         states[status] += 1
-        if fields[1].isdigit():
-            active_aa.add(int(fields[1]))
-    return states, active_aa
+        if not fields[1].isdigit():
+            continue
+        task_id = int(fields[1])
+        if status in {1, 2, 5}:
+            active_aa.add(task_id)
+        if status == 5:
+            held_aa.add(task_id)
+    return states, active_aa, held_aa
+
+
+def remove_strict_ready_holds(
+    args: argparse.Namespace,
+    held_aa: set[int],
+    ready: set[int],
+) -> bool:
+    if not held_aa:
+        return False
+    unresolved = held_aa - ready
+    if unresolved:
+        log(
+            f"retaining {len(held_aa)} held task(s): "
+            f"{len(unresolved)} lack strict EOS pairs"
+        )
+        return False
+    if args.dry_run:
+        log(f"dry run: would remove {len(held_aa)} strict-ready held task(s)")
+        return False
+    constraint = (
+        f'regexp("{args.campaign}", Environment) && JobStatus == 5'
+    )
+    command = (
+        f"condor_rm -name {args.schedd} -constraint '{constraint}'"
+    )
+    subprocess.run(
+        [args.cernctl, "run", "bash", "-lc", command],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    log(f"removed {len(held_aa)} held task(s) with strict EOS pairs")
+    return True
 
 
 def sync_eos(args: argparse.Namespace, local_eos: Path) -> None:
@@ -401,7 +442,7 @@ def supervise_once(args: argparse.Namespace) -> bool:
     local_eos = args.work / "eos_snapshot"
     seen_path = args.work / "v2_aa_queue_seen.txt"
     state_path = args.work / "v2_milestones.tsv"
-    states, active_aa = query_jobs(args)
+    states, active_aa, held_aa = query_jobs(args)
     if active_aa and not seen_path.exists():
         seen_path.write_text(
             f"date={datetime.now().astimezone().isoformat(timespec='seconds')}\n"
@@ -412,6 +453,8 @@ def supervise_once(args: argparse.Namespace) -> bool:
         f"Condor states={dict(sorted(states.items()))}; "
         f"active_AA={len(active_aa)} ready={len(ready)}/{args.target}"
     )
+    if remove_strict_ready_holds(args, held_aa, ready):
+        active_aa -= held_aa
 
     done = completed_milestones(state_path)
     for task_limit in range(args.block_size, args.target + 1, args.block_size):

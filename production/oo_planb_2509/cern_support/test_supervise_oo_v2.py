@@ -108,6 +108,10 @@ queue chunk_id from aa_chunk_ids.txt
         self.assertIn("log = log/v2_retry_stamp_aa.$(ClusterId).log", rendered)
         self.assertIn("queue chunk_id from retry_ids.txt", rendered)
 
+    def test_dry_run_retains_strict_ready_holds(self) -> None:
+        args = type("Args", (), {"dry_run": True})()
+        self.assertFalse(MODULE.remove_strict_ready_holds(args, {3, 7}, {3, 7}))
+
 
 if __name__ == "__main__":
     unittest.main()
