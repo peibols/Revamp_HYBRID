@@ -119,6 +119,12 @@ class ChargeResponseTest(unittest.TestCase):
             self.assertTrue((out_dir / "test_charge_charge_response.tsv").is_file())
             self.assertTrue((out_dir / "test_charge_single_many_summary.tsv").is_file())
             self.assertTrue(
+                (out_dir / "test_charge_quark_single_many_summary.pdf").is_file()
+            )
+            self.assertTrue(
+                (out_dir / "test_charge_quark_single_many_summary.png").is_file()
+            )
+            self.assertTrue(
                 (out_dir / "test_charge_charge_response_metadata.json").is_file()
             )
 

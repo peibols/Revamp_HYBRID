@@ -28,6 +28,13 @@ FLAVOR_COLORS = {
     "gluon": "#D55E00",
 }
 FLAVOR_MARKERS = {"all": "o", "quark": "s", "gluon": "^"}
+CATEGORY_LABELS = (
+    "single-like\n" + r"$N_{\rm eff}<3$",
+    "intermediate\n" + r"$3\leq N_{\rm eff}<8$",
+    "many-like\n" + r"$N_{\rm eff}\geq8$",
+)
+RADIUS_COLORS = {2: "#009E73", 4: "#0072B2", 8: "#D55E00"}
+RADIUS_MARKERS = {2: "o", 4: "s", 8: "^"}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -305,6 +312,92 @@ def plot_radius(
     return pdf, png
 
 
+def plot_single_many_summary(
+    out_dir: Path,
+    prefix: str,
+    pt_min: float,
+    pt_max: float | None,
+    abs_eta_max: float,
+    category_results: dict[int, dict[str, BinnedResponse]],
+) -> tuple[Path, Path]:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    figure, axes = plt.subplots(1, 2, figsize=(12.2, 4.7))
+    positions = np.arange(3, dtype=float)
+    for radius_digit in RADIUS_DIGITS:
+        result = category_results[radius_digit]["quark"]
+        axes[0].errorbar(
+            positions,
+            100.0 * result.mean,
+            yerr=100.0 * result.mean_error,
+            color=RADIUS_COLORS[radius_digit],
+            marker=RADIUS_MARKERS[radius_digit],
+            linewidth=1.2,
+            capsize=2.0,
+            label=f"R=0.{radius_digit}",
+        )
+    axes[0].axhline(0.0, color="0.45", linewidth=0.9)
+    axes[0].set_xticks(positions)
+    axes[0].set_xticklabels(CATEGORY_LABELS)
+    axes[0].set_ylabel(r"quark-tagged $\langle1-p_T^{\rm pre}/p_T^{\rm no}\rangle$ [\%]")
+    axes[0].set_title("Wake-excluded effective-multiplicity classes")
+    axes[0].legend(frameon=False)
+    axes[0].grid(alpha=0.22)
+
+    radius_positions = np.arange(len(RADIUS_DIGITS), dtype=float)
+    for flavor in FLAVORS:
+        differences = []
+        errors = []
+        for radius_digit in RADIUS_DIGITS:
+            result = category_results[radius_digit][flavor]
+            differences.append(result.mean[0] - result.mean[2])
+            errors.append(
+                jackknife_error(result.leave_mean[:, 0] - result.leave_mean[:, 2])
+            )
+        axes[1].errorbar(
+            radius_positions,
+            100.0 * np.asarray(differences),
+            yerr=100.0 * np.asarray(errors),
+            color=FLAVOR_COLORS[flavor],
+            marker=FLAVOR_MARKERS[flavor],
+            linewidth=1.2,
+            capsize=2.0,
+            label=FLAVOR_LABELS[flavor],
+        )
+    axes[1].axhline(0.0, color="0.45", linewidth=0.9)
+    axes[1].set_xticks(radius_positions)
+    axes[1].set_xticklabels([f"R=0.{value}" for value in RADIUS_DIGITS])
+    axes[1].set_ylabel("single-like minus many-like shift [%]")
+    axes[1].set_title("Positive values support the proposed ordering")
+    axes[1].legend(frameon=False)
+    axes[1].grid(alpha=0.22)
+
+    figure.suptitle(
+        "O16+O16 5.36 TeV, 0--5% diagnostic; "
+        + pt_selection_label(pt_min, pt_max)
+        + rf", $|\eta^{{\rm no-pre}}|<{abs_eta_max:g}$",
+        fontsize=13,
+    )
+    figure.text(
+        0.5,
+        0.012,
+        "No-prehydro categories; matched Plan-B response. Quark/gluon subsets require the same hard-parton marker in both variants.",
+        ha="center",
+        fontsize=8.5,
+    )
+    figure.subplots_adjust(top=0.84, bottom=0.19, wspace=0.27)
+    stem = out_dir / f"{prefix}_quark_single_many_summary"
+    pdf = stem.with_suffix(".pdf")
+    png = stem.with_suffix(".png")
+    figure.savefig(pdf)
+    figure.savefig(png, dpi=180)
+    plt.close(figure)
+    return pdf, png
+
+
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-root", type=Path, required=True)
@@ -392,6 +485,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "truthCaveat": "final-state proxies do not measure the number of active shower charges at hydro start",
         "radii": {},
     }
+    category_results: dict[int, dict[str, BinnedResponse]] = {}
 
     for radius_digit in RADIUS_DIGITS:
         prefix = f"jet{radius_digit}"
@@ -497,6 +591,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         category_edges = np.array([0.5, 3.0, 8.0, np.inf])
         category_labels = ("single_like_neff_lt3", "intermediate_neff_3to8", "many_like_neff_ge8")
         category_metadata: dict[str, object] = {}
+        category_results[radius_digit] = {}
         for flavor in FLAVORS:
             keep = flavor_mask(hard_ids, flavor, other_hard_ids)
             category = binned_response(
@@ -507,6 +602,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 event_weights,
                 category_edges,
             )
+            category_results[radius_digit][flavor] = category
             difference = float(category.mean[0] - category.mean[2])
             difference_error = float(
                 jackknife_error(category.leave_mean[:, 0] - category.leave_mean[:, 2])
@@ -545,6 +641,17 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         radius_metadata["plotPdf"] = str(pdf)
         radius_metadata["plotPng"] = str(png)
         metadata["radii"][f"0.{radius_digit}"] = radius_metadata
+
+    summary_pdf, summary_png = plot_single_many_summary(
+        out_dir,
+        args.prefix,
+        args.pt_min,
+        args.pt_max,
+        args.abs_eta_max,
+        category_results,
+    )
+    metadata["singleManySummaryPlotPdf"] = str(summary_pdf)
+    metadata["singleManySummaryPlotPng"] = str(summary_png)
 
     histogram_path = out_dir / f"{args.prefix}_charge_response.tsv"
     with histogram_path.open("w", newline="") as stream:
