@@ -76,10 +76,16 @@ error = log/aa.$(ClusterId).err
 log = log/aa.$(ClusterId).log
 queue chunk_id from aa_chunk_ids.txt
 """
-        rendered = MODULE.render_retry_submit(template, "retry_ids.txt", "stamp")
+        rendered = MODULE.render_retry_submit(
+            template + 'environment = "TIMEOUT_S=39600"\n',
+            "retry_ids.txt",
+            "stamp",
+            retry_timeout_s=72_000,
+        )
         self.assertIn("queue chunk_id from retry_ids.txt", rendered)
         self.assertIn("output = log/v2_retry_stamp_aa.$(ClusterId).out", rendered)
         self.assertIn("error = log/v2_retry_stamp_aa.$(ClusterId).err", rendered)
+        self.assertIn("TIMEOUT_S=72000", rendered)
 
     def test_batched_ids_are_sorted_and_respect_submission_limit(self) -> None:
         batches = MODULE.batched_ids({8, 1, 5, 2, 9}, 2)

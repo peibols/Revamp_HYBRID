@@ -43,14 +43,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--schedd", default="bigbird101.cern.ch")
     parser.add_argument("--afs-work", type=Path, default=DEFAULT_AFS_WORK)
     parser.add_argument("--max-jobs-per-submit", type=int, default=10_000)
+    parser.add_argument("--retry-timeout-s", type=int, default=72_000)
     parser.add_argument("--pp-local-eos", type=Path, default=DEFAULT_PP)
     args = parser.parse_args()
     if args.target <= 0 or args.block_size <= 0:
         parser.error("--target and --block-size must be positive")
     if args.target % args.block_size:
         parser.error("--target must be divisible by --block-size")
-    if args.sleep_s <= 0 or args.max_jobs_per_submit <= 0:
-        parser.error("--sleep-s and --max-jobs-per-submit must be positive")
+    if (
+        args.sleep_s <= 0
+        or args.max_jobs_per_submit <= 0
+        or args.retry_timeout_s <= 0
+    ):
+        parser.error(
+            "--sleep-s, --max-jobs-per-submit, and --retry-timeout-s must be positive"
+        )
     return args
 
 
@@ -265,7 +272,12 @@ def run_analysis(args: argparse.Namespace, local_eos: Path, task_limit: int) -> 
     return out_dir
 
 
-def render_retry_submit(template: str, id_file: str, tag: str) -> str:
+def render_retry_submit(
+    template: str,
+    id_file: str,
+    tag: str,
+    retry_timeout_s: int | None = None,
+) -> str:
     queue = re.compile(r"^queue chunk_id from .+$", re.MULTILINE)
     if not queue.search(template):
         raise ValueError("AA submit template has no chunk-id queue statement")
@@ -275,6 +287,13 @@ def render_retry_submit(template: str, id_file: str, tag: str) -> str:
         if not pattern.search(rendered):
             raise ValueError(f"AA submit template has no {field} path")
         rendered = pattern.sub(rf"\g<1>v2_retry_{tag}_\2", rendered, count=1)
+    if retry_timeout_s is not None:
+        timeout_pattern = re.compile(r"\bTIMEOUT_S=\d+\b")
+        if len(timeout_pattern.findall(rendered)) != 1:
+            raise ValueError("AA submit template must define TIMEOUT_S exactly once")
+        rendered = timeout_pattern.sub(
+            f"TIMEOUT_S={retry_timeout_s}", rendered, count=1
+        )
     return rendered
 
 
@@ -305,7 +324,14 @@ def submit_retry(args: argparse.Namespace, ids: set[int]) -> None:
         id_path = retry_dir / f"retry_{tag}_ids.txt"
         submit_path = retry_dir / f"retry_{tag}.sub"
         id_path.write_text("".join(f"{task_id}\n" for task_id in batch))
-        submit_path.write_text(render_retry_submit(template, id_path.name, tag))
+        submit_path.write_text(
+            render_retry_submit(
+                template,
+                id_path.name,
+                tag,
+                retry_timeout_s=args.retry_timeout_s,
+            )
+        )
         subprocess.run(
             [
                 "scp",
@@ -336,11 +362,12 @@ def submit_retry(args: argparse.Namespace, ids: set[int]) -> None:
         with (retry_dir / "retry_submissions.tsv").open("a") as handle:
             handle.write(
                 f"{datetime.now().astimezone().isoformat(timespec='seconds')}\t"
-                f"{match.group(1)}\t{len(batch)}\t{min(batch)}\t{max(batch)}\n"
+                f"{match.group(1)}\t{len(batch)}\t{min(batch)}\t{max(batch)}\t"
+                f"{args.retry_timeout_s}\n"
             )
         log(
             f"resubmitted {len(batch)} task(s) as cluster {match.group(1)} "
-            f"({part + 1}/{len(batches)})"
+            f"({part + 1}/{len(batches)}), timeout={args.retry_timeout_s}s"
         )
 
 
