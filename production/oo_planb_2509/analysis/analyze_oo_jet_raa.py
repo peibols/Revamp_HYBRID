@@ -21,8 +21,8 @@ import uproot
 
 
 DEFAULT_BINS = [20, 25, 30, 40, 50, 65, 80, 110, 150, 220]
-RADII = (0.2, 0.4, 0.8)
-RADIUS_DIGITS = {0.2: 2, 0.4: 4, 0.8: 8}
+RADII = (0.1, 0.2, 0.4, 0.8)
+RADIUS_DIGITS = {0.1: 1, 0.2: 2, 0.4: 4, 0.8: 8}
 VARIANTS = ("noPrehydro", "withPrehydro")
 
 
@@ -338,15 +338,16 @@ def plot_results(rows: list[dict[str, object]], out_dir: Path) -> list[Path]:
         ax.grid(alpha=0.22)
 
     outputs = []
-    fig, axes = plt.subplots(1, 3, figsize=(13.2, 4.25), sharey=True)
-    for ax, radius in zip(axes, RADII):
+    fig, axes = plt.subplots(2, 2, figsize=(9.2, 7.4), sharey=True)
+    for ax, radius in zip(axes.flat, RADII):
         draw(ax, radius)
-    axes[0].set_ylabel(r"jet $R_{\rm AA}$")
-    axes[0].legend(frameon=False, fontsize=9)
+    axes[0, 0].set_ylabel(r"jet $R_{\rm AA}$")
+    axes[1, 0].set_ylabel(r"jet $R_{\rm AA}$")
+    axes[0, 0].legend(frameon=False, fontsize=9)
     fig.suptitle(r"O16+O16 5.36 TeV, 0--5%, $|\eta_{\rm jet}|<2$ (provisional)")
     fig.tight_layout()
     for suffix in ("pdf", "png"):
-        path = out_dir / f"oo5360_c0_5_jet_raa_R020408.{suffix}"
+        path = out_dir / f"oo5360_c0_5_jet_raa_R01020408.{suffix}"
         fig.savefig(path, dpi=180 if suffix == "png" else None)
         outputs.append(path)
     plt.close(fig)
@@ -499,7 +500,7 @@ def main() -> int:
                     }
                 )
 
-    table_path = args.out_dir / "oo5360_c0_5_jet_raa_R020408.tsv"
+    table_path = args.out_dir / "oo5360_c0_5_jet_raa_R01020408.tsv"
     fields = list(output_rows[0])
     with table_path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")
@@ -551,7 +552,7 @@ def main() -> int:
             for variant in VARIANTS
         },
     }
-    metadata_path = args.out_dir / "oo5360_c0_5_jet_raa_R020408_metadata.json"
+    metadata_path = args.out_dir / "oo5360_c0_5_jet_raa_R01020408_metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
     marker = args.out_dir / "jet_raa_complete.txt"
     marker.write_text(

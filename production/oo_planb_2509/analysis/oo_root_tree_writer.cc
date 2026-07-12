@@ -29,7 +29,7 @@
 namespace {
 
 constexpr std::array<char, 8> kPairMagic{'O', 'O', 'P', 'A', 'I', 'R', '1', '\0'};
-constexpr const char *kSchemaVersion = "oo-paired-root-v3";
+constexpr const char *kSchemaVersion = "oo-paired-root-v4";
 
 #pragma pack(push, 1)
 struct PairHeader {
@@ -915,21 +915,26 @@ class JetTree {
     tree_ = new TTree("Jets", "One entry per accepted paired HYBRID event");
     tree_->SetAutoFlush(-10000000);
     branch_event_metadata(tree_, metadata_, prehydro_enabled_);
+    tree_->Branch("nJet1", &n_jet1_);
     tree_->Branch("nJet2", &n_jet2_);
     tree_->Branch("nJet4", &n_jet4_);
     tree_->Branch("nJet8", &n_jet8_);
+    jet1_ = std::make_unique<RadiusBranches>(tree_, "jet1");
     jet2_ = std::make_unique<RadiusBranches>(tree_, "jet2");
     jet4_ = std::make_unique<RadiusBranches>(tree_, "jet4");
     jet8_ = std::make_unique<RadiusBranches>(tree_, "jet8");
   }
 
-  void fill(const EventMeta &metadata, const std::vector<JetRecord> &jets2,
+  void fill(const EventMeta &metadata, const std::vector<JetRecord> &jets1,
+            const std::vector<JetRecord> &jets2,
             const std::vector<JetRecord> &jets4,
             const std::vector<JetRecord> &jets8) {
     metadata_ = metadata;
+    n_jet1_ = static_cast<int>(jets1.size());
     n_jet2_ = static_cast<int>(jets2.size());
     n_jet4_ = static_cast<int>(jets4.size());
     n_jet8_ = static_cast<int>(jets8.size());
+    jet1_->assign(jets1);
     jet2_->assign(jets2);
     jet4_->assign(jets4);
     jet8_->assign(jets8);
@@ -940,9 +945,11 @@ class JetTree {
   TTree *tree_ = nullptr;
   EventMeta metadata_;
   bool prehydro_enabled_ = false;
+  int n_jet1_ = 0;
   int n_jet2_ = 0;
   int n_jet4_ = 0;
   int n_jet8_ = 0;
+  std::unique_ptr<RadiusBranches> jet1_;
   std::unique_ptr<RadiusBranches> jet2_;
   std::unique_ptr<RadiusBranches> jet4_;
   std::unique_ptr<RadiusBranches> jet8_;
@@ -970,6 +977,8 @@ class PairTree {
     tree_->Branch("noPrehydroSignedSumPt", &no_signed_sum_pt_);
     tree_->Branch("withPrehydroSignedSumPt", &with_signed_sum_pt_);
     tree_->Branch("deltaSignedSumPt", &delta_signed_sum_pt_);
+    tree_->Branch("noPrehydroNJet1", &no_jet1_);
+    tree_->Branch("withPrehydroNJet1", &with_jet1_);
     tree_->Branch("noPrehydroNJet2", &no_jet2_);
     tree_->Branch("withPrehydroNJet2", &with_jet2_);
     tree_->Branch("noPrehydroNJet4", &no_jet4_);
@@ -979,7 +988,8 @@ class PairTree {
   }
 
   void fill(const EventMeta &metadata, const EventSummary &no_summary,
-            const EventSummary &with_summary, std::size_t no_jet2, std::size_t with_jet2,
+            const EventSummary &with_summary, std::size_t no_jet1, std::size_t with_jet1,
+            std::size_t no_jet2, std::size_t with_jet2,
             std::size_t no_jet4, std::size_t with_jet4,
             std::size_t no_jet8, std::size_t with_jet8) {
     metadata_ = metadata;
@@ -989,6 +999,8 @@ class PairTree {
     no_signed_sum_pt_ = no_summary.signed_sum_pt;
     with_signed_sum_pt_ = with_summary.signed_sum_pt;
     delta_signed_sum_pt_ = with_signed_sum_pt_ - no_signed_sum_pt_;
+    no_jet1_ = static_cast<int>(no_jet1);
+    with_jet1_ = static_cast<int>(with_jet1);
     no_jet2_ = static_cast<int>(no_jet2);
     with_jet2_ = static_cast<int>(with_jet2);
     no_jet4_ = static_cast<int>(no_jet4);
@@ -1007,6 +1019,8 @@ class PairTree {
   double no_signed_sum_pt_ = 0.0;
   double with_signed_sum_pt_ = 0.0;
   double delta_signed_sum_pt_ = 0.0;
+  int no_jet1_ = 0;
+  int with_jet1_ = 0;
   int no_jet2_ = 0;
   int with_jet2_ = 0;
   int no_jet4_ = 0;
@@ -1032,6 +1046,7 @@ EventMeta metadata_from_header(const PairHeader &header) {
 
 void write_metadata(TFile &output, const Options &options, std::uint64_t pair_count,
                     std::uint64_t no_hadron_count, std::uint64_t with_hadron_count,
+                    std::uint64_t no_jet1_count, std::uint64_t with_jet1_count,
                     std::uint64_t no_jet2_count, std::uint64_t with_jet2_count,
                     std::uint64_t no_jet4_count, std::uint64_t with_jet4_count,
                     std::uint64_t no_jet8_count, std::uint64_t with_jet8_count) {
@@ -1080,6 +1095,8 @@ void write_metadata(TFile &output, const Options &options, std::uint64_t pair_co
   conversion.Branch("pairCount", &pair_count);
   conversion.Branch("noPrehydroHadronCount", &no_hadron_count);
   conversion.Branch("withPrehydroHadronCount", &with_hadron_count);
+  conversion.Branch("noPrehydroJet1Count", &no_jet1_count);
+  conversion.Branch("withPrehydroJet1Count", &with_jet1_count);
   conversion.Branch("noPrehydroJet2Count", &no_jet2_count);
   conversion.Branch("withPrehydroJet2Count", &with_jet2_count);
   conversion.Branch("noPrehydroJet4Count", &no_jet4_count);
@@ -1110,6 +1127,8 @@ int run(const Options &options) {
   std::uint64_t pair_count = 0;
   std::uint64_t no_hadron_count = 0;
   std::uint64_t with_hadron_count = 0;
+  std::uint64_t no_jet1_count = 0;
+  std::uint64_t with_jet1_count = 0;
   std::uint64_t no_jet2_count = 0;
   std::uint64_t with_jet2_count = 0;
   std::uint64_t no_jet4_count = 0;
@@ -1142,30 +1161,38 @@ int run(const Options &options) {
     const EventMeta metadata = metadata_from_header(header);
     const EventSummary no_summary = no_hadron_tree.fill(metadata, no_particles);
     const EventSummary with_summary = with_hadron_tree.fill(metadata, with_particles);
+    auto no_jets1 = make_jets(no_particles, 0.1, options);
+    auto with_jets1 = make_jets(with_particles, 0.1, options);
     auto no_jets2 = make_jets(no_particles, 0.2, options);
     auto with_jets2 = make_jets(with_particles, 0.2, options);
     auto no_jets4 = make_jets(no_particles, 0.4, options);
     auto with_jets4 = make_jets(with_particles, 0.4, options);
     auto no_jets8 = make_jets(no_particles, 0.8, options);
     auto with_jets8 = make_jets(with_particles, 0.8, options);
+    match_hard_partons(no_jets1, no_particles, 0.1);
+    match_hard_partons(with_jets1, with_particles, 0.1);
     match_hard_partons(no_jets2, no_particles, 0.2);
     match_hard_partons(with_jets2, with_particles, 0.2);
     match_hard_partons(no_jets4, no_particles, 0.4);
     match_hard_partons(with_jets4, with_particles, 0.4);
     match_hard_partons(no_jets8, no_particles, 0.8);
     match_hard_partons(with_jets8, with_particles, 0.8);
+    match_jets(no_jets1, with_jets1, 0.1, options.match_dr_fraction);
     match_jets(no_jets2, with_jets2, 0.2, options.match_dr_fraction);
     match_jets(no_jets4, with_jets4, 0.4, options.match_dr_fraction);
     match_jets(no_jets8, with_jets8, 0.8, options.match_dr_fraction);
-    no_jet_tree.fill(metadata, no_jets2, no_jets4, no_jets8);
-    with_jet_tree.fill(metadata, with_jets2, with_jets4, with_jets8);
-    pair_tree.fill(metadata, no_summary, with_summary, no_jets2.size(), with_jets2.size(),
+    no_jet_tree.fill(metadata, no_jets1, no_jets2, no_jets4, no_jets8);
+    with_jet_tree.fill(metadata, with_jets1, with_jets2, with_jets4, with_jets8);
+    pair_tree.fill(metadata, no_summary, with_summary, no_jets1.size(), with_jets1.size(),
+                   no_jets2.size(), with_jets2.size(),
                    no_jets4.size(), with_jets4.size(),
                    no_jets8.size(), with_jets8.size());
 
     ++pair_count;
     no_hadron_count += no_summary.n_hadrons;
     with_hadron_count += with_summary.n_hadrons;
+    no_jet1_count += no_jets1.size();
+    with_jet1_count += with_jets1.size();
     no_jet2_count += no_jets2.size();
     with_jet2_count += with_jets2.size();
     no_jet4_count += no_jets4.size();
@@ -1175,12 +1202,14 @@ int run(const Options &options) {
   }
 
   write_metadata(output, options, pair_count, no_hadron_count, with_hadron_count,
+                 no_jet1_count, with_jet1_count,
                  no_jet2_count, with_jet2_count, no_jet4_count, with_jet4_count,
                  no_jet8_count, with_jet8_count);
   output.Write();
   output.Close();
   std::cout << "pairs=" << pair_count << " no_hadrons=" << no_hadron_count
-            << " with_hadrons=" << with_hadron_count << " no_jet2=" << no_jet2_count
+            << " with_hadrons=" << with_hadron_count << " no_jet1=" << no_jet1_count
+            << " with_jet1=" << with_jet1_count << " no_jet2=" << no_jet2_count
             << " with_jet2=" << with_jet2_count << " no_jet4=" << no_jet4_count
             << " with_jet4=" << with_jet4_count << " no_jet8=" << no_jet8_count
             << " with_jet8=" << with_jet8_count << '\n';

@@ -7,7 +7,7 @@ ROOT="${ROOT:-/raid5/data/yjlee/hybrid_dev}"
 WORK="${WORK:-${ROOT}/test/oo5360_v2_500hydro_50k_20260711}"
 LOCAL_EOS="${LOCAL_EOS:-${WORK}/eos_snapshot}"
 PP_LOCAL_EOS="${PP_LOCAL_EOS:-${ROOT}/test/tmp_oo_10k_prehydro_raa_20260709/local_eos}"
-PP_JET_CACHE="${PP_JET_CACHE:-${PP_LOCAL_EOS}/analysis_cache/oo5360_pp1m_jet_spectrum_v1.tsv}"
+PP_JET_CACHE="${PP_JET_CACHE:-${PP_LOCAL_EOS}/analysis_cache/oo5360_pp1m_jet_spectrum_r01020408_v2.tsv}"
 TASK_MANIFEST="${TASK_MANIFEST:-${WORK}/hydro_prepared/aa_task_manifest.tsv}"
 STRICT_MARKER="${STRICT_MARKER:-${WORK}/v2_50k_strict_complete.txt}"
 OUT="${OUT:-${WORK}/final_analysis}"
@@ -145,8 +145,8 @@ python3 - \
   "${TASK_MANIFEST}" \
   "${TARGET}" \
   "${JET_PAIRED_OUT}" \
-  "${JET_RAA_OUT}/oo5360_c0_5_jet_raa_R020408_metadata.json" \
-  "${JET_RAA_OUT}/oo5360_c0_5_jet_raa_R020408.tsv" <<'PY'
+  "${JET_RAA_OUT}/oo5360_c0_5_jet_raa_R01020408_metadata.json" \
+  "${JET_RAA_OUT}/oo5360_c0_5_jet_raa_R01020408.tsv" <<'PY'
 import csv
 import hashlib
 import json
@@ -213,8 +213,8 @@ if (
     jet_raa.get("status") != "PASS"
     or jet_raa.get("aaEvents") != target
     or jet_raa.get("ppEvents") != 1_000_000
-    or len(jet_raa_rows) != 54
-    or {float(row["radius"]) for row in jet_raa_rows} != {0.2, 0.4, 0.8}
+    or len(jet_raa_rows) != 72
+    or {float(row["radius"]) for row in jet_raa_rows} != {0.1, 0.2, 0.4, 0.8}
     or any(
         not math.isfinite(float(row[key]))
         for row in jet_raa_rows

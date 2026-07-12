@@ -77,7 +77,7 @@ end
             )
             with output.open() as handle:
                 rows = list(csv.DictReader(handle, delimiter="\t"))
-            self.assertEqual(len(rows), 3)
+            self.assertEqual(len(rows), 4)
             for row in rows:
                 self.assertEqual(int(row["run_id"]), 7)
                 self.assertEqual(int(row["event_count"]), 1)

@@ -77,7 +77,7 @@ sign for raw labels 2 and 3.
 ## Jet reconstruction
 
 Jets are reconstructed independently in the two event variants with FastJet
-anti-kT, E-scheme recombination, for `R=0.2`, `R=0.4`, and `R=0.8`.
+anti-kT, E-scheme recombination, for `R=0.1`, `R=0.2`, `R=0.4`, and `R=0.8`.
 
 - There is no constituent pT or eta cut. Zero-pT records and raw label `-2`
   markers are excluded.
@@ -97,7 +97,7 @@ four-momentum-subtracted values. A negative `jet4mass` means that subtraction
 made the corrected four-vector spacelike; it is deliberately preserved rather
 than clipped. `jet4RawPt`, `jet4RawEta`, `jet4RawPhi`, and `jet4RawMass`
 retain the positive-constituent jet before subtraction. The same convention
-applies to every `jet2*` and `jet8*` branch.
+applies to every `jet1*`, `jet2*`, and `jet8*` branch.
 
 The nonlinear substructure observables are calculated from normal plus
 positive-wake constituents. Negative contributions cannot be inserted into a
@@ -110,7 +110,7 @@ the requested `G` is the positive-constituent girth.
 
 ## Jet branches
 
-Replace `X` by `2`, `4`, or `8` for R=0.2, R=0.4, or R=0.8:
+Replace `X` by `1`, `2`, `4`, or `8` for R=0.1, R=0.2, R=0.4, or R=0.8:
 
 | Branch | Definition |
 | --- | --- |
@@ -156,6 +156,10 @@ gluon tag. This is generator truth, not an experimentally accessible flavor
 definition.
 
 Schema v3 adds the normal-only fragmentation and hard-parton-match branches.
+Schema v4 adds the complete `jet1*` branch family and corresponding event,
+pair, and conversion totals for R=0.1. The existing nonlinear substructure
+campaign plots remain scoped to R=0.2, R=0.4, and R=0.8; R=0.1 is included in
+the inclusive jet-RAA workflow.
 The preferred final-state effective-charge proxy is
 
 ```text

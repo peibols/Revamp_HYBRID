@@ -6,7 +6,7 @@ SOURCE="${SOURCE:-$(cd -- "${SCRIPT_DIR}/../../.." && pwd)}"
 ROOT="${ROOT:-/raid5/data/yjlee/hybrid_dev}"
 SNAPSHOT="${1:?usage: run_oo_v2_provisional_snapshot.sh SNAPSHOT_DIR}"
 PP_LOCAL_EOS="${PP_LOCAL_EOS:-${ROOT}/test/tmp_oo_10k_prehydro_raa_20260709/local_eos}"
-PP_JET_CACHE="${PP_JET_CACHE:-${PP_LOCAL_EOS}/analysis_cache/oo5360_pp1m_jet_spectrum_v1.tsv}"
+PP_JET_CACHE="${PP_JET_CACHE:-${PP_LOCAL_EOS}/analysis_cache/oo5360_pp1m_jet_spectrum_r01020408_v2.tsv}"
 BUILD_DIR="${BUILD_DIR:-${SNAPSHOT}/build}"
 OVERWRITE="${OVERWRITE:-false}"
 
@@ -121,8 +121,8 @@ run_paired_substructure pt80plus --pt-min 80
 python3 - \
   "${SNAPSHOT}" "${ROOT_OUT%.root}.summary.json" \
   "${JET_OUT}/${PREFIX}_jet_pt_slice_summary_validation.json" \
-  "${JET_RAA_OUT}/oo5360_c0_5_jet_raa_R020408_metadata.json" \
-  "${JET_RAA_OUT}/oo5360_c0_5_jet_raa_R020408.tsv" \
+  "${JET_RAA_OUT}/oo5360_c0_5_jet_raa_R01020408_metadata.json" \
+  "${JET_RAA_OUT}/oo5360_c0_5_jet_raa_R01020408.tsv" \
   "${COUNT}" "${PREFIX}" <<'PY'
 import csv
 import json
@@ -156,9 +156,9 @@ if (
 ):
     raise SystemExit("jet RAA metadata does not contain the expected AA/pp event counts")
 if (
-    len(jet_raa_rows) != 54
+    len(jet_raa_rows) != 72
     or {row["variant"] for row in jet_raa_rows} != {"noPrehydro", "withPrehydro"}
-    or {float(row["radius"]) for row in jet_raa_rows} != {0.2, 0.4, 0.8}
+    or {float(row["radius"]) for row in jet_raa_rows} != {0.1, 0.2, 0.4, 0.8}
     or any(
         not math.isfinite(float(row[key]))
         for row in jet_raa_rows

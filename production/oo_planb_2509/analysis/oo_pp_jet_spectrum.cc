@@ -17,7 +17,7 @@
 
 namespace {
 
-constexpr std::array<double, 3> kRadii{0.2, 0.4, 0.8};
+constexpr std::array<double, 4> kRadii{0.1, 0.2, 0.4, 0.8};
 
 struct Options {
   std::string output;

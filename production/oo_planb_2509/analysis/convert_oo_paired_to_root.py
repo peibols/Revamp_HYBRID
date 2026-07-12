@@ -27,8 +27,8 @@ PARTICLE_RECORD = struct.Struct("<ddddii")
 PAIR_MAGIC = b"OOPAIR1\0"
 CHUNK_PATTERN = re.compile(r"chunk_(\d+)\.(?:tar\.gz|txt)$")
 ALLOWED_LABELS = {-2, 0, 1, 2, 3}
-SCHEMA_VERSION = "oo-paired-root-v3"
-JET_RADIUS_DIGITS = (2, 4, 8)
+SCHEMA_VERSION = "oo-paired-root-v4"
+JET_RADIUS_DIGITS = (1, 2, 4, 8)
 
 
 class ArchiveValidationError(ValueError):
@@ -528,6 +528,8 @@ def validate_root(path: Path, expected_pairs: int) -> dict[str, int]:
             "pairCount",
             "noPrehydroHadronCount",
             "withPrehydroHadronCount",
+            "noPrehydroJet1Count",
+            "withPrehydroJet1Count",
             "noPrehydroJet2Count",
             "withPrehydroJet2Count",
             "noPrehydroJet4Count",
@@ -809,7 +811,7 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
         "rootTotals": root_totals,
         "jetConfiguration": {
             "algorithm": "anti-kt E-scheme",
-            "radii": [0.2, 0.4, 0.8],
+            "radii": [0.1, 0.2, 0.4, 0.8],
             "rawJetPtMinGeV": args.raw_jet_pt_min,
             "jetAbsEtaMax": args.jet_abs_eta_max,
             "constituentPtMinGeV": 0.0,

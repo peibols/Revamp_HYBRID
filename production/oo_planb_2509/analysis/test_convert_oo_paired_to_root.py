@@ -170,6 +170,9 @@ class ConverterTest(unittest.TestCase):
                 self.assertEqual(int(hadrons.nHardMarkers[0]), 1)
                 jets = root_file["noPrehydro/Jets"].arrays(
                     [
+                        "jet1Pt",
+                        "jet1RawPt",
+                        "jet1NegativeWakePt",
                         "jet2Pt",
                         "jet2RawPt",
                         "jet2NegativeWakePt",
@@ -189,6 +192,9 @@ class ConverterTest(unittest.TestCase):
                     ],
                     library="ak",
                 )
+                self.assertGreater(float(jets.jet1RawPt[0][0]), 0.0)
+                self.assertGreaterEqual(float(jets.jet1NegativeWakePt[0][0]), 0.0)
+                self.assertLessEqual(float(jets.jet1Pt[0][0]), float(jets.jet1RawPt[0][0]))
                 self.assertGreater(float(jets.jet2NegativeWakePt[0][0]), 0.0)
                 self.assertLess(float(jets.jet2Pt[0][0]), float(jets.jet2RawPt[0][0]))
                 self.assertAlmostEqual(float(jets.jet2NormalPtD[0][0]), 1.0)
