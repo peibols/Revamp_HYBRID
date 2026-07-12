@@ -41,7 +41,8 @@ class VariableSpec:
     group: str
     xscale: str = "linear"
     yscale: str = "linear"
-    soft_drop_only: bool = False
+    soft_drop_failure_bin: bool = False
+    physical_ticks: tuple[float, ...] = ()
 
 
 @dataclasses.dataclass
@@ -106,6 +107,10 @@ def variable_specs(
     else:
         raise ValueError(f"unsupported radius digit {radius_digit}")
 
+    rg_bin_width = float(rg_edges[1] - rg_edges[0])
+    rg_edges = np.concatenate(([float(rg_edges[0] - rg_bin_width)], rg_edges))
+    zg_edges = np.concatenate(([0.075], np.linspace(0.1, 0.5, 17)))
+
     if pt_max is None:
         pt_edges = np.geomspace(pt_min, 1600.0, 17)
         pt_xscale = "log"
@@ -155,9 +160,10 @@ def variable_specs(
             "Zg",
             r"$z_g$",
             r"$d\sigma_{\mathrm{jet}}/dz_g$ [mb]",
-            np.linspace(0.1, 0.5, 17),
+            zg_edges,
             "substructure",
-            soft_drop_only=True,
+            soft_drop_failure_bin=True,
+            physical_ticks=(0.2, 0.3, 0.4, 0.5),
         ),
         VariableSpec(
             "rg",
@@ -166,7 +172,10 @@ def variable_specs(
             r"$d\sigma_{\mathrm{jet}}/dR_g$ [mb]",
             rg_edges,
             "substructure",
-            soft_drop_only=True,
+            soft_drop_failure_bin=True,
+            physical_ticks=tuple(
+                float(value) for value in np.linspace(0.0, rg_edges[-1], 6)[1:]
+            ),
         ),
         VariableSpec(
             "mult",
@@ -213,6 +222,15 @@ def jet_pt_selection(
     if pt_max is not None:
         selection = selection & (pt_values <= pt_max)
     return selection
+
+
+def soft_drop_histogram_values(
+    values: ak.Array, valid: ak.Array, spec: VariableSpec
+) -> ak.Array:
+    if not spec.soft_drop_failure_bin:
+        raise ValueError(f"{spec.key} does not define a failed-Soft-Drop bin")
+    failure_value = 0.5 * (spec.edges[0] + spec.edges[1])
+    return ak.where(valid, values, failure_value)
 
 
 def pt_range_label(pt_min: float, pt_max: float | None) -> str:
@@ -400,6 +418,12 @@ def configure_x_axis(axis, spec: VariableSpec) -> None:
     elif spec.xscale == "symlog":
         axis.set_xscale("symlog", linthresh=2.0, linscale=0.7)
     axis.set_xlim(spec.edges[0], spec.edges[-1])
+    if spec.soft_drop_failure_bin:
+        failure_center = 0.5 * (spec.edges[0] + spec.edges[1])
+        axis.set_xticks([failure_center, *spec.physical_ticks])
+        axis.set_xticklabels(
+            ["SD fail", *(f"{value:g}" for value in spec.physical_ticks)]
+        )
 
 
 def draw_panel(
@@ -414,12 +438,22 @@ def draw_panel(
     import matplotlib.pyplot as plt
     from matplotlib.gridspec import GridSpecFromSubplotSpec
 
-    inner = GridSpecFromSubplotSpec(2, 1, subplot_spec=outer_spec, height_ratios=[3.1, 1.0], hspace=0.05)
+    inner = GridSpecFromSubplotSpec(
+        2,
+        1,
+        subplot_spec=outer_spec,
+        height_ratios=[3.1, 1.0],
+        hspace=0.05,
+    )
     upper = figure.add_subplot(inner[0])
     lower = figure.add_subplot(inner[1], sharex=upper)
     centers = np.sqrt(spec.edges[:-1] * spec.edges[1:]) if spec.xscale == "log" else 0.5 * (
         spec.edges[:-1] + spec.edges[1:]
     )
+    if spec.soft_drop_failure_bin:
+        for axis in (upper, lower):
+            axis.axvspan(spec.edges[0], spec.edges[1], color="0.90", zorder=0)
+            axis.axvline(spec.edges[1], color="0.55", linewidth=0.8, linestyle=":")
 
     for variant in VARIANTS:
         result = results[variant]
@@ -447,7 +481,10 @@ def draw_panel(
     if spec.yscale == "log":
         upper.set_yscale("log")
         positive = np.concatenate(
-            [result.values[np.isfinite(result.values) & (result.values > 0.0)] for result in results.values()]
+            [
+                result.values[np.isfinite(result.values) & (result.values > 0.0)]
+                for result in results.values()
+            ]
         )
         if positive.size:
             upper.set_ylim(max(float(np.min(positive)) * 0.35, 1e-12), float(np.max(positive)) * 3.0)
@@ -528,7 +565,7 @@ def plot_group(
         0.5,
         0.012,
         "PythiaParallel weighted cross sections; paired delete-one-run jackknife. "
-        "No additional jet-eta cut. Zg/Rg require SoftDropValid=1.",
+        "No additional jet-eta cut. First Zg/Rg bin is SoftDropValid=0; physical bins are valid jets.",
         ha="center",
         fontsize=8.5,
     )
@@ -627,7 +664,13 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "effectiveEventCountFromWeights": effective_events,
         "normalization": "dSigma/dx = sum(w*sigmaGen)/sum(w)^2 * sum(w*n_bin)/bin_width",
         "uncertainty": "paired delete-one-run jackknife",
-        "softDropSelection": "SoftDropValid=1 for Zg and Rg",
+        "softDropHistogramConvention": (
+            "Zg and Rg bin 0 contains every selected SoftDropValid=0 jet at a finite "
+            "sentinel; its width equals one physical bin, so height times width is the "
+            "failed-jet cross section. Remaining bins contain SoftDropValid=1 jets."
+        ),
+        "softDropSelection": "all selected jets; bin 0 is SoftDropValid=0",
+        "softDropMoments": "weighted Zg and Rg means use SoftDropValid=1 jets only",
         "radii": {},
     }
 
@@ -650,14 +693,30 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         radius_metadata: dict[str, object] = {
             "integratedPreOverNoRatio": integrated_ratio,
             "integratedPreOverNoRatioError": integrated_ratio_error,
+            "softDropFailureBins": {
+                spec.key: {
+                    "binIndex": 0,
+                    "binLow": float(spec.edges[0]),
+                    "binHigh": float(spec.edges[1]),
+                    "binCenter": float(0.5 * (spec.edges[0] + spec.edges[1])),
+                }
+                for spec in specs
+                if spec.soft_drop_failure_bin
+            },
             "variants": {},
         }
         for variant in VARIANTS:
-            soft_drop_valid = tree_arrays[variant][f"jet{radius_digit}SoftDropValid"][selections[variant]] == 1
+            soft_drop_valid = (
+                tree_arrays[variant][f"jet{radius_digit}SoftDropValid"][selections[variant]]
+                == 1
+            )
             valid_counts = ak.to_numpy(ak.sum(soft_drop_valid, axis=1)).astype(np.float64)
             selected = integrated[variant]
             valid_weighted = float(np.sum(weights * valid_counts))
             soft_drop_fraction = valid_weighted / selected.weighted_jets
+            failed_counts = selected_counts[variant] - valid_counts
+            failed_weighted = float(np.sum(weights * failed_counts))
+            failed_fraction = failed_weighted / selected.weighted_jets
             radius_metadata["variants"][variant] = {
                 "rawSelectedJets": selected.raw_jets,
                 "eventsWithSelectedJets": selected.events_with_jets,
@@ -666,6 +725,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 "integratedJetCrossSectionErrorMb": selected.error,
                 "rawSoftDropValidJets": int(np.sum(valid_counts)),
                 "weightedSoftDropValidFraction": soft_drop_fraction,
+                "rawSoftDropFailedJets": int(np.sum(failed_counts)),
+                "weightedSoftDropFailedFraction": failed_fraction,
             }
             summary_rows.append(
                 [
@@ -680,6 +741,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                     format_float(integrated_ratio_error),
                     int(np.sum(valid_counts)),
                     format_float(soft_drop_fraction),
+                    int(np.sum(failed_counts)),
+                    format_float(failed_fraction),
                     len(pair_ids),
                     format_float(weight_sum),
                     format_float(sigma_merged),
@@ -694,14 +757,41 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             histograms[spec.key] = {}
             jagged_by_variant: dict[str, ak.Array] = {}
             for variant in VARIANTS:
-                values = tree_arrays[variant][f"jet{radius_digit}{spec.branch_suffix}"][selections[variant]]
-                if spec.soft_drop_only:
-                    valid = tree_arrays[variant][f"jet{radius_digit}SoftDropValid"][selections[variant]] == 1
-                    values = values[valid]
-                jagged_by_variant[variant] = values
-                histograms[spec.key][variant] = differential_histogram(
-                    values, weights, sigma_gen, spec.edges
+                values = tree_arrays[variant][f"jet{radius_digit}{spec.branch_suffix}"][
+                    selections[variant]
+                ]
+                histogram_values = values
+                moment_values = values
+                if spec.soft_drop_failure_bin:
+                    valid = (
+                        tree_arrays[variant][f"jet{radius_digit}SoftDropValid"][
+                            selections[variant]
+                        ]
+                        == 1
+                    )
+                    histogram_values = soft_drop_histogram_values(values, valid, spec)
+                    moment_values = values[valid]
+                jagged_by_variant[variant] = moment_values
+                result = differential_histogram(
+                    histogram_values, weights, sigma_gen, spec.edges
                 )
+                if spec.soft_drop_failure_bin:
+                    failed_counts = ak.to_numpy(ak.sum(~valid, axis=1)).astype(np.float64)
+                    expected_failure_bin = weights * failed_counts
+                    if (
+                        result.raw_entries != integrated[variant].raw_jets
+                        or result.nonfinite_entries != 0
+                        or result.underflow_entries != 0
+                        or result.overflow_entries != 0
+                        or not np.array_equal(
+                            result.weighted_matrix[:, 0], expected_failure_bin
+                        )
+                    ):
+                        raise ValueError(
+                            f"R=0.{radius_digit} {variant} {spec.key} failed-bin "
+                            "closure does not reproduce every selected jet"
+                        )
+                histograms[spec.key][variant] = result
             ratios[spec.key] = paired_ratio(
                 histograms[spec.key]["withPrehydro"].weighted_matrix,
                 histograms[spec.key]["noPrehydro"].weighted_matrix,
@@ -725,6 +815,11 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                             spec.key,
                             variant,
                             bin_index,
+                            (
+                                "softdrop_failed"
+                                if spec.soft_drop_failure_bin and bin_index == 0
+                                else "physical"
+                            ),
                             format_float(float(low)),
                             format_float(float(high)),
                             format_float(float(center)),
@@ -803,6 +898,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 "variable",
                 "variant",
                 "bin_index",
+                "bin_kind",
                 "bin_low",
                 "bin_high",
                 "bin_center",
@@ -834,6 +930,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 "ratio_stat_error",
                 "raw_softdrop_valid_jets",
                 "weighted_softdrop_valid_fraction",
+                "raw_softdrop_failed_jets",
+                "weighted_softdrop_failed_fraction",
                 "pair_count",
                 "weight_sum",
                 "sigma_merged_mb",

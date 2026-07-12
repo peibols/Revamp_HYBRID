@@ -89,6 +89,39 @@ class JetWeightingTest(unittest.TestCase):
         self.assertAlmostEqual(float(specs["girth"].edges[-1]), 0.16)
         self.assertEqual(plotter.RADIUS_DIGITS, (2, 4, 8))
 
+    def test_soft_drop_specs_reserve_equal_width_failure_bin(self) -> None:
+        specs = {spec.key: spec for spec in plotter.variable_specs(4, 30.0)}
+        for key, physical_minimum in (("zg", 0.1), ("rg", 0.0)):
+            spec = specs[key]
+            self.assertTrue(spec.soft_drop_failure_bin)
+            self.assertAlmostEqual(float(spec.edges[1]), physical_minimum)
+            self.assertAlmostEqual(
+                float(spec.edges[1] - spec.edges[0]),
+                float(spec.edges[2] - spec.edges[1]),
+            )
+
+    def test_failed_soft_drop_jets_fill_first_bin(self) -> None:
+        spec = {spec.key: spec for spec in plotter.variable_specs(4, 30.0)}["zg"]
+        values = ak.Array([[math.nan, 0.2], [math.nan, 0.3], []])
+        valid = ak.Array([[False, True], [False, True], []])
+        encoded = plotter.soft_drop_histogram_values(values, valid, spec)
+        result = plotter.differential_histogram(
+            encoded, self.weights, self.sigma_gen, spec.edges
+        )
+
+        factor = 140.0 / 36.0
+        first_bin_width = float(spec.edges[1] - spec.edges[0])
+        self.assertEqual(result.raw_entries, 4)
+        self.assertEqual(result.nonfinite_entries, 0)
+        self.assertAlmostEqual(result.values[0] * first_bin_width, factor * 3.0)
+        self.assertAlmostEqual(
+            float(np.sum(result.values * np.diff(spec.edges))), factor * 6.0
+        )
+
+        valid_only_mean = plotter.weighted_mean(values[valid], self.weights)
+        self.assertEqual(valid_only_mean.raw_entries, 2)
+        self.assertAlmostEqual(valid_only_mean.mean, 0.8 / 3.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -74,6 +74,13 @@ to `analysis/summarize_oo_jet_pt_slices.py`. The summary refuses gaps,
 overlaps, inconsistent normalization metadata, or sliced cross sections that
 do not close to the inclusive result.
 
+The `Zg` and `Rg` panels reserve their first, shaded bin for jets with
+`SoftDropValid=0`. The sentinel bin has the same width as one physical bin, so
+its plotted integral is the failed-Soft-Drop jet cross section. The TSV labels
+it `softdrop_failed`; metadata and summary tables store weighted pass and fail
+fractions. Physical `Zg`/`Rg` moments continue to use successful Soft Drop jets
+only.
+
 `analysis/plot_oo_jet_charge_response.py` tests whether the incremental
 prehydro shift depends on a single-core versus many-core fragmentation proxy.
 Its primary proxy is the wake-excluded effective multiplicity

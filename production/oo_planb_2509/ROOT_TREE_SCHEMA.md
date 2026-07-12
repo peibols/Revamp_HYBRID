@@ -215,6 +215,16 @@ four nonoverlapping campaign intervals are generated with `(20,30]`,
 and exact cross-section closure to the inclusive `pT > 20` result before
 writing the combined table and figure.
 
+The `Zg` and `Rg` histograms include all selected jets. Bin zero is an
+explicit `softdrop_failed` sentinel bin for `SoftDropValid=0`; its width is
+one physical bin and its integral is therefore the failed-jet cross section.
+For `Zg` the sentinel interval is `[0.075,0.1)`. For `Rg` it is the
+equal-width interval immediately below zero, with a radius-dependent width.
+All remaining bins contain `SoftDropValid=1` jets. The histogram TSV records
+the bin role in `bin_kind`, while the summary and JSON metadata retain raw and
+weighted pass/fail counts and fractions. Reported `Zg` and `Rg` moments remain
+conditioned on `SoftDropValid=1` and never average in the sentinel value.
+
 For the matched effective-charge sensitivity study, use
 `analysis/plot_oo_jet_charge_response.py`. It selects and bins on the
 no-prehydro jet, requires its one-to-one Plan-B match, and measures
