@@ -237,6 +237,25 @@ hard-marker PDG IDs in both variants. The nominal pair-axis requirement is
 checks. Conditional means use the biased PYTHIA event weight once, and
 uncertainties use a paired delete-one-run jackknife.
 
+For a migration-safe comparison of Soft Drop and momentum dispersion, use
+`analysis/plot_oo_jet_paired_substructure.py`. The corrected pT interval and
+eta acceptance are imposed only on the no-prehydro jet. Its one-to-one
+`PairMatchIndex` partner is retained even if Plan B moves it outside that pT
+interval. The output stores the four no-prehydro-to-Plan-B Soft Drop states,
+paired `PtD` and `NormalPtD` shifts (including common-sample ratios of means),
+and incremental fractional loss for all,
+quark-tagged, gluon-tagged, Soft-Drop, and wake-excluded effective-multiplicity
+categories. Event-level jackknife errors are the nominal statistical errors.
+The delete-one-`hydroIndex` block error, effective number of weighted event
+contributors, and largest single-event weight fraction provide correlated
+hydro and weight-tail checks.
+
+Because `NormalEffectiveMultiplicity=1/NormalPtD^2`, conditioning on its
+single-like or many-like ranges and then inspecting a `NormalPtD` shift has a
+built-in boundary correlation. Those rows diagnose migration; the matched-pT
+loss versus the fixed no-prehydro class is the corresponding physics-facing
+test.
+
 The negative-particle treatment follows the jet-level ghost-association and
 four-vector-subtraction construction described for 4MomSub in
 [arXiv:1612.05116](https://arxiv.org/abs/1612.05116). Its use for the negative

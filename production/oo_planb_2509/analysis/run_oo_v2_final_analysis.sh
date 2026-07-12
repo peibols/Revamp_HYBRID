@@ -20,6 +20,7 @@ JET20_OUT="${OUT}/jets/inclusive_pt20"
 JET30_OUT="${OUT}/jets/inclusive_pt30"
 JET_SLICE_OUT="${OUT}/jets/pt_slices"
 JET_CHARGE_OUT="${OUT}/jets/charge_response"
+JET_PAIRED_OUT="${OUT}/jets/paired_substructure"
 FINAL_MARKER="${OUT}/v2_final_analysis_complete.txt"
 
 test -s "${STRICT_MARKER}"
@@ -31,7 +32,7 @@ test -s "${TASK_MANIFEST}"
 
 mkdir -p "${RAA_OUT}" "$(dirname -- "${ROOT_OUT}")" \
   "${JET20_OUT}" "${JET30_OUT}" "${JET_SLICE_OUT}" "${JET_CHARGE_OUT}" \
-  "${BUILD_DIR}"
+  "${JET_PAIRED_OUT}" "${BUILD_DIR}"
 
 python3 "${SCRIPT_DIR}/analyze_oo_prehydro_pair.py" \
   --local-eos "${LOCAL_EOS}" \
@@ -95,6 +96,28 @@ python3 "${SCRIPT_DIR}/plot_oo_jet_charge_response.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_CHARGE_OUT}" \
   --pt-min 80 --prefix oo5360_v2_50k_jet_charge_response_pt80plus
 
+python3 "${SCRIPT_DIR}/plot_oo_jet_paired_substructure.py" \
+  --input-root "${ROOT_OUT}" --out-dir "${JET_PAIRED_OUT}" \
+  --pt-min 20 --prefix oo5360_v2_50k_jet_paired_substructure_pt20
+python3 "${SCRIPT_DIR}/plot_oo_jet_paired_substructure.py" \
+  --input-root "${ROOT_OUT}" --out-dir "${JET_PAIRED_OUT}" \
+  --pt-min 30 --prefix oo5360_v2_50k_jet_paired_substructure_pt30
+python3 "${SCRIPT_DIR}/plot_oo_jet_paired_substructure.py" \
+  --input-root "${ROOT_OUT}" --out-dir "${JET_PAIRED_OUT}" \
+  --pt-min 20 --pt-max 30 \
+  --prefix oo5360_v2_50k_jet_paired_substructure_pt20to30
+python3 "${SCRIPT_DIR}/plot_oo_jet_paired_substructure.py" \
+  --input-root "${ROOT_OUT}" --out-dir "${JET_PAIRED_OUT}" \
+  --pt-min 30 --pt-max 50 \
+  --prefix oo5360_v2_50k_jet_paired_substructure_pt30to50
+python3 "${SCRIPT_DIR}/plot_oo_jet_paired_substructure.py" \
+  --input-root "${ROOT_OUT}" --out-dir "${JET_PAIRED_OUT}" \
+  --pt-min 50 --pt-max 80 \
+  --prefix oo5360_v2_50k_jet_paired_substructure_pt50to80
+python3 "${SCRIPT_DIR}/plot_oo_jet_paired_substructure.py" \
+  --input-root "${ROOT_OUT}" --out-dir "${JET_PAIRED_OUT}" \
+  --pt-min 80 --prefix oo5360_v2_50k_jet_paired_substructure_pt80plus
+
 python3 "${SCRIPT_DIR}/summarize_oo_jet_pt_slices.py" \
   --slice-metadata \
     "${JET_SLICE_OUT}/oo5360_v2_50k_jet_variables_pt20to30_metadata.json" \
@@ -110,7 +133,8 @@ python3 - \
   "${ROOT_OUT%.root}.summary.json" \
   "${JET_SLICE_OUT}/oo5360_v2_50k_jet_pt_slice_summary_validation.json" \
   "${TASK_MANIFEST}" \
-  "${TARGET}" <<'PY'
+  "${TARGET}" \
+  "${JET_PAIRED_OUT}" <<'PY'
 import hashlib
 import json
 import math
@@ -119,6 +143,7 @@ import sys
 
 conversion_path, closure_path, manifest_path = map(Path, sys.argv[1:4])
 target = int(sys.argv[4])
+paired_dir = Path(sys.argv[5])
 conversion = json.loads(conversion_path.read_text())
 closure = json.loads(closure_path.read_text())
 expected_manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
@@ -146,6 +171,26 @@ if any(
     for difference in radius.values()
 ):
     raise SystemExit("jet-pT slice closure exceeds 1e-12 mb")
+paired_metadata = sorted(paired_dir.glob("*_metadata.json"))
+if len(paired_metadata) != 6:
+    raise SystemExit(
+        f"expected six paired-substructure metadata files, found "
+        f"{len(paired_metadata)}"
+    )
+for metadata_path in paired_metadata:
+    paired = json.loads(metadata_path.read_text())
+    if paired.get("pairCount") != target:
+        raise SystemExit(
+            f"{metadata_path.name} used {paired.get('pairCount')} pairs, "
+            f"expected {target}"
+        )
+    if any(
+        radius.get("pairPtAudit") != "PASS"
+        or radius.get("pairHardTagAudit") != "PASS"
+        or radius.get("oneToOneMatchAudit") != "PASS"
+        for radius in paired.get("radii", {}).values()
+    ):
+        raise SystemExit(f"paired match audit failed in {metadata_path.name}")
 PY
 
 source_commit="$(git -C "${SOURCE}" rev-parse HEAD)"
@@ -163,6 +208,7 @@ jet_pt20_dir=${JET20_OUT}
 jet_pt30_dir=${JET30_OUT}
 jet_slice_dir=${JET_SLICE_OUT}
 jet_charge_response_dir=${JET_CHARGE_OUT}
+jet_paired_substructure_dir=${JET_PAIRED_OUT}
 status=PASS
 EOF
 echo "Wrote ${FINAL_MARKER}"

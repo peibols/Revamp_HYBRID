@@ -324,6 +324,7 @@ executable = run_chunk_job.sh
 arguments = \$(chunk_id)
 should_transfer_files = YES
 when_to_transfer_output = ON_EXIT
+transfer_output_files = ""
 # Physics archives and status records are uploaded to EOS by the wrapper.
 output = /dev/null
 error = /dev/null
@@ -341,6 +342,7 @@ executable = run_chunk_job.sh
 arguments = \$(chunk_id)
 should_transfer_files = YES
 when_to_transfer_output = ON_EXIT
+transfer_output_files = ""
 # Physics archives and status records are uploaded to EOS by the wrapper.
 output = /dev/null
 error = /dev/null

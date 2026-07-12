@@ -201,23 +201,21 @@ def query_jobs(
     return states, active_aa, held_aa
 
 
-def remove_strict_ready_holds(
+def remove_terminal_holds(
     args: argparse.Namespace,
     held_aa: set[int],
     ready: set[int],
-) -> bool:
+) -> set[int]:
     if not held_aa:
-        return False
-    unresolved = held_aa - ready
-    if unresolved:
-        log(
-            f"retaining {len(held_aa)} held task(s): "
-            f"{len(unresolved)} lack strict EOS pairs"
-        )
-        return False
+        return set()
+    strict_ready = held_aa & ready
+    needs_retry = held_aa - ready
     if args.dry_run:
-        log(f"dry run: would remove {len(held_aa)} strict-ready held task(s)")
-        return False
+        log(
+            f"dry run: would remove {len(held_aa)} terminal held task(s): "
+            f"{len(strict_ready)} strict-ready, {len(needs_retry)} need retry"
+        )
+        return set()
     constraint = (
         f'regexp("{args.campaign}", Environment) && JobStatus == 5'
     )
@@ -230,8 +228,11 @@ def remove_strict_ready_holds(
         text=True,
         capture_output=True,
     )
-    log(f"removed {len(held_aa)} held task(s) with strict EOS pairs")
-    return True
+    log(
+        f"removed {len(held_aa)} terminal held task(s): "
+        f"{len(strict_ready)} strict-ready, {len(needs_retry)} need retry"
+    )
+    return set(held_aa)
 
 
 def sync_eos(args: argparse.Namespace, local_eos: Path) -> None:
@@ -323,6 +324,24 @@ def render_retry_submit(
     if not queue.search(template):
         raise ValueError("AA submit template has no chunk-id queue statement")
     rendered = queue.sub(f"queue chunk_id from {id_file}", template)
+    transfer_pattern = re.compile(
+        r"^transfer_output_files\s*=.*$", re.MULTILINE
+    )
+    if transfer_pattern.search(rendered):
+        rendered = transfer_pattern.sub(
+            'transfer_output_files = ""', rendered, count=1
+        )
+    else:
+        transfer_marker = re.compile(
+            r"^(when_to_transfer_output\s*=.*)$", re.MULTILINE
+        )
+        if not transfer_marker.search(rendered):
+            raise ValueError(
+                "AA submit template has no output-transfer marker"
+            )
+        rendered = transfer_marker.sub(
+            '\\1\ntransfer_output_files = ""', rendered, count=1
+        )
     for field in ("output", "error"):
         pattern = re.compile(rf"^({field}\s*=\s*log/)([^\n]+)$", re.MULTILINE)
         if pattern.search(rendered):
@@ -453,8 +472,7 @@ def supervise_once(args: argparse.Namespace) -> bool:
         f"Condor states={dict(sorted(states.items()))}; "
         f"active_AA={len(active_aa)} ready={len(ready)}/{args.target}"
     )
-    if remove_strict_ready_holds(args, held_aa, ready):
-        active_aa -= held_aa
+    active_aa -= remove_terminal_holds(args, held_aa, ready)
 
     done = completed_milestones(state_path)
     for task_limit in range(args.block_size, args.target + 1, args.block_size):

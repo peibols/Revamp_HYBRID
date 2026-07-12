@@ -8,6 +8,7 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).with_name("supervise_oo_v2.py")
@@ -74,6 +75,7 @@ class V2SupervisorTest(unittest.TestCase):
         template = """output = log/aa.$(ClusterId).out
 error = log/aa.$(ClusterId).err
 log = log/aa.$(ClusterId).log
+when_to_transfer_output = ON_EXIT
 queue chunk_id from aa_chunk_ids.txt
 """
         rendered = MODULE.render_retry_submit(
@@ -86,6 +88,7 @@ queue chunk_id from aa_chunk_ids.txt
         self.assertIn("output = log/v2_retry_stamp_aa.$(ClusterId).out", rendered)
         self.assertIn("error = log/v2_retry_stamp_aa.$(ClusterId).err", rendered)
         self.assertIn("TIMEOUT_S=72000", rendered)
+        self.assertIn('transfer_output_files = ""', rendered)
 
     def test_batched_ids_are_sorted_and_respect_submission_limit(self) -> None:
         batches = MODULE.batched_ids({8, 1, 5, 2, 9}, 2)
@@ -95,6 +98,7 @@ queue chunk_id from aa_chunk_ids.txt
         template = """output = /dev/null
 error = /dev/null
 log = log/aa.$(ClusterId).log
+when_to_transfer_output = ON_EXIT
 queue chunk_id from aa_chunk_ids.txt
 """
         rendered = MODULE.render_retry_submit(
@@ -107,10 +111,33 @@ queue chunk_id from aa_chunk_ids.txt
         self.assertIn("error = /dev/null", rendered)
         self.assertIn("log = log/v2_retry_stamp_aa.$(ClusterId).log", rendered)
         self.assertIn("queue chunk_id from retry_ids.txt", rendered)
+        self.assertIn('transfer_output_files = ""', rendered)
 
-    def test_dry_run_retains_strict_ready_holds(self) -> None:
+    def test_dry_run_reports_but_retains_terminal_holds(self) -> None:
         args = type("Args", (), {"dry_run": True})()
-        self.assertFalse(MODULE.remove_strict_ready_holds(args, {3, 7}, {3, 7}))
+        self.assertEqual(
+            MODULE.remove_terminal_holds(args, {3, 7}, {3}),
+            set(),
+        )
+
+    def test_terminal_holds_are_removed_for_retry_or_cleanup(self) -> None:
+        args = type(
+            "Args",
+            (),
+            {
+                "dry_run": False,
+                "campaign": "campaign",
+                "schedd": "schedd",
+                "cernctl": "cernctl",
+            },
+        )()
+        with patch.object(MODULE.subprocess, "run") as run:
+            removed = MODULE.remove_terminal_holds(args, {3, 7}, {3})
+        self.assertEqual(removed, {3, 7})
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        self.assertEqual(command[:3], ["cernctl", "run", "bash"])
+        self.assertIn("condor_rm", command[-1])
 
 
 if __name__ == "__main__":

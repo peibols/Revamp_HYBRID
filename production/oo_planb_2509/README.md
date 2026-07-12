@@ -42,6 +42,7 @@ python3 analysis/test_analyze_oo_prehydro_pair.py -v
 python3 analysis/test_convert_oo_paired_to_root.py -v
 python3 analysis/test_plot_oo_jet_variables.py -v
 python3 analysis/test_plot_oo_jet_charge_response.py -v
+python3 analysis/test_plot_oo_jet_paired_substructure.py -v
 python3 analysis/test_summarize_oo_jet_pt_slices.py -v
 python3 cern_support/test_monitor_oo_1m_prehydro_raa.py -v
 python3 cern_support/test_run_chunk_job.py -v
@@ -90,6 +91,25 @@ jet. Quark/gluon subsets require the same outgoing hard-marker PDG ID in both
 variants. This is a final-state correlation study; a causal count of charges
 active at hydro start requires retaining the shower formation timeline.
 
+`analysis/plot_oo_jet_paired_substructure.py` performs the migration-safe
+follow-up for Soft Drop and momentum dispersion. It selects only the
+no-prehydro jet in pT and eta, follows its one-to-one pair-axis match without
+placing a second pT cut on the Plan-B jet, and reports the full fail/pass
+transition matrix. It also measures paired changes in `PtD`, normal-only
+`PtD`, their ratio-of-means shifts on the common matched set, and
+`1-pT(Plan B)/pT(no prehydro)` for all, quark-tagged, gluon-tagged,
+Soft-Drop, and normal-effective-multiplicity subsets. The biased-PYTHIA event
+weight is applied once. Delete-one-hard-event jackknife errors are nominal;
+delete-one-`hydroIndex` block errors and event-weight concentration diagnostics
+are retained in TSV and JSON outputs.
+
+The single-like and many-like classes are defined from no-prehydro
+`NormalPtD` through `NormalEffectiveMultiplicity=1/NormalPtD^2`. Their paired
+`PtD` shifts are therefore migration/closure diagnostics with an intrinsic
+category-boundary correlation, not independent evidence for a charge-count
+effect. The incremental matched-pT loss versus that fixed classifier is the
+physics-facing comparison.
+
 RAA plots use a logarithmic pT axis and the fixed edges
 `4,5,7,10,14,24,36,50,80,150 GeV`. These edges were selected once from the
 8426-pair pilot by requiring the worse relative statistical uncertainty of the
@@ -118,6 +138,13 @@ IDs are resubmitted explicitly after the array drains. The campaign-specific
 incrementally downloads them, audits their expected task IDs, runs the strict
 content analyzer, and resubmits missing, failed, or malformed live-root IDs
 until 50,000 parsed pairs are local.
+
+The V2 supervisor removes terminal held records after auditing EOS, including
+records whose physics archive is incomplete and must be retried. Retry submit
+files set `transfer_output_files = ""` because the wrapper uploads the guarded
+status and physics archive directly to EOS; this avoids a redundant Condor
+transfer into AFS after successful jobs and prevents an AFS quota failure from
+stalling final retries.
 
 ## Reproducibility Boundary
 
