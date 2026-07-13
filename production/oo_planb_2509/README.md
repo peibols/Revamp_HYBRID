@@ -136,6 +136,14 @@ entry point: it requires both markers to report `accepted_pairs=50000`, exits
 immediately if a final `status=PASS` marker already exists, and otherwise runs
 the same combined analysis when both halves are ready.
 
+For a clearly labeled completion-order provisional snapshot before exact
+closure, pass each disjoint local EOS mirror as a repeated `--source` to
+`analysis/freeze_oo_v2_snapshot.py`, together with the combined manifest. The
+freeze rejects overlapping task IDs, records per-source file counts and hashes,
+and hard-links only strict paired archives into one immutable `local_eos` tree.
+Run `analysis/run_oo_v2_provisional_snapshot.sh` on that frozen directory; its
+marker remains `PROVISIONAL_DIAGNOSTIC_NOT_UNBIASED` by construction.
+
 The wrapper separates physics output storage from immutable input storage.
 `EOS_BASE` receives the new status and output archives, `PAYLOAD_EOS_BASE`
 provides the pinned PYTHIA 8.315 and hydro archives, and

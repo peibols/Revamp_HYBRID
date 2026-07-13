@@ -85,14 +85,22 @@ def write_metadata_tsv(path: Path, metadata: dict[str, object]) -> None:
 
 def freeze_snapshot(
     *,
-    source: Path,
+    source: Path | None = None,
+    sources: list[Path] | None = None,
     manifest: Path,
     output: Path,
     source_repository: Path,
 ) -> dict[str, object]:
+    if source is not None and sources is not None:
+        raise ValueError("provide source or sources, not both")
+    source_paths = list(sources or ([] if source is None else [source]))
+    if not source_paths:
+        raise ValueError("at least one source is required")
+    source_paths = [path.resolve() for path in source_paths]
+    if len(set(source_paths)) != len(source_paths):
+        raise ValueError("snapshot sources must be unique")
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"{output} is not empty")
-    source = source.resolve()
     manifest = manifest.resolve()
     output.mkdir(parents=True, exist_ok=True)
     boundary = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -100,10 +108,22 @@ def freeze_snapshot(
     raw = output / "eos_snapshot_raw"
     raw_status = raw / "status/aa"
     raw_outputs = raw / "outputs/aa"
-    status_count = link_glob(source / "status/aa", raw_status, "chunk_*.txt")
-    output_count = link_glob(
-        source / "outputs/aa", raw_outputs, "chunk_*.tar.gz"
-    )
+    source_file_counts: dict[str, dict[str, int]] = {}
+    status_count = 0
+    output_count = 0
+    for source_path in source_paths:
+        source_status_count = link_glob(
+            source_path / "status/aa", raw_status, "chunk_*.txt"
+        )
+        source_output_count = link_glob(
+            source_path / "outputs/aa", raw_outputs, "chunk_*.tar.gz"
+        )
+        status_count += source_status_count
+        output_count += source_output_count
+        source_file_counts[str(source_path)] = {
+            "status_files": source_status_count,
+            "output_files": source_output_count,
+        }
 
     _, assignments = load_manifest(manifest)
     selected = sorted(ready_ids(raw))
@@ -138,6 +158,9 @@ def freeze_snapshot(
         "unique_hydro_slots": len(hydro_slots),
         "raw_status_files": status_count,
         "raw_output_files": output_count,
+        "source_count": len(source_paths),
+        "sources": [str(path) for path in source_paths],
+        "source_file_counts": source_file_counts,
         "task_id_list_sha256": sha256(accepted_path),
         "task_manifest_sha256": sha256(frozen_manifest),
         "source_commit": git_head(source_repository.resolve()) or "unknown",
@@ -153,7 +176,7 @@ def freeze_snapshot(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--source", type=Path, action="append", required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-repository", type=Path, required=True)
@@ -163,7 +186,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     metadata = freeze_snapshot(
-        source=args.source,
+        sources=args.source,
         manifest=args.manifest,
         output=args.output,
         source_repository=args.source_repository,

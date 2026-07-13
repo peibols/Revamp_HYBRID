@@ -90,6 +90,54 @@ class FreezeSnapshotTest(unittest.TestCase):
             )
             self.assertEqual(selected.stat().st_ino, (source / "outputs/aa/chunk_1.tar.gz").stat().st_ino)
 
+    def test_combines_disjoint_sources_and_records_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sources = [root / "first", root / "continuation"]
+            for source, task_id in zip(sources, (1, 3), strict=True):
+                (source / "status/aa").mkdir(parents=True)
+                (source / "outputs/aa").mkdir(parents=True)
+                (source / f"status/aa/chunk_{task_id}.txt").write_text(
+                    "status=success\n"
+                )
+                self.write_pair(
+                    source / f"outputs/aa/chunk_{task_id}.tar.gz", task_id
+                )
+            manifest = root / "manifest.tsv"
+            with manifest.open("w", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=("task_id", "hydro_slot"),
+                    delimiter="\t",
+                    lineterminator="\n",
+                )
+                writer.writeheader()
+                writer.writerows(
+                    ({"task_id": 1, "hydro_slot": 3}, {"task_id": 3, "hydro_slot": 4})
+                )
+
+            output = root / "frozen"
+            metadata = MODULE.freeze_snapshot(
+                sources=sources,
+                manifest=manifest,
+                output=output,
+                source_repository=root,
+            )
+
+            self.assertEqual(metadata["strict_accepted_pairs"], 2)
+            self.assertEqual(metadata["source_count"], 2)
+            self.assertEqual(metadata["raw_status_files"], 2)
+            self.assertEqual(metadata["raw_output_files"], 2)
+            self.assertEqual(
+                (output / "accepted_task_ids.txt").read_text(), "1\n3\n"
+            )
+            for source, task_id in zip(sources, (1, 3), strict=True):
+                selected = output / f"local_eos/outputs/aa/chunk_{task_id}.tar.gz"
+                self.assertEqual(
+                    selected.stat().st_ino,
+                    (source / f"outputs/aa/chunk_{task_id}.tar.gz").stat().st_ino,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
