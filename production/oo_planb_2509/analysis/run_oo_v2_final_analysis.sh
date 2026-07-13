@@ -6,45 +6,82 @@ SOURCE="${SOURCE:-$(cd -- "${SCRIPT_DIR}/../../.." && pwd)}"
 ROOT="${ROOT:-/raid5/data/yjlee/hybrid_dev}"
 WORK="${WORK:-${ROOT}/test/oo5360_v2_500hydro_50k_20260711}"
 LOCAL_EOS="${LOCAL_EOS:-${WORK}/eos_snapshot}"
+ADDITIONAL_LOCAL_EOS="${ADDITIONAL_LOCAL_EOS:-}"
 PP_LOCAL_EOS="${PP_LOCAL_EOS:-${ROOT}/test/tmp_oo_10k_prehydro_raa_20260709/local_eos}"
 PP_JET_CACHE="${PP_JET_CACHE:-${PP_LOCAL_EOS}/analysis_cache/oo5360_pp1m_jet_spectrum_r01020408_v2.tsv}"
 TASK_MANIFEST="${TASK_MANIFEST:-${WORK}/hydro_prepared/aa_task_manifest.tsv}"
 STRICT_MARKER="${STRICT_MARKER:-${WORK}/v2_50k_strict_complete.txt}"
+ADDITIONAL_STRICT_MARKER="${ADDITIONAL_STRICT_MARKER:-}"
 OUT="${OUT:-${WORK}/final_analysis}"
 BUILD_DIR="${BUILD_DIR:-${ROOT}/test/tmp_oo_v2_final_root_build}"
 OVERWRITE="${OVERWRITE:-false}"
+PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-false}"
+TARGET="${TARGET:-50000}"
+TAG="${TAG:-50k}"
+PREFIX="${PREFIX:-oo5360_v2_${TAG}}"
 
-TARGET=50000
 RAA_OUT="${OUT}/hadron_raa"
-ROOT_OUT="${OUT}/root/oo5360_c0_5_planb_v2_50k.root"
+ROOT_OUT="${ROOT_OUT:-${OUT}/root/oo5360_c0_5_planb_v2_${TAG}.root}"
 JET20_OUT="${OUT}/jets/inclusive_pt20"
 JET_RAA_OUT="${OUT}/jets/raa"
 JET30_OUT="${OUT}/jets/inclusive_pt30"
 JET_SLICE_OUT="${OUT}/jets/pt_slices"
 JET_CHARGE_OUT="${OUT}/jets/charge_response"
 JET_PAIRED_OUT="${OUT}/jets/paired_substructure"
-FINAL_MARKER="${OUT}/v2_final_analysis_complete.txt"
+FINAL_MARKER="${FINAL_MARKER:-${OUT}/v2_final_analysis_complete.txt}"
+
+if ! [[ "${TARGET}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "TARGET must be a positive integer, got: ${TARGET}" >&2
+  exit 1
+fi
 
 test -s "${STRICT_MARKER}"
 test -d "${LOCAL_EOS}/status/aa"
 test -d "${LOCAL_EOS}/outputs/aa"
+if [[ -n "${ADDITIONAL_STRICT_MARKER}" ]]; then
+  test -s "${ADDITIONAL_STRICT_MARKER}"
+fi
+if [[ -n "${ADDITIONAL_LOCAL_EOS}" ]]; then
+  test -d "${ADDITIONAL_LOCAL_EOS}/status/aa"
+  test -d "${ADDITIONAL_LOCAL_EOS}/outputs/aa"
+fi
 test -d "${PP_LOCAL_EOS}/status/pp"
 test -d "${PP_LOCAL_EOS}/outputs/pp"
+test -s "${PP_JET_CACHE}"
 test -s "${TASK_MANIFEST}"
+
+case "${PREFLIGHT_ONLY}" in
+  1|true|TRUE)
+    printf 'target=%s\ntag=%s\nprimary_local_eos=%s\nadditional_local_eos=%s\n' \
+      "${TARGET}" "${TAG}" "${LOCAL_EOS}" "${ADDITIONAL_LOCAL_EOS}"
+    printf 'task_manifest=%s\nstrict_marker=%s\nadditional_strict_marker=%s\n' \
+      "${TASK_MANIFEST}" "${STRICT_MARKER}" "${ADDITIONAL_STRICT_MARKER}"
+    printf 'output=%s\nfinal_marker=%s\nstatus=PREFLIGHT_PASS\n' \
+      "${OUT}" "${FINAL_MARKER}"
+    exit 0
+    ;;
+  0|false|FALSE) ;;
+  *) echo "PREFLIGHT_ONLY must be true or false, got: ${PREFLIGHT_ONLY}" >&2; exit 1 ;;
+esac
 
 mkdir -p "${RAA_OUT}" "$(dirname -- "${ROOT_OUT}")" \
   "${JET20_OUT}" "${JET30_OUT}" "${JET_RAA_OUT}" "${JET_SLICE_OUT}" "${JET_CHARGE_OUT}" \
   "${JET_PAIRED_OUT}" "${BUILD_DIR}"
 
-python3 "${SCRIPT_DIR}/analyze_oo_prehydro_pair.py" \
-  --local-eos "${LOCAL_EOS}" \
-  --pp-local-eos "${PP_LOCAL_EOS}" \
-  --out-dir "${RAA_OUT}" \
-  --require-paired-aa \
-  --aa-events-per-chunk 1 \
-  --aa-task-manifest "${TASK_MANIFEST}" \
-  --aa-task-limit "${TARGET}" \
+raa_args=(
+  --local-eos "${LOCAL_EOS}"
+  --pp-local-eos "${PP_LOCAL_EOS}"
+  --out-dir "${RAA_OUT}"
+  --require-paired-aa
+  --aa-events-per-chunk 1
+  --aa-task-manifest "${TASK_MANIFEST}"
+  --aa-task-limit "${TARGET}"
   --require-complete-aa-prefix
+)
+if [[ -n "${ADDITIONAL_LOCAL_EOS}" ]]; then
+  raa_args+=(--additional-aa-local-eos "${ADDITIONAL_LOCAL_EOS}")
+fi
+python3 "${SCRIPT_DIR}/analyze_oo_prehydro_pair.py" "${raa_args[@]}"
 
 converter_args=(
   --source "v2=${LOCAL_EOS}"
@@ -53,6 +90,9 @@ converter_args=(
   --build-dir "${BUILD_DIR}"
   --progress-every 500
 )
+if [[ -n "${ADDITIONAL_LOCAL_EOS}" ]]; then
+  converter_args+=(--source "v2_continuation=${ADDITIONAL_LOCAL_EOS}")
+fi
 case "${OVERWRITE}" in
   1|true|TRUE) converter_args+=(--overwrite) ;;
   0|false|FALSE) ;;
@@ -70,78 +110,78 @@ python3 "${SCRIPT_DIR}/analyze_oo_jet_raa.py" \
 
 python3 "${SCRIPT_DIR}/plot_oo_jet_variables.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET20_OUT}" \
-  --pt-min 20 --prefix oo5360_v2_50k_jet_variables_pt20
+  --pt-min 20 --prefix "${PREFIX}_jet_variables_pt20"
 python3 "${SCRIPT_DIR}/plot_oo_jet_variables.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET30_OUT}" \
-  --pt-min 30 --prefix oo5360_v2_50k_jet_variables_pt30
+  --pt-min 30 --prefix "${PREFIX}_jet_variables_pt30"
 python3 "${SCRIPT_DIR}/plot_oo_jet_variables.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_SLICE_OUT}" \
-  --pt-min 20 --pt-max 30 --prefix oo5360_v2_50k_jet_variables_pt20to30
+  --pt-min 20 --pt-max 30 --prefix "${PREFIX}_jet_variables_pt20to30"
 python3 "${SCRIPT_DIR}/plot_oo_jet_variables.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_SLICE_OUT}" \
-  --pt-min 30 --pt-max 50 --prefix oo5360_v2_50k_jet_variables_pt30to50
+  --pt-min 30 --pt-max 50 --prefix "${PREFIX}_jet_variables_pt30to50"
 python3 "${SCRIPT_DIR}/plot_oo_jet_variables.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_SLICE_OUT}" \
-  --pt-min 50 --pt-max 80 --prefix oo5360_v2_50k_jet_variables_pt50to80
+  --pt-min 50 --pt-max 80 --prefix "${PREFIX}_jet_variables_pt50to80"
 python3 "${SCRIPT_DIR}/plot_oo_jet_variables.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_SLICE_OUT}" \
-  --pt-min 80 --prefix oo5360_v2_50k_jet_variables_pt80plus
+  --pt-min 80 --prefix "${PREFIX}_jet_variables_pt80plus"
 
 python3 "${SCRIPT_DIR}/plot_oo_jet_charge_response.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_CHARGE_OUT}" \
-  --pt-min 20 --prefix oo5360_v2_50k_jet_charge_response_pt20
+  --pt-min 20 --prefix "${PREFIX}_jet_charge_response_pt20"
 python3 "${SCRIPT_DIR}/plot_oo_jet_charge_response.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_CHARGE_OUT}" \
-  --pt-min 30 --prefix oo5360_v2_50k_jet_charge_response_pt30
+  --pt-min 30 --prefix "${PREFIX}_jet_charge_response_pt30"
 python3 "${SCRIPT_DIR}/plot_oo_jet_charge_response.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_CHARGE_OUT}" \
-  --pt-min 20 --pt-max 30 --prefix oo5360_v2_50k_jet_charge_response_pt20to30
+  --pt-min 20 --pt-max 30 --prefix "${PREFIX}_jet_charge_response_pt20to30"
 python3 "${SCRIPT_DIR}/plot_oo_jet_charge_response.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_CHARGE_OUT}" \
-  --pt-min 30 --pt-max 50 --prefix oo5360_v2_50k_jet_charge_response_pt30to50
+  --pt-min 30 --pt-max 50 --prefix "${PREFIX}_jet_charge_response_pt30to50"
 python3 "${SCRIPT_DIR}/plot_oo_jet_charge_response.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_CHARGE_OUT}" \
-  --pt-min 50 --pt-max 80 --prefix oo5360_v2_50k_jet_charge_response_pt50to80
+  --pt-min 50 --pt-max 80 --prefix "${PREFIX}_jet_charge_response_pt50to80"
 python3 "${SCRIPT_DIR}/plot_oo_jet_charge_response.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_CHARGE_OUT}" \
-  --pt-min 80 --prefix oo5360_v2_50k_jet_charge_response_pt80plus
+  --pt-min 80 --prefix "${PREFIX}_jet_charge_response_pt80plus"
 
 python3 "${SCRIPT_DIR}/plot_oo_jet_paired_substructure.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_PAIRED_OUT}" \
-  --pt-min 20 --prefix oo5360_v2_50k_jet_paired_substructure_pt20
+  --pt-min 20 --prefix "${PREFIX}_jet_paired_substructure_pt20"
 python3 "${SCRIPT_DIR}/plot_oo_jet_paired_substructure.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_PAIRED_OUT}" \
-  --pt-min 30 --prefix oo5360_v2_50k_jet_paired_substructure_pt30
+  --pt-min 30 --prefix "${PREFIX}_jet_paired_substructure_pt30"
 python3 "${SCRIPT_DIR}/plot_oo_jet_paired_substructure.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_PAIRED_OUT}" \
   --pt-min 20 --pt-max 30 \
-  --prefix oo5360_v2_50k_jet_paired_substructure_pt20to30
+  --prefix "${PREFIX}_jet_paired_substructure_pt20to30"
 python3 "${SCRIPT_DIR}/plot_oo_jet_paired_substructure.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_PAIRED_OUT}" \
   --pt-min 30 --pt-max 50 \
-  --prefix oo5360_v2_50k_jet_paired_substructure_pt30to50
+  --prefix "${PREFIX}_jet_paired_substructure_pt30to50"
 python3 "${SCRIPT_DIR}/plot_oo_jet_paired_substructure.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_PAIRED_OUT}" \
   --pt-min 50 --pt-max 80 \
-  --prefix oo5360_v2_50k_jet_paired_substructure_pt50to80
+  --prefix "${PREFIX}_jet_paired_substructure_pt50to80"
 python3 "${SCRIPT_DIR}/plot_oo_jet_paired_substructure.py" \
   --input-root "${ROOT_OUT}" --out-dir "${JET_PAIRED_OUT}" \
-  --pt-min 80 --prefix oo5360_v2_50k_jet_paired_substructure_pt80plus
+  --pt-min 80 --prefix "${PREFIX}_jet_paired_substructure_pt80plus"
 
 python3 "${SCRIPT_DIR}/summarize_oo_jet_pt_slices.py" \
   --slice-metadata \
-    "${JET_SLICE_OUT}/oo5360_v2_50k_jet_variables_pt20to30_metadata.json" \
-    "${JET_SLICE_OUT}/oo5360_v2_50k_jet_variables_pt30to50_metadata.json" \
-    "${JET_SLICE_OUT}/oo5360_v2_50k_jet_variables_pt50to80_metadata.json" \
-    "${JET_SLICE_OUT}/oo5360_v2_50k_jet_variables_pt80plus_metadata.json" \
+    "${JET_SLICE_OUT}/${PREFIX}_jet_variables_pt20to30_metadata.json" \
+    "${JET_SLICE_OUT}/${PREFIX}_jet_variables_pt30to50_metadata.json" \
+    "${JET_SLICE_OUT}/${PREFIX}_jet_variables_pt50to80_metadata.json" \
+    "${JET_SLICE_OUT}/${PREFIX}_jet_variables_pt80plus_metadata.json" \
   --inclusive-metadata \
-    "${JET20_OUT}/oo5360_v2_50k_jet_variables_pt20_metadata.json" \
+    "${JET20_OUT}/${PREFIX}_jet_variables_pt20_metadata.json" \
   --out-dir "${JET_SLICE_OUT}" \
-  --prefix oo5360_v2_50k_jet_pt_slice_summary
+  --prefix "${PREFIX}_jet_pt_slice_summary"
 
 python3 - \
   "${ROOT_OUT%.root}.summary.json" \
-  "${JET_SLICE_OUT}/oo5360_v2_50k_jet_pt_slice_summary_validation.json" \
+  "${JET_SLICE_OUT}/${PREFIX}_jet_pt_slice_summary_validation.json" \
   "${TASK_MANIFEST}" \
   "${TARGET}" \
   "${JET_PAIRED_OUT}" \
@@ -176,6 +216,8 @@ if conversion["rejectedArchives"] != 0 or conversion["skippedChunkRecords"] != 0
 manifest = conversion.get("aaTaskManifest")
 if manifest is None or manifest["rows"] != target:
     raise SystemExit("ROOT conversion did not record the complete task manifest")
+if manifest.get("acceptedRows") != target or manifest.get("closure") != "PASS":
+    raise SystemExit("ROOT conversion did not pass exact task-manifest closure")
 if manifest["sha256"] != expected_manifest_sha:
     raise SystemExit("ROOT conversion task-manifest SHA256 does not match")
 if closure.get("status") != "PASS":
@@ -232,6 +274,8 @@ date=$(date -Is)
 accepted_pairs=${TARGET}
 source_commit=${source_commit}
 task_manifest_sha256=${manifest_sha256}
+primary_local_eos=${LOCAL_EOS}
+additional_local_eos=${ADDITIONAL_LOCAL_EOS}
 root_file=${ROOT_OUT}
 root_sha256=${root_sha256}
 raa_dir=${RAA_OUT}

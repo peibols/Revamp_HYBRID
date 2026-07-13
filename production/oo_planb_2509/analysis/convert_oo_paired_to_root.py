@@ -581,7 +581,10 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--aa-task-manifest",
         type=Path,
-        help="optional v2 task manifest used to validate seed and hydro provenance",
+        help=(
+            "optional combined v2 task manifest used to validate seed and hydro "
+            "provenance across all sources"
+        ),
     )
     return parser
 
@@ -599,8 +602,6 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
         if args.aa_task_manifest is not None
         else None
     )
-    if task_manifest is not None and len(sources) != 1:
-        raise ValueError("--aa-task-manifest requires exactly one --source")
     task_assignments = (
         load_aa_task_manifest(task_manifest) if task_manifest is not None else None
     )
@@ -656,6 +657,7 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
         "outputPath",
     ]
     accepted = 0
+    accepted_task_ids: set[int] = set()
     rejected = 0
     skipped = 0
     scanned = 0
@@ -727,6 +729,10 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
                     try:
                         pair = parse_paired_archive(archive_path, expected_chunk_id=chunk)
                         if task_assignments is not None:
+                            if chunk in accepted_task_ids:
+                                raise ArchiveValidationError(
+                                    f"task {chunk}: duplicate across AA sources"
+                                )
                             assignment = task_assignments.get(chunk)
                             if assignment is None:
                                 raise ArchiveValidationError(
@@ -755,6 +761,7 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
                     row["noPrehydroParticleRecords"] = len(pair.no_prehydro.particles)
                     row["withPrehydroParticleRecords"] = len(pair.with_prehydro.particles)
                     accepted += 1
+                    accepted_task_ids.add(chunk)
                     source_counts[source.name]["accepted"] += 1
                     audit_writer.writerow(row)
                     if accepted % args.progress_every == 0:
@@ -774,6 +781,17 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
                 raise RuntimeError(
                     f"ROOT writer exited with code {return_code}; inspect {writer_log}"
                 )
+            if task_assignments is not None and args.limit is None:
+                missing_task_ids = set(task_assignments) - accepted_task_ids
+                if missing_task_ids:
+                    preview = ",".join(
+                        str(value) for value in sorted(missing_task_ids)[:20]
+                    )
+                    raise RuntimeError(
+                        "AA task-manifest closure failed: "
+                        f"{len(missing_task_ids)} task(s) were not accepted; "
+                        f"first IDs: {preview}"
+                    )
         except BaseException:
             try:
                 process.stdin.close()
@@ -835,6 +853,12 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
                 "path": str(task_manifest),
                 "sha256": sha256(task_manifest),
                 "rows": len(task_assignments),
+                "acceptedRows": len(accepted_task_ids),
+                "closure": (
+                    "PASS"
+                    if args.limit is None and set(task_assignments) == accepted_task_ids
+                    else "NOT_REQUIRED_LIMITED"
+                ),
             }
             if task_manifest is not None and task_assignments is not None
             else None

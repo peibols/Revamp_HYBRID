@@ -124,6 +124,14 @@ the first campaign's Ncoll-weighted exposure to all 500 hydro events. The
 analyzer and supervisor accept shifted half-open task ranges through
 `--aa-task-start` and `--aa-task-limit`.
 
+After both 50k supervisors write their strict-completion markers, run
+`analysis/run_oo_v2_100k_final_analysis.sh`. It combines the two local EOS
+snapshots against `aa_task_manifest_combined_100k.tsv`, rejects duplicate or
+missing task IDs, requires exact 100,000-row manifest closure, and produces one
+100k ROOT file. Hadron RAA, jet RAA for R=0.1/0.2/0.4/0.8, inclusive and
+pT-sliced jet spectra/substructure, charge-response, and migration-safe paired
+substructure outputs are generated only after those gates pass.
+
 The wrapper separates physics output storage from immutable input storage.
 `EOS_BASE` receives the new status and output archives, `PAYLOAD_EOS_BASE`
 provides the pinned PYTHIA 8.315 and hydro archives, and

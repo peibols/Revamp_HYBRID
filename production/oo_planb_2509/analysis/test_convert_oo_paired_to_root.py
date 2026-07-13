@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -39,35 +40,43 @@ def add_member(tar: tarfile.TarFile, name: str, payload: bytes) -> None:
     tar.addfile(member, io.BytesIO(payload))
 
 
-def make_archive(path: Path, with_weight: float = 2.5) -> None:
+def make_archive(
+    path: Path,
+    with_weight: float = 2.5,
+    *,
+    task_id: int = 7,
+    seed: int = 12345,
+    hydro_index: int = 3,
+) -> None:
     base = "runs/campaign/aa/hydro_03_C0-5"
     payload_sha256 = "a" * 64
+    task = f"task_{task_id:05d}"
     pair_summary = (
         "kind\ttask_id\tseed\tevents\tcentrality\thydro_index\thydro_event_id"
         "\thydro_ncoll\thydro_payload_sha256\tvariant\tuse_prehydro"
         "\tprehydro_file\treturncode\ttimeout\tseconds\tdir\n"
-        f"aa\t7\t12345\t1\tC0-5\t3\t777\t42\t{payload_sha256}"
+        f"aa\t{task_id}\t{seed}\t1\tC0-5\t{hydro_index}\t777\t42\t{payload_sha256}"
         "\tno_prehydro\t0\t\t0\t0\t1.0\t/no\n"
-        f"aa\t7\t12345\t1\tC0-5\t3\t777\t42\t{payload_sha256}"
+        f"aa\t{task_id}\t{seed}\t1\tC0-5\t{hydro_index}\t777\t42\t{payload_sha256}"
         "\twith_prehydro\t1\tpre.tsv\t0\t0\t1.1\t/with\n"
     ).encode()
     summary_header = "variant\tuse_prehydro\tprehydro_file\treturncode\ttimeout\tseconds\tdir\n"
     with tarfile.open(path, "w:gz") as tar:
-        add_member(tar, f"{base}/task_00007_pair_summary.tsv", pair_summary)
+        add_member(tar, f"{base}/{task}_pair_summary.tsv", pair_summary)
         add_member(
             tar,
-            f"{base}/task_00007/summary.tsv",
+            f"{base}/{task}/summary.tsv",
             (summary_header + "no_prehydro\t0\t\t0\t0\t1.0\t/no\n").encode(),
         )
-        add_member(tar, f"{base}/task_00007/HYBRID_Hadrons.out", event_text(4.0))
+        add_member(tar, f"{base}/{task}/HYBRID_Hadrons.out", event_text(4.0))
         add_member(
             tar,
-            f"{base}/task_00007_prehydro/summary.tsv",
+            f"{base}/{task}_prehydro/summary.tsv",
             (summary_header + "with_prehydro\t1\tpre.tsv\t0\t0\t1.1\t/with\n").encode(),
         )
         add_member(
             tar,
-            f"{base}/task_00007_prehydro/HYBRID_Hadrons.out",
+            f"{base}/{task}_prehydro/HYBRID_Hadrons.out",
             event_text(3.5, with_weight),
         )
 
@@ -211,6 +220,107 @@ class ConverterTest(unittest.TestCase):
                 self.assertEqual(int(jets.jet2PairMatchOtherHardPartonId[0][0]), 21)
                 self.assertGreater(float(jets.jet4NegativeWakePt[0][0]), 0.0)
                 self.assertLess(float(jets.jet4Pt[0][0]), float(jets.jet4RawPt[0][0]))
+
+    @unittest.skipUnless(
+        shutil.which("root-config") and shutil.which("fastjet-config"),
+        "ROOT and FastJet are required",
+    )
+    def test_combined_manifest_validates_two_disjoint_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            sources = []
+            for name, task_id, seed, hydro_index in (
+                ("first", 7, 12345, 3),
+                ("continuation", 8, 12346, 4),
+            ):
+                source = work / name
+                (source / "outputs/aa").mkdir(parents=True)
+                (source / "status/aa").mkdir(parents=True)
+                make_archive(
+                    source / f"outputs/aa/chunk_{task_id}.tar.gz",
+                    task_id=task_id,
+                    seed=seed,
+                    hydro_index=hydro_index,
+                )
+                (source / f"status/aa/chunk_{task_id}.txt").write_text(
+                    f"kind=aa\ntask_id={task_id}\nstatus=success\nexit_code=0\n"
+                )
+                sources.append(source)
+
+            manifest = work / "aa_task_manifest.tsv"
+            manifest.write_text(
+                "task_id\thard_seed\thydro_slot\thydro_event_id\thydro_ncoll"
+                "\thydro_payload_sha256\n"
+                f"7\t12345\t3\t777\t42\t{'a' * 64}\n"
+                f"8\t12346\t4\t777\t42\t{'a' * 64}\n"
+            )
+            output = work / "paired.root"
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "--source",
+                    f"first={sources[0]}",
+                    "--source",
+                    f"continuation={sources[1]}",
+                    "--output",
+                    str(output),
+                    "--build-dir",
+                    str(work / "build"),
+                    "--aa-task-manifest",
+                    str(manifest),
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            summary = json.loads(output.with_suffix(".summary.json").read_text())
+            self.assertEqual(summary["acceptedPairs"], 2)
+            self.assertEqual(summary["aaTaskManifest"]["acceptedRows"], 2)
+            self.assertEqual(summary["aaTaskManifest"]["closure"], "PASS")
+
+    @unittest.skipUnless(
+        shutil.which("root-config") and shutil.which("fastjet-config"),
+        "ROOT and FastJet are required",
+    )
+    def test_manifest_closure_rejects_missing_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            source = work / "source"
+            (source / "outputs/aa").mkdir(parents=True)
+            (source / "status/aa").mkdir(parents=True)
+            make_archive(source / "outputs/aa/chunk_7.tar.gz")
+            (source / "status/aa/chunk_7.txt").write_text(
+                "kind=aa\ntask_id=7\nstatus=success\nexit_code=0\n"
+            )
+            manifest = work / "aa_task_manifest.tsv"
+            manifest.write_text(
+                "task_id\thard_seed\thydro_slot\thydro_event_id\thydro_ncoll"
+                "\thydro_payload_sha256\n"
+                f"7\t12345\t3\t777\t42\t{'a' * 64}\n"
+                f"8\t12346\t4\t777\t42\t{'a' * 64}\n"
+            )
+            output = work / "paired.root"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "--source",
+                    f"first={source}",
+                    "--output",
+                    str(output),
+                    "--build-dir",
+                    str(work / "build"),
+                    "--aa-task-manifest",
+                    str(manifest),
+                ],
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("AA task-manifest closure failed", result.stderr)
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":
