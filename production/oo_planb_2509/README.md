@@ -161,7 +161,9 @@ Only the Python runner and embedded 100k manifest change.
 
 Ten submit files with 10,000 jobs each respect the CERN per-submission limit.
 Condor output, error, and event logs are disabled because each wrapper uploads
-its status and physics archive directly to EOS. Run
+its status and physics archive directly to EOS. The initial jobs use priority
+`-10`, leaving the nearly complete V2 reference retries at priority `0` ahead
+of this new array. Run
 `cern_support/supervise_oo_prehydro_only.py` against the campaign work area to
 audit every archive and resubmit only missing, failed, or malformed task IDs.
 The strict audit rejects a wrong alpha, wrong seed or hydro provenance, a

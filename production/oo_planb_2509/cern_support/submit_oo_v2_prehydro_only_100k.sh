@@ -160,6 +160,7 @@ environment = "KIND=aa EOS_BASE=${EOS_BASE} PAYLOAD_EOS_BASE=${SHARED_PAYLOAD_EO
 +JobFlavour = "${JOB_FLAVOUR}"
 +JobBatchName = "OO_alpha0335_only_100k_part_${part}"
 +OOAlphaCampaign = "${CAMPAIGN}"
+priority = -10
 request_cpus = 1
 request_memory = 4000
 request_disk = 4000000
@@ -217,6 +218,7 @@ wrapper_sha256=${WRAPPER_SHA256}
 attractor_sha256=${EXPECTED_ATTRACTOR_SHA256}
 submit_parts=10
 jobs_per_submit=10000
+job_priority=-10
 condor_logs=/dev/null
 pp_generated=false
 reference_v2_first50k_eos=${SHARED_PAYLOAD_EOS_BASE}
