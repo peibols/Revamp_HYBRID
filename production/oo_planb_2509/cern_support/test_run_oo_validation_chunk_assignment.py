@@ -74,6 +74,30 @@ class V2AssignmentTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "contains 2 positions"):
                 MODULE.read_staged_hydro_metadata(hydro)
 
+    def test_write_input_records_requested_energy_loss_parameters(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "hybrid_input.dat"
+            MODULE.write_input(
+                path,
+                seed=900007,
+                events=1,
+                aa=True,
+                energy_loss_alpha=0.355,
+                broadening_k=15.0,
+                use_prehydro=True,
+            )
+            values = {
+                key.strip(): value.strip()
+                for key, value in (
+                    line.split("=", 1)
+                    for line in path.read_text().splitlines()
+                    if "=" in line
+                )
+            }
+            self.assertEqual(values["alpha"], "0.355")
+            self.assertEqual(values["kappa"], "15.0")
+            self.assertEqual(values["use_prehydro"], "true")
+
 
 if __name__ == "__main__":
     unittest.main()

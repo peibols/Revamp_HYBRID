@@ -117,8 +117,14 @@ from pathlib import Path
 p = argparse.ArgumentParser(add_help=False)
 p.add_argument('--run-name')
 p.add_argument('--aa-task-manifest')
+p.add_argument('--no-prehydro-alpha')
+p.add_argument('--prehydro-alpha')
+p.add_argument('--broadening-k')
 args, _ = p.parse_known_args()
 assert Path(args.aa_task_manifest).is_file()
+assert args.no_prehydro_alpha == '0.37'
+assert args.prehydro_alpha == '0.355'
+assert args.broadening_k == '15.0'
 hydro = Path('runtime/staged_hydro/C0-5_event_00345')
 assert (hydro / 'evolution_all_xyeta.dat').is_file()
 out = Path(args.run_name) / 'aa/fake/task_00007'
@@ -168,6 +174,9 @@ out.mkdir(parents=True)
                     "EVENTS": "1",
                     "RUN_NAME": "runs/v2_wrapper_test",
                     "RUN_PREHYDRO_PAIR": "false",
+                    "NO_PREHYDRO_ALPHA": "0.37",
+                    "PREHYDRO_ALPHA": "0.355",
+                    "BROADENING_K": "15.0",
                     "AA_TASK_MANIFEST": "runtime/aa_task_manifest.tsv",
                     "TOLERATE_CHUNK_FAILURE": "false",
                 }

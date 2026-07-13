@@ -20,6 +20,9 @@ fi
 LHAPDF_SET="${LHAPDF_SET:-EPPS21nlo_CT18Anlo_O16/0}"
 AA_CENTRALITY_INDEX="${AA_CENTRALITY_INDEX:--1}"
 RUN_PREHYDRO_PAIR="${RUN_PREHYDRO_PAIR:-false}"
+NO_PREHYDRO_ALPHA="${NO_PREHYDRO_ALPHA:-0.37}"
+PREHYDRO_ALPHA="${PREHYDRO_ALPHA:-0.37}"
+BROADENING_K="${BROADENING_K:-15.0}"
 PREHYDRO_TAU_MIN="${PREHYDRO_TAU_MIN:-0.24}"
 PREHYDRO_TAU_GRID="${PREHYDRO_TAU_GRID:-0.01,0.02,0.03,0.04,0.05,0.06,0.07,0.08,0.09,0.10,0.11,0.12,0.13,0.14,0.15,0.16,0.17,0.18,0.19,0.20,0.21,0.22,0.23,0.24,0.25,0.26,0.27,0.28,0.29,0.30,0.31,0.32,0.33,0.34,0.35,0.36,0.37,0.38,0.39,0.399}"
 PREHYDRO_ETA_OVER_S="${PREHYDRO_ETA_OVER_S:-0.12}"
@@ -63,6 +66,9 @@ finalize() {
   echo "status=$([[ $rc -eq 0 ]] && echo success || echo failed)" >> "$INITIAL_DIR/chunk_status.txt"
   echo "exit_code=$rc" >> "$INITIAL_DIR/chunk_status.txt"
   echo "date=$(date -Is)" >> "$INITIAL_DIR/chunk_status.txt"
+  echo "no_prehydro_alpha=${NO_PREHYDRO_ALPHA}" >> "$INITIAL_DIR/chunk_status.txt"
+  echo "prehydro_alpha=${PREHYDRO_ALPHA}" >> "$INITIAL_DIR/chunk_status.txt"
+  echo "broadening_k=${BROADENING_K}" >> "$INITIAL_DIR/chunk_status.txt"
   if [[ -n "${HYDRO_EVENT_ID}" ]]; then
     echo "hydro_slot=${HYDRO_SLOT}" >> "$INITIAL_DIR/chunk_status.txt"
     echo "hydro_event_id=${HYDRO_EVENT_ID}" >> "$INITIAL_DIR/chunk_status.txt"
@@ -216,7 +222,10 @@ args=(
   --lhapdf-set "$LHAPDF_SET" \
   --timeout-s "$TIMEOUT_S" \
   --run-name "$RUN_NAME" \
-  --aa-centrality-index "$AA_CENTRALITY_INDEX"
+  --aa-centrality-index "$AA_CENTRALITY_INDEX" \
+  --no-prehydro-alpha "$NO_PREHYDRO_ALPHA" \
+  --prehydro-alpha "$PREHYDRO_ALPHA" \
+  --broadening-k "$BROADENING_K"
 )
 if [[ "$RUN_PREHYDRO_PAIR" == "1" || "$RUN_PREHYDRO_PAIR" == "true" || "$RUN_PREHYDRO_PAIR" == "TRUE" ]]; then
   args+=(--run-prehydro-pair)

@@ -7,6 +7,8 @@ CERNCTL="${CERNCTL:-/data/yjlee/cernLxplus/cernctl}"
 CERN_REMOTE="${CERN_REMOTE:-lxplus}"
 CAMPAIGN="${CAMPAIGN:-hybrid_oo5360_c0_5_no_moliere_paired_prehydro_pthat4_unbounded_20260709}"
 EOS_BASE="${EOS_BASE:-/eos/user/y/yjlee/${CAMPAIGN}}"
+JOB_PAYLOAD_EOS_BASE="${JOB_PAYLOAD_EOS_BASE:-${EOS_BASE}}"
+JOB_RUNTIME_PAYLOAD_EOS_BASE="${JOB_RUNTIME_PAYLOAD_EOS_BASE:-${EOS_BASE}}"
 AFS_WORK="${AFS_WORK:-/afs/cern.ch/user/y/yjlee/cernLxplus_jobs/${CAMPAIGN}}"
 TMP_REMOTE="${TMP_REMOTE:-/tmp/yjlee_${CAMPAIGN}_payloads}"
 DRY_RUN="${DRY_RUN:-false}"
@@ -37,6 +39,9 @@ LHAPDF_CVMFS_VIEW="${LHAPDF_CVMFS_VIEW:-/cvmfs/sft.cern.ch/lcg/releases/MCGenera
 AA_CENTRALITY_INDEX="${AA_CENTRALITY_INDEX:-0}"
 AA_CENTRALITY_LABEL="${AA_CENTRALITY_LABEL:-C0-5}"
 RUN_PREHYDRO_PAIR="${RUN_PREHYDRO_PAIR:-true}"
+NO_PREHYDRO_ALPHA="${NO_PREHYDRO_ALPHA:-0.37}"
+PREHYDRO_ALPHA="${PREHYDRO_ALPHA:-0.37}"
+BROADENING_K="${BROADENING_K:-15.0}"
 PREHYDRO_TAU_MIN="${PREHYDRO_TAU_MIN:-0.24}"
 PREHYDRO_TAU_GRID="${PREHYDRO_TAU_GRID:-0.01,0.02,0.03,0.04,0.05,0.06,0.07,0.08,0.09,0.10,0.11,0.12,0.13,0.14,0.15,0.16,0.17,0.18,0.19,0.20,0.21,0.22,0.23,0.24,0.25,0.26,0.27,0.28,0.29,0.30,0.31,0.32,0.33,0.34,0.35,0.36,0.37,0.38,0.39,0.399}"
 PREHYDRO_ETA_OVER_S="${PREHYDRO_ETA_OVER_S:-0.12}"
@@ -68,6 +73,19 @@ for VALUE_NAME in AA_CHUNKS PP_CHUNKS AA_EVENTS PP_EVENTS; do
     exit 1
   fi
 done
+python3 - "${NO_PREHYDRO_ALPHA}" "${PREHYDRO_ALPHA}" "${BROADENING_K}" <<'PY'
+import math
+import sys
+
+names = ("NO_PREHYDRO_ALPHA", "PREHYDRO_ALPHA", "BROADENING_K")
+for name, raw in zip(names, sys.argv[1:]):
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise SystemExit(f"{name} must be numeric, got: {raw}") from exc
+    if not math.isfinite(value) or value < 0.0:
+        raise SystemExit(f"{name} must be finite and nonnegative, got: {raw}")
+PY
 case "${SUBMIT_PP}" in
   1|true|TRUE) SUBMIT_PP=true ;;
   0|false|FALSE) SUBMIT_PP=false ;;
@@ -163,7 +181,8 @@ fi
 PAIR_TAG="single"
 if [[ "${RUN_PREHYDRO_PAIR}" == "1" || "${RUN_PREHYDRO_PAIR}" == "true" || "${RUN_PREHYDRO_PAIR}" == "TRUE" ]]; then
   PREHYDRO_TAU_TAG="${PREHYDRO_TAU_MIN//./p}"
-  PAIR_TAG="pairedPrehydroTau${PREHYDRO_TAU_TAG}"
+  PREHYDRO_ALPHA_TAG="${PREHYDRO_ALPHA//./p}"
+  PAIR_TAG="pairedPrehydroTau${PREHYDRO_TAU_TAG}Alpha${PREHYDRO_ALPHA_TAG}"
 fi
 CENTRALITY_TAG="${AA_CENTRALITY_LABEL//-/_}"
 PDF_TAG="aa${AA_PDF_MODE}_pp${PP_PDF_MODE}"
@@ -200,6 +219,8 @@ fi
 
 echo "campaign=${CAMPAIGN}"
 echo "eos_base=${EOS_BASE}"
+echo "job_payload_eos_base=${JOB_PAYLOAD_EOS_BASE}"
+echo "job_runtime_payload_eos_base=${JOB_RUNTIME_PAYLOAD_EOS_BASE}"
 echo "afs_work=${AFS_WORK}"
 echo "mmli_source=${MMLI_SOURCE_ROOT}"
 echo "dry_run=${DRY_RUN}"
@@ -208,6 +229,7 @@ echo "aa_chunks=${AA_CHUNKS} aa_events_per_chunk=${AA_EVENTS} aa_total_events=${
 echo "submit_pp=${SUBMIT_PP} pp_chunks=${PP_CHUNKS} pp_events_per_chunk=${PP_EVENTS} pp_total_events=${PP_TOTAL_EVENTS} pp_reference_campaign=${PP_REFERENCE_CAMPAIGN:-none}"
 echo "job_flavour=${JOB_FLAVOUR} timeout_s=${TIMEOUT_S} pthat_min=${PTHAT_MIN} pthat_max=${PTHAT_MAX}"
 echo "tolerate_chunk_failures=${TOLERATE_CHUNK_FAILURES}"
+echo "no_prehydro_alpha=${NO_PREHYDRO_ALPHA} prehydro_alpha=${PREHYDRO_ALPHA} broadening_k=${BROADENING_K}"
 echo "aa_pdf_mode=${AA_PDF_MODE} aa_lhapdf_set=${AA_LHAPDF_SET}"
 echo "pp_pdf_mode=${PP_PDF_MODE} pp_lhapdf_set=${PP_LHAPDF_SET:-none}"
 echo "run_prehydro_pair=${RUN_PREHYDRO_PAIR} prehydro_tau_min=${PREHYDRO_TAU_MIN} prehydro_tau_grid=${PREHYDRO_TAU_GRID} prehydro_attractor_table=${PREHYDRO_ATTRACTOR_TABLE}"
@@ -288,7 +310,7 @@ if [[ "${DRY_RUN}" == "1" || "${DRY_RUN}" == "true" || "${DRY_RUN}" == "TRUE" ]]
 else
   "${CERNCTL}" run mkdir -p "${AFS_WORK}/log" "${EOS_BASE}/payloads" "${EOS_BASE}/outputs/aa" "${EOS_BASE}/outputs/pp" "${EOS_BASE}/status/aa" "${EOS_BASE}/status/pp" "${TMP_REMOTE}"
   scp -q -o BatchMode=yes "${PAYLOAD_DIR}/mmli_source.tar.gz" "${PAYLOAD_DIR}/runtime_payload.tar.gz" "${CERN_REMOTE}:${TMP_REMOTE}/"
-  if [[ "${V2_MULTI_HYDRO}" == "true" ]]; then
+  if [[ "${V2_MULTI_HYDRO}" == "true" && "${JOB_PAYLOAD_EOS_BASE}" == "${EOS_BASE}" ]]; then
     HYDRO_BUNDLE="${PAYLOAD_DIR}/hydro_payloads_v2.tar"
     HYDRO_CHECKSUMS="${PAYLOAD_DIR}/hydro_payloads_v2.sha256"
     rm -f "${HYDRO_BUNDLE}" "${HYDRO_CHECKSUMS}"
@@ -298,7 +320,7 @@ else
   fi
   scp -q -o BatchMode=yes "${SUPPORT}/build_runtime_job.sh" "${SUPPORT}/run_chunk_job.sh" "${CERN_REMOTE}:${AFS_WORK}/"
   "${CERNCTL}" run bash -lc "cp ${TMP_REMOTE}/mmli_source.tar.gz ${TMP_REMOTE}/runtime_payload.tar.gz ${PYTHIA_SOURCE} ${EOS_BASE}/payloads/ && chmod +x ${AFS_WORK}/build_runtime_job.sh ${AFS_WORK}/run_chunk_job.sh"
-  if [[ "${V2_MULTI_HYDRO}" == "true" ]]; then
+  if [[ "${V2_MULTI_HYDRO}" == "true" && "${JOB_PAYLOAD_EOS_BASE}" == "${EOS_BASE}" ]]; then
     "${CERNCTL}" run bash -lc "cd ${EOS_BASE}/payloads && tar -xf ${TMP_REMOTE}/hydro_payloads_v2.tar && sha256sum -c ${TMP_REMOTE}/hydro_payloads_v2.sha256"
   fi
 fi
@@ -329,7 +351,7 @@ transfer_output_files = ""
 output = /dev/null
 error = /dev/null
 log = log/oo_no_moliere_aa.\$(ClusterId).log
-environment = "KIND=aa EOS_BASE=${EOS_BASE} SEED_OFFSET=${AA_SEED_OFFSET} EVENTS=${AA_EVENTS} RUN_NAME=${RUN_NAME} PTHAT_MIN=${PTHAT_MIN} PTHAT_MAX=${PTHAT_MAX} PDF_MODE=${AA_PDF_MODE} LHAPDF_SET=${AA_LHAPDF_SET} LHAPDF_CVMFS_VIEW=${LHAPDF_CVMFS_VIEW} AA_CENTRALITY_INDEX=${AA_CENTRALITY_INDEX} AA_TASK_MANIFEST=${AA_TASK_MANIFEST_RUNTIME} RUN_PREHYDRO_PAIR=${RUN_PREHYDRO_PAIR} PREHYDRO_TAU_MIN=${PREHYDRO_TAU_MIN} PREHYDRO_TAU_GRID=${PREHYDRO_TAU_GRID} PREHYDRO_ETA_OVER_S=${PREHYDRO_ETA_OVER_S} PREHYDRO_EOS_FACTOR=${PREHYDRO_EOS_FACTOR} PREHYDRO_ATTRACTOR_TABLE=${PREHYDRO_ATTRACTOR_TABLE_RUNTIME} PREHYDRO_VISCOUS_ANCHOR=${PREHYDRO_VISCOUS_ANCHOR} STORE_PREHYDRO_TABLE=${STORE_PREHYDRO_TABLE} TOLERATE_CHUNK_FAILURE=${TOLERATE_CHUNK_FAILURES} TIMEOUT_S=${TIMEOUT_S}"
+environment = "KIND=aa EOS_BASE=${EOS_BASE} PAYLOAD_EOS_BASE=${JOB_PAYLOAD_EOS_BASE} RUNTIME_PAYLOAD_EOS_BASE=${JOB_RUNTIME_PAYLOAD_EOS_BASE} SEED_OFFSET=${AA_SEED_OFFSET} EVENTS=${AA_EVENTS} RUN_NAME=${RUN_NAME} PTHAT_MIN=${PTHAT_MIN} PTHAT_MAX=${PTHAT_MAX} PDF_MODE=${AA_PDF_MODE} LHAPDF_SET=${AA_LHAPDF_SET} LHAPDF_CVMFS_VIEW=${LHAPDF_CVMFS_VIEW} AA_CENTRALITY_INDEX=${AA_CENTRALITY_INDEX} AA_TASK_MANIFEST=${AA_TASK_MANIFEST_RUNTIME} RUN_PREHYDRO_PAIR=${RUN_PREHYDRO_PAIR} NO_PREHYDRO_ALPHA=${NO_PREHYDRO_ALPHA} PREHYDRO_ALPHA=${PREHYDRO_ALPHA} BROADENING_K=${BROADENING_K} PREHYDRO_TAU_MIN=${PREHYDRO_TAU_MIN} PREHYDRO_TAU_GRID=${PREHYDRO_TAU_GRID} PREHYDRO_ETA_OVER_S=${PREHYDRO_ETA_OVER_S} PREHYDRO_EOS_FACTOR=${PREHYDRO_EOS_FACTOR} PREHYDRO_ATTRACTOR_TABLE=${PREHYDRO_ATTRACTOR_TABLE_RUNTIME} PREHYDRO_VISCOUS_ANCHOR=${PREHYDRO_VISCOUS_ANCHOR} STORE_PREHYDRO_TABLE=${STORE_PREHYDRO_TABLE} TOLERATE_CHUNK_FAILURE=${TOLERATE_CHUNK_FAILURES} TIMEOUT_S=${TIMEOUT_S}"
 +JobFlavour = "${JOB_FLAVOUR}"
 request_cpus = 1
 request_memory = 4000
@@ -380,6 +402,8 @@ cat > "${WORK}/campaign_manifest.txt" <<EOF_MANIFEST
 date=$(date -Is)
 campaign=${CAMPAIGN}
 eos_base=${EOS_BASE}
+job_payload_eos_base=${JOB_PAYLOAD_EOS_BASE}
+job_runtime_payload_eos_base=${JOB_RUNTIME_PAYLOAD_EOS_BASE}
 afs_work=${AFS_WORK}
 mmli_source=${MMLI_SOURCE_ROOT}
 source_git_branch=${SOURCE_GIT_BRANCH}
@@ -416,8 +440,9 @@ pythia_lhapdf_plugin=built_on_cern_from_Pythia8Plugins_LHAPDF6_h
 lhapdf_cvmfs_view=${LHAPDF_CVMFS_VIEW}
 aa_nPDF=EPPS21 O16 full nuclear PDF through LHAPDF6 when AA_PDF_MODE=lhapdf, or PYTHIA native O16 nPDF when AA_PDF_MODE=native_npdf
 pp_reference_pdf=proton PDF:pSet=13 with no nPDF when PP_PDF_MODE=off
-alpha_kappa_sc=0.37
-broadening_K=15.0
+no_prehydro_alpha_kappa_sc=${NO_PREHYDRO_ALPHA}
+prehydro_alpha_kappa_sc=${PREHYDRO_ALPHA}
+broadening_K=${BROADENING_K}
 do_elastic=false
 do_lres=false
 hydro_payload=${HYDRO_PAYLOAD_DESCRIPTION}

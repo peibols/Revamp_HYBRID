@@ -25,6 +25,9 @@ QCD_CONFORMAL_EOS_FACTOR = math.pi**2 * QCD_THREE_FLAVOR_EFFECTIVE_DEGREES / 30.
 PUBLISHED_QCD_ATTRACTOR_SHA256 = "1bea7289d3dc8ed95819eaa86cf4c489442a054c14aae47eff010cf45155eba0"
 PUBLISHED_QCD_ATTRACTOR_DOI = "10.4119/unibi/2939684"
 PLAN_B_REFERENCE = "arXiv:2509.19430v2 Eqs. (2)-(4)"
+DEFAULT_NO_PREHYDRO_ALPHA = 0.37
+DEFAULT_PREHYDRO_ALPHA = 0.37
+DEFAULT_BROADENING_K = 15.0
 
 
 def b(v: bool) -> str:
@@ -94,6 +97,8 @@ def write_input(
     seed: int,
     events: int,
     aa: bool,
+    energy_loss_alpha: float = DEFAULT_NO_PREHYDRO_ALPHA,
+    broadening_k: float = DEFAULT_BROADENING_K,
     use_prehydro: bool = False,
     prehydro_file: str = "prehydro_table.tsv",
 ) -> None:
@@ -102,8 +107,8 @@ def write_input(
         f"seed_base = {seed}",
         f"Nev = {events}",
         "cent = 0-100",
-        "alpha = 0.37",
-        "kappa = 15.0",
+        f"alpha = {energy_loss_alpha}",
+        f"kappa = {broadening_k}",
         "tmethod = 0",
         "mode = 0",
         f"do_quench = {b(aa)}",
@@ -528,6 +533,8 @@ def run_variant(
     pdf_mode: str,
     lhapdf_set: str,
     timeout_s: int,
+    energy_loss_alpha: float,
+    broadening_k: float,
     use_prehydro: bool,
     prehydro_tau_grid: list[float],
     prehydro_tau_min: float,
@@ -569,6 +576,8 @@ def run_variant(
         seed=seed,
         events=events,
         aa=aa,
+        energy_loss_alpha=energy_loss_alpha,
+        broadening_k=broadening_k,
         use_prehydro=use_prehydro,
         prehydro_file=prehydro_file or "prehydro_table.tsv",
     )
@@ -590,6 +599,8 @@ def run_variant(
     result = {
         "variant": variant,
         "use_prehydro": int(use_prehydro),
+        "energy_loss_alpha": energy_loss_alpha,
+        "broadening_k": broadening_k,
         "prehydro_file": prehydro_file,
         "returncode": rc,
         "timeout": timed_out,
@@ -597,10 +608,12 @@ def run_variant(
         "dir": str(run_dir),
     }
     row = (
-        "variant\tuse_prehydro\tprehydro_file\treturncode\ttimeout\tseconds\tdir\t"
+        "variant\tuse_prehydro\tenergy_loss_alpha\tbroadening_k\tprehydro_file\t"
+        "returncode\ttimeout\tseconds\tdir\t"
         "task_id\tseed\tcentrality\thydro_slot\thydro_event_id\thydro_ncoll\t"
         "hydro_payload_sha256\n"
-        f"{variant}\t{int(use_prehydro)}\t{prehydro_file}\t{rc}\t{timed_out}\t"
+        f"{variant}\t{int(use_prehydro)}\t{energy_loss_alpha}\t"
+        f"{broadening_k}\t{prehydro_file}\t{rc}\t{timed_out}\t"
         f"{elapsed:.3f}\t{run_dir}\t{task_id}\t{seed}\t{centrality}\t{hydro_slot}\t"
         f"{event_id}\t{hydro_ncoll}\t{hydro_payload_sha256}\n"
     )
@@ -627,6 +640,24 @@ def main() -> int:
         help="v2 task-to-hydro assignment manifest (required by v2 AA jobs)",
     )
     ap.add_argument("--run-prehydro-pair", action="store_true", help="for AA tasks, run no-prehydro and prehydro variants in the same job")
+    ap.add_argument(
+        "--no-prehydro-alpha",
+        type=float,
+        default=DEFAULT_NO_PREHYDRO_ALPHA,
+        help="HYBRID mode-0 stopping-strength alpha for the no-prehydro baseline",
+    )
+    ap.add_argument(
+        "--prehydro-alpha",
+        type=float,
+        default=DEFAULT_PREHYDRO_ALPHA,
+        help="HYBRID mode-0 stopping-strength alpha for the Plan-B leg",
+    )
+    ap.add_argument(
+        "--broadening-k",
+        type=float,
+        default=DEFAULT_BROADENING_K,
+        help="HYBRID transverse-broadening kappa shared by both paired legs",
+    )
     ap.add_argument("--prehydro-tau-min", type=float, default=0.24)
     ap.add_argument("--prehydro-tau-grid", default=DEFAULT_PREHYDRO_TAU_GRID)
     ap.add_argument(
@@ -644,6 +675,14 @@ def main() -> int:
     ap.add_argument("--prehydro-viscous-anchor", dest="prehydro_viscous_anchor", action="store_true", default=True)
     ap.add_argument("--no-prehydro-viscous-anchor", dest="prehydro_viscous_anchor", action="store_false")
     args = ap.parse_args()
+
+    for name, value in (
+        ("--no-prehydro-alpha", args.no_prehydro_alpha),
+        ("--prehydro-alpha", args.prehydro_alpha),
+        ("--broadening-k", args.broadening_k),
+    ):
+        if not math.isfinite(value) or value < 0.0:
+            ap.error(f"{name} must be finite and nonnegative, got {value}")
 
     work = Path.cwd()
     main_bin = Path(os.environ.get("MMLI_BIN", work / "bin" / "main"))
@@ -730,9 +769,18 @@ def main() -> int:
         if not (hydro_dir / "evolution_all_xyeta.dat").exists():
             raise FileNotFoundError(hydro_dir / "evolution_all_xyeta.dat")
         base_run_dir = work / args.run_name / "aa" / run_hydro_label / f"task_{args.task_id:05d}"
-        variants: list[tuple[str, Path, bool]] = [("no_prehydro", base_run_dir, False)]
+        variants: list[tuple[str, Path, bool, float]] = [
+            ("no_prehydro", base_run_dir, False, args.no_prehydro_alpha)
+        ]
         if args.run_prehydro_pair:
-            variants.append(("with_prehydro", base_run_dir.with_name(f"task_{args.task_id:05d}_prehydro"), True))
+            variants.append(
+                (
+                    "with_prehydro",
+                    base_run_dir.with_name(f"task_{args.task_id:05d}_prehydro"),
+                    True,
+                    args.prehydro_alpha,
+                )
+            )
     else:
         hydro_index = -1
         cent = "pp_reference"
@@ -740,10 +788,17 @@ def main() -> int:
         event_id = args.task_id
         hydro_ncoll = -1
         hydro_payload_sha256 = ""
-        variants = [("pp_reference", work / args.run_name / "pp" / f"task_{args.task_id:05d}", False)]
+        variants = [
+            (
+                "pp_reference",
+                work / args.run_name / "pp" / f"task_{args.task_id:05d}",
+                False,
+                args.no_prehydro_alpha,
+            )
+        ]
 
     results = []
-    for variant, run_dir, use_prehydro in variants:
+    for variant, run_dir, use_prehydro, energy_loss_alpha in variants:
         results.append(
             run_variant(
                 variant=variant,
@@ -759,6 +814,8 @@ def main() -> int:
                 pdf_mode=args.pdf_mode,
                 lhapdf_set=args.lhapdf_set,
                 timeout_s=args.timeout_s,
+                energy_loss_alpha=energy_loss_alpha,
+                broadening_k=args.broadening_k,
                 use_prehydro=use_prehydro,
                 prehydro_tau_grid=prehydro_tau_grid,
                 prehydro_tau_min=args.prehydro_tau_min,
@@ -778,15 +835,18 @@ def main() -> int:
 
     header = (
         "kind\ttask_id\tseed\tevents\tcentrality\thydro_index\thydro_event_id\t"
-        "hydro_ncoll\thydro_payload_sha256\tvariant\tuse_prehydro\tprehydro_file\t"
-        "returncode\ttimeout\tseconds\tdir\n"
+        "hydro_ncoll\thydro_payload_sha256\tvariant\tuse_prehydro\t"
+        "energy_loss_alpha\tbroadening_k\tprehydro_file\treturncode\ttimeout\t"
+        "seconds\tdir\n"
     )
     rows = []
     for result in results:
         rows.append(
             f"{args.kind}\t{args.task_id}\t{seed}\t{args.events}\t{cent}\t{hydro_index}\t"
             f"{event_id}\t{hydro_ncoll}\t{hydro_payload_sha256}\t"
-            f"{result['variant']}\t{result['use_prehydro']}\t{result['prehydro_file']}\t"
+            f"{result['variant']}\t{result['use_prehydro']}\t"
+            f"{result['energy_loss_alpha']}\t{result['broadening_k']}\t"
+            f"{result['prehydro_file']}\t"
             f"{result['returncode']}\t{result['timeout']}\t{float(result['seconds']):.3f}\t{result['dir']}"
         )
     text = header + "\n".join(rows) + "\n"
