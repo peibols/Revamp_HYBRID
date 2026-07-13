@@ -40,6 +40,7 @@ LHAPDF_CVMFS_VIEW="${LHAPDF_CVMFS_VIEW:-/cvmfs/sft.cern.ch/lcg/releases/MCGenera
 AA_CENTRALITY_INDEX="${AA_CENTRALITY_INDEX:-0}"
 AA_CENTRALITY_LABEL="${AA_CENTRALITY_LABEL:-C0-5}"
 RUN_PREHYDRO_PAIR="${RUN_PREHYDRO_PAIR:-true}"
+RUN_PREHYDRO_ONLY="${RUN_PREHYDRO_ONLY:-false}"
 NO_PREHYDRO_ALPHA="${NO_PREHYDRO_ALPHA:-0.37}"
 PREHYDRO_ALPHA="${PREHYDRO_ALPHA:-0.37}"
 BROADENING_K="${BROADENING_K:-15.0}"
@@ -97,12 +98,26 @@ case "${TOLERATE_CHUNK_FAILURES}" in
   0|false|FALSE) TOLERATE_CHUNK_FAILURES=false ;;
   *) echo "TOLERATE_CHUNK_FAILURES must be true or false, got: ${TOLERATE_CHUNK_FAILURES}" >&2; exit 1 ;;
 esac
+case "${RUN_PREHYDRO_PAIR}" in
+  1|true|TRUE) RUN_PREHYDRO_PAIR=true ;;
+  0|false|FALSE) RUN_PREHYDRO_PAIR=false ;;
+  *) echo "RUN_PREHYDRO_PAIR must be true or false, got: ${RUN_PREHYDRO_PAIR}" >&2; exit 1 ;;
+esac
+case "${RUN_PREHYDRO_ONLY}" in
+  1|true|TRUE) RUN_PREHYDRO_ONLY=true ;;
+  0|false|FALSE) RUN_PREHYDRO_ONLY=false ;;
+  *) echo "RUN_PREHYDRO_ONLY must be true or false, got: ${RUN_PREHYDRO_ONLY}" >&2; exit 1 ;;
+esac
+if [[ "${RUN_PREHYDRO_PAIR}" == "true" && "${RUN_PREHYDRO_ONLY}" == "true" ]]; then
+  echo "RUN_PREHYDRO_PAIR and RUN_PREHYDRO_ONLY are mutually exclusive" >&2
+  exit 1
+fi
 if [[ "${SUBMIT_PP}" == "false" && -z "${PP_REFERENCE_CAMPAIGN}" ]]; then
   echo "PP_REFERENCE_CAMPAIGN is required when SUBMIT_PP=false" >&2
   exit 1
 fi
 if [[ "${AA_EVENTS}" != "1" ]]; then
-  echo "AA_EVENTS must be 1: each AA job runs one hard event in both paired variants" >&2
+  echo "AA_EVENTS must be 1: each AA job represents one hard event" >&2
   exit 1
 fi
 if [[ "${V2_MULTI_HYDRO}" == "true" ]]; then
@@ -180,10 +195,14 @@ if [[ "${PREHYDRO_ATTRACTOR_SHA256}" != "${EXPECTED_PREHYDRO_ATTRACTOR_SHA256}" 
 fi
 
 PAIR_TAG="single"
-if [[ "${RUN_PREHYDRO_PAIR}" == "1" || "${RUN_PREHYDRO_PAIR}" == "true" || "${RUN_PREHYDRO_PAIR}" == "TRUE" ]]; then
+if [[ "${RUN_PREHYDRO_PAIR}" == "true" ]]; then
   PREHYDRO_TAU_TAG="${PREHYDRO_TAU_MIN//./p}"
   PREHYDRO_ALPHA_TAG="${PREHYDRO_ALPHA//./p}"
   PAIR_TAG="pairedPrehydroTau${PREHYDRO_TAU_TAG}Alpha${PREHYDRO_ALPHA_TAG}"
+elif [[ "${RUN_PREHYDRO_ONLY}" == "true" ]]; then
+  PREHYDRO_TAU_TAG="${PREHYDRO_TAU_MIN//./p}"
+  PREHYDRO_ALPHA_TAG="${PREHYDRO_ALPHA//./p}"
+  PAIR_TAG="prehydroOnlyTau${PREHYDRO_TAU_TAG}Alpha${PREHYDRO_ALPHA_TAG}"
 fi
 CENTRALITY_TAG="${AA_CENTRALITY_LABEL//-/_}"
 PDF_TAG="aa${AA_PDF_MODE}_pp${PP_PDF_MODE}"
@@ -234,7 +253,7 @@ echo "tolerate_chunk_failures=${TOLERATE_CHUNK_FAILURES}"
 echo "no_prehydro_alpha=${NO_PREHYDRO_ALPHA} prehydro_alpha=${PREHYDRO_ALPHA} broadening_k=${BROADENING_K}"
 echo "aa_pdf_mode=${AA_PDF_MODE} aa_lhapdf_set=${AA_LHAPDF_SET}"
 echo "pp_pdf_mode=${PP_PDF_MODE} pp_lhapdf_set=${PP_LHAPDF_SET:-none}"
-echo "run_prehydro_pair=${RUN_PREHYDRO_PAIR} prehydro_tau_min=${PREHYDRO_TAU_MIN} prehydro_tau_grid=${PREHYDRO_TAU_GRID} prehydro_attractor_table=${PREHYDRO_ATTRACTOR_TABLE}"
+echo "run_prehydro_pair=${RUN_PREHYDRO_PAIR} run_prehydro_only=${RUN_PREHYDRO_ONLY} prehydro_tau_min=${PREHYDRO_TAU_MIN} prehydro_tau_grid=${PREHYDRO_TAU_GRID} prehydro_attractor_table=${PREHYDRO_ATTRACTOR_TABLE}"
 echo "prehydro_attractor_sha256=${PREHYDRO_ATTRACTOR_SHA256}"
 echo "v2_multi_hydro=${V2_MULTI_HYDRO} aa_task_manifest=${AA_TASK_MANIFEST:-none} hydro_manifest=${HYDRO_MANIFEST:-none}"
 
@@ -353,7 +372,7 @@ transfer_output_files = ""
 output = /dev/null
 error = /dev/null
 log = log/oo_no_moliere_aa.\$(ClusterId).log
-environment = "KIND=aa EOS_BASE=${EOS_BASE} PAYLOAD_EOS_BASE=${JOB_PAYLOAD_EOS_BASE} RUNTIME_PAYLOAD_EOS_BASE=${JOB_RUNTIME_PAYLOAD_EOS_BASE} SEED_OFFSET=${AA_SEED_OFFSET} EVENTS=${AA_EVENTS} RUN_NAME=${RUN_NAME} PTHAT_MIN=${PTHAT_MIN} PTHAT_MAX=${PTHAT_MAX} PDF_MODE=${AA_PDF_MODE} LHAPDF_SET=${AA_LHAPDF_SET} LHAPDF_CVMFS_VIEW=${LHAPDF_CVMFS_VIEW} AA_CENTRALITY_INDEX=${AA_CENTRALITY_INDEX} AA_TASK_MANIFEST=${AA_TASK_MANIFEST_RUNTIME} RUN_PREHYDRO_PAIR=${RUN_PREHYDRO_PAIR} NO_PREHYDRO_ALPHA=${NO_PREHYDRO_ALPHA} PREHYDRO_ALPHA=${PREHYDRO_ALPHA} BROADENING_K=${BROADENING_K} PREHYDRO_TAU_MIN=${PREHYDRO_TAU_MIN} PREHYDRO_TAU_GRID=${PREHYDRO_TAU_GRID} PREHYDRO_ETA_OVER_S=${PREHYDRO_ETA_OVER_S} PREHYDRO_EOS_FACTOR=${PREHYDRO_EOS_FACTOR} PREHYDRO_ATTRACTOR_TABLE=${PREHYDRO_ATTRACTOR_TABLE_RUNTIME} PREHYDRO_VISCOUS_ANCHOR=${PREHYDRO_VISCOUS_ANCHOR} STORE_PREHYDRO_TABLE=${STORE_PREHYDRO_TABLE} TOLERATE_CHUNK_FAILURE=${TOLERATE_CHUNK_FAILURES} TIMEOUT_S=${TIMEOUT_S}"
+environment = "KIND=aa EOS_BASE=${EOS_BASE} PAYLOAD_EOS_BASE=${JOB_PAYLOAD_EOS_BASE} RUNTIME_PAYLOAD_EOS_BASE=${JOB_RUNTIME_PAYLOAD_EOS_BASE} SEED_OFFSET=${AA_SEED_OFFSET} EVENTS=${AA_EVENTS} RUN_NAME=${RUN_NAME} PTHAT_MIN=${PTHAT_MIN} PTHAT_MAX=${PTHAT_MAX} PDF_MODE=${AA_PDF_MODE} LHAPDF_SET=${AA_LHAPDF_SET} LHAPDF_CVMFS_VIEW=${LHAPDF_CVMFS_VIEW} AA_CENTRALITY_INDEX=${AA_CENTRALITY_INDEX} AA_TASK_MANIFEST=${AA_TASK_MANIFEST_RUNTIME} RUN_PREHYDRO_PAIR=${RUN_PREHYDRO_PAIR} RUN_PREHYDRO_ONLY=${RUN_PREHYDRO_ONLY} NO_PREHYDRO_ALPHA=${NO_PREHYDRO_ALPHA} PREHYDRO_ALPHA=${PREHYDRO_ALPHA} BROADENING_K=${BROADENING_K} PREHYDRO_TAU_MIN=${PREHYDRO_TAU_MIN} PREHYDRO_TAU_GRID=${PREHYDRO_TAU_GRID} PREHYDRO_ETA_OVER_S=${PREHYDRO_ETA_OVER_S} PREHYDRO_EOS_FACTOR=${PREHYDRO_EOS_FACTOR} PREHYDRO_ATTRACTOR_TABLE=${PREHYDRO_ATTRACTOR_TABLE_RUNTIME} PREHYDRO_VISCOUS_ANCHOR=${PREHYDRO_VISCOUS_ANCHOR} STORE_PREHYDRO_TABLE=${STORE_PREHYDRO_TABLE} TOLERATE_CHUNK_FAILURE=${TOLERATE_CHUNK_FAILURES} TIMEOUT_S=${TIMEOUT_S}"
 +JobFlavour = "${JOB_FLAVOUR}"
 request_cpus = 1
 request_memory = 4000
@@ -456,6 +475,7 @@ do_lres=false
 hydro_payload=${HYDRO_PAYLOAD_DESCRIPTION}
 analysis_weight=${ANALYSIS_WEIGHT_DESCRIPTION}
 run_prehydro_pair=${RUN_PREHYDRO_PAIR}
+run_prehydro_only=${RUN_PREHYDRO_ONLY}
 prehydro_tau_min=${PREHYDRO_TAU_MIN}
 prehydro_tau_grid=${PREHYDRO_TAU_GRID}
 prehydro_eta_over_s=${PREHYDRO_ETA_OVER_S}
@@ -466,7 +486,8 @@ prehydro_attractor_sha256=${PREHYDRO_ATTRACTOR_SHA256}
 prehydro_attractor_source=DOI:10.4119/unibi/2939684 QCD lambda=10 C_inf=0.87 curve
 prehydro_viscous_anchor=${PREHYDRO_VISCOUS_ANCHOR}
 prehydro_reference=arXiv:2509.19430v2 Eqs. (2)-(4), published QCD kinetic attractor table, three-flavor conformal EOS, natural-unit tau conversion, linear transverse pre-flow, and Bjorken longitudinal flow
-paired_job_layout=AA task_NNNNN is no-prehydro baseline; task_NNNNN_prehydro is the same seed and hydro with 2509.19430 prehydro
+job_layout_mode=$([[ "${RUN_PREHYDRO_ONLY}" == "true" ]] && echo prehydro_only || echo paired_or_baseline)
+paired_job_layout=$([[ "${RUN_PREHYDRO_ONLY}" == "true" ]] && echo "not generated; AA task_NNNNN_prehydro is joined by task ID to the reference campaign" || echo "AA task_NNNNN is no-prehydro baseline; task_NNNNN_prehydro is the same seed and hydro with 2509.19430 prehydro")
 v2_multi_hydro=${V2_MULTI_HYDRO}
 aa_task_manifest=${AA_TASK_MANIFEST:-none}
 aa_task_manifest_sha256=${AA_TASK_MANIFEST_SHA256}

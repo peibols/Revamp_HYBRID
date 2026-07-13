@@ -433,7 +433,24 @@ def build_aa_variants(
     no_prehydro_alpha: float,
     prehydro_alpha: float,
     additional_prehydro_alphas: list[float],
+    run_prehydro_only: bool = False,
 ) -> list[tuple[str, Path, bool, float]]:
+    if run_prehydro_pair and run_prehydro_only:
+        raise ValueError("prehydro pair and prehydro-only modes are exclusive")
+    if run_prehydro_only:
+        if additional_prehydro_alphas:
+            raise ValueError(
+                "additional prehydro alphas require --run-prehydro-pair"
+            )
+        return [
+            (
+                "with_prehydro",
+                base_run_dir.with_name(f"task_{task_id:05d}_prehydro"),
+                True,
+                prehydro_alpha,
+            )
+        ]
+
     variants: list[tuple[str, Path, bool, float]] = [
         ("no_prehydro", base_run_dir, False, no_prehydro_alpha)
     ]
@@ -689,7 +706,17 @@ def main() -> int:
         type=Path,
         help="v2 task-to-hydro assignment manifest (required by v2 AA jobs)",
     )
-    ap.add_argument("--run-prehydro-pair", action="store_true", help="for AA tasks, run no-prehydro and prehydro variants in the same job")
+    prehydro_mode = ap.add_mutually_exclusive_group()
+    prehydro_mode.add_argument(
+        "--run-prehydro-pair",
+        action="store_true",
+        help="for AA tasks, run no-prehydro and prehydro variants in the same job",
+    )
+    prehydro_mode.add_argument(
+        "--run-prehydro-only",
+        action="store_true",
+        help="for AA tasks, run only the Plan-B prehydro variant",
+    )
     ap.add_argument(
         "--no-prehydro-alpha",
         type=float,
@@ -730,7 +757,7 @@ def main() -> int:
         "--prehydro-attractor-table",
         type=Path,
         default=None,
-        help="published two-column omega,E(omega) table; required with --run-prehydro-pair",
+        help="published two-column omega,E(omega) table; required for either prehydro mode",
     )
     ap.add_argument("--prehydro-viscous-anchor", dest="prehydro_viscous_anchor", action="store_true", default=True)
     ap.add_argument("--no-prehydro-viscous-anchor", dest="prehydro_viscous_anchor", action="store_false")
@@ -758,7 +785,10 @@ def main() -> int:
             "--prehydro-eos-factor must use the three-flavor conformal value "
             f"{QCD_CONFORMAL_EOS_FACTOR:.15g}"
         )
-    if args.kind == "aa" and args.run_prehydro_pair:
+    prehydro_enabled = args.run_prehydro_pair or args.run_prehydro_only
+    if args.kind != "aa" and prehydro_enabled:
+        ap.error("prehydro modes are only valid for AA tasks")
+    if args.kind == "aa" and prehydro_enabled:
         if not math.isclose(
             args.prehydro_eta_over_s,
             PUBLISHED_PREHYDRO_ETA_OVER_S,
@@ -775,7 +805,7 @@ def main() -> int:
                 "published arXiv:2509.19430v2 Plan B prescription"
             )
         if args.prehydro_attractor_table is None:
-            ap.error("--prehydro-attractor-table is required with --run-prehydro-pair")
+            ap.error("--prehydro-attractor-table is required for prehydro production")
         prehydro_attractor_label, prehydro_attractor = load_attractor_table(
             args.prehydro_attractor_table
         )
@@ -840,6 +870,7 @@ def main() -> int:
             no_prehydro_alpha=args.no_prehydro_alpha,
             prehydro_alpha=args.prehydro_alpha,
             additional_prehydro_alphas=args.additional_prehydro_alpha,
+            run_prehydro_only=args.run_prehydro_only,
         )
     else:
         hydro_index = -1
@@ -911,7 +942,8 @@ def main() -> int:
         )
     text = header + "\n".join(rows) + "\n"
     summary_dir = Path(str(results[0]["dir"])).parent
-    (summary_dir / f"task_{args.task_id:05d}_pair_summary.tsv").write_text(text)
+    summary_kind = "prehydro_only" if args.run_prehydro_only else "pair"
+    (summary_dir / f"task_{args.task_id:05d}_{summary_kind}_summary.tsv").write_text(text)
     print(text, end="")
     return 0 if all(int(r["returncode"]) == 0 and int(r["timeout"]) == 0 for r in results) else 1
 

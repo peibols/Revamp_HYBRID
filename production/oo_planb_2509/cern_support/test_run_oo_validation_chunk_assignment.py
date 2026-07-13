@@ -138,6 +138,41 @@ class V2AssignmentTest(unittest.TestCase):
                 additional_prehydro_alphas=[0.34],
             )
 
+    def test_build_aa_variants_prehydro_only_has_no_baseline(self) -> None:
+        base = Path("runs/check/aa/hydro/task_00007")
+        variants = MODULE.build_aa_variants(
+            base_run_dir=base,
+            task_id=7,
+            run_prehydro_pair=False,
+            run_prehydro_only=True,
+            no_prehydro_alpha=0.37,
+            prehydro_alpha=0.335,
+            additional_prehydro_alphas=[],
+        )
+        self.assertEqual(
+            variants,
+            [
+                (
+                    "with_prehydro",
+                    Path("runs/check/aa/hydro/task_00007_prehydro"),
+                    True,
+                    0.335,
+                )
+            ],
+        )
+
+    def test_build_aa_variants_rejects_two_prehydro_modes(self) -> None:
+        with self.assertRaisesRegex(ValueError, "exclusive"):
+            MODULE.build_aa_variants(
+                base_run_dir=Path("task_00007"),
+                task_id=7,
+                run_prehydro_pair=True,
+                run_prehydro_only=True,
+                no_prehydro_alpha=0.37,
+                prehydro_alpha=0.335,
+                additional_prehydro_alphas=[],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

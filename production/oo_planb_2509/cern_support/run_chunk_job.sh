@@ -20,6 +20,7 @@ fi
 LHAPDF_SET="${LHAPDF_SET:-EPPS21nlo_CT18Anlo_O16/0}"
 AA_CENTRALITY_INDEX="${AA_CENTRALITY_INDEX:--1}"
 RUN_PREHYDRO_PAIR="${RUN_PREHYDRO_PAIR:-false}"
+RUN_PREHYDRO_ONLY="${RUN_PREHYDRO_ONLY:-false}"
 NO_PREHYDRO_ALPHA="${NO_PREHYDRO_ALPHA:-0.37}"
 PREHYDRO_ALPHA="${PREHYDRO_ALPHA:-0.37}"
 BROADENING_K="${BROADENING_K:-15.0}"
@@ -44,9 +45,23 @@ case "${TOLERATE_CHUNK_FAILURE}" in
   0|false|FALSE) TOLERATE_CHUNK_FAILURE=false ;;
   *) echo "TOLERATE_CHUNK_FAILURE must be true or false" >&2; exit 1 ;;
 esac
-if [[ "${RUN_PREHYDRO_PAIR}" == "1" || "${RUN_PREHYDRO_PAIR}" == "true" || "${RUN_PREHYDRO_PAIR}" == "TRUE" ]]; then
+case "${RUN_PREHYDRO_PAIR}" in
+  1|true|TRUE) RUN_PREHYDRO_PAIR=true ;;
+  0|false|FALSE) RUN_PREHYDRO_PAIR=false ;;
+  *) echo "RUN_PREHYDRO_PAIR must be true or false" >&2; exit 1 ;;
+esac
+case "${RUN_PREHYDRO_ONLY}" in
+  1|true|TRUE) RUN_PREHYDRO_ONLY=true ;;
+  0|false|FALSE) RUN_PREHYDRO_ONLY=false ;;
+  *) echo "RUN_PREHYDRO_ONLY must be true or false" >&2; exit 1 ;;
+esac
+if [[ "${RUN_PREHYDRO_PAIR}" == "true" && "${RUN_PREHYDRO_ONLY}" == "true" ]]; then
+  echo "RUN_PREHYDRO_PAIR and RUN_PREHYDRO_ONLY are mutually exclusive" >&2
+  exit 1
+fi
+if [[ "${RUN_PREHYDRO_PAIR}" == "true" || "${RUN_PREHYDRO_ONLY}" == "true" ]]; then
   if [[ -z "${PREHYDRO_ATTRACTOR_TABLE}" ]]; then
-    echo "PREHYDRO_ATTRACTOR_TABLE is required for paired prehydro production" >&2
+    echo "PREHYDRO_ATTRACTOR_TABLE is required for prehydro production" >&2
     exit 1
   fi
 fi
@@ -66,6 +81,8 @@ finalize() {
   echo "status=$([[ $rc -eq 0 ]] && echo success || echo failed)" >> "$INITIAL_DIR/chunk_status.txt"
   echo "exit_code=$rc" >> "$INITIAL_DIR/chunk_status.txt"
   echo "date=$(date -Is)" >> "$INITIAL_DIR/chunk_status.txt"
+  echo "run_prehydro_pair=${RUN_PREHYDRO_PAIR}" >> "$INITIAL_DIR/chunk_status.txt"
+  echo "run_prehydro_only=${RUN_PREHYDRO_ONLY}" >> "$INITIAL_DIR/chunk_status.txt"
   echo "no_prehydro_alpha=${NO_PREHYDRO_ALPHA}" >> "$INITIAL_DIR/chunk_status.txt"
   echo "prehydro_alpha=${PREHYDRO_ALPHA}" >> "$INITIAL_DIR/chunk_status.txt"
   echo "broadening_k=${BROADENING_K}" >> "$INITIAL_DIR/chunk_status.txt"
@@ -90,7 +107,8 @@ finalize() {
         -name hybrid_input.dat -o \
         -name setup_pythia.cmnd -o \
         -name prehydro_table.tsv -o \
-        -name 'task_*_pair_summary.tsv' \
+        -name 'task_*_pair_summary.tsv' -o \
+        -name 'task_*_prehydro_only_summary.tsv' \
       \) -print0 | tar --null --ignore-failed-read -czf "$INITIAL_DIR/chunk_output.tar.gz" --files-from -
     ) 2>/dev/null || tar -czf "$INITIAL_DIR/chunk_output.tar.gz" -C "$INITIAL_DIR" chunk_status.txt
   else
@@ -227,8 +245,11 @@ args=(
   --prehydro-alpha "$PREHYDRO_ALPHA" \
   --broadening-k "$BROADENING_K"
 )
-if [[ "$RUN_PREHYDRO_PAIR" == "1" || "$RUN_PREHYDRO_PAIR" == "true" || "$RUN_PREHYDRO_PAIR" == "TRUE" ]]; then
+if [[ "$RUN_PREHYDRO_PAIR" == "true" ]]; then
   args+=(--run-prehydro-pair)
+fi
+if [[ "$RUN_PREHYDRO_ONLY" == "true" ]]; then
+  args+=(--run-prehydro-only)
 fi
 args+=(
   --prehydro-tau-min "$PREHYDRO_TAU_MIN"

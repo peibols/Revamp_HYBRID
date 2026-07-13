@@ -66,7 +66,12 @@ class ChunkFailureToleranceTest(unittest.TestCase):
         member.size = len(payload)
         archive.addfile(member, io.BytesIO(payload))
 
-    def run_v2_wrapper(self, valid_checksum: bool) -> subprocess.CompletedProcess[str]:
+    def run_v2_wrapper(
+        self,
+        valid_checksum: bool,
+        *,
+        prehydro_only: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             eos = root / "mock_eos/eos/test/campaign"
@@ -120,18 +125,20 @@ p.add_argument('--aa-task-manifest')
 p.add_argument('--no-prehydro-alpha')
 p.add_argument('--prehydro-alpha')
 p.add_argument('--broadening-k')
+p.add_argument('--run-prehydro-only', action='store_true')
 args, _ = p.parse_known_args()
 assert Path(args.aa_task_manifest).is_file()
 assert args.no_prehydro_alpha == '0.37'
 assert args.prehydro_alpha == '0.355'
 assert args.broadening_k == '15.0'
+assert args.run_prehydro_only == PREHYDRO_ONLY
 hydro = Path('runtime/staged_hydro/C0-5_event_00345')
 assert (hydro / 'evolution_all_xyeta.dat').is_file()
 out = Path(args.run_name) / 'aa/fake/task_00007'
 out.mkdir(parents=True)
 (out / 'HYBRID_Hadrons.out').write_text('# event 0\\nweight 1 cross 1\\nend\\n')
 (out / 'summary.tsv').write_text('variant\\nno_prehydro\\n')
-"""
+""".replace("PREHYDRO_ONLY", repr(prehydro_only))
             )
             hydro_archive = payloads / "hydro/C0-5/event_00345.tar.gz"
             with tarfile.open(hydro_archive, "w:gz") as archive:
@@ -174,6 +181,7 @@ out.mkdir(parents=True)
                     "EVENTS": "1",
                     "RUN_NAME": "runs/v2_wrapper_test",
                     "RUN_PREHYDRO_PAIR": "false",
+                    "RUN_PREHYDRO_ONLY": str(prehydro_only).lower(),
                     "NO_PREHYDRO_ALPHA": "0.37",
                     "PREHYDRO_ALPHA": "0.355",
                     "BROADENING_K": "15.0",
@@ -204,6 +212,12 @@ out.mkdir(parents=True)
         result = self.run_v2_wrapper(valid_checksum=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("FAILED", result.stdout + result.stderr)
+
+    def test_v2_passes_prehydro_only_mode_and_records_it(self) -> None:
+        result = self.run_v2_wrapper(valid_checksum=True, prehydro_only=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("run_prehydro_pair=false", result.status_text)  # type: ignore[attr-defined]
+        self.assertIn("run_prehydro_only=true", result.status_text)  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":

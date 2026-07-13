@@ -46,6 +46,7 @@ python3 analysis/test_plot_oo_jet_paired_substructure.py -v
 python3 analysis/test_summarize_oo_jet_pt_slices.py -v
 python3 cern_support/test_monitor_oo_1m_prehydro_raa.py -v
 python3 cern_support/test_run_chunk_job.py -v
+python3 cern_support/test_supervise_oo_prehydro_only.py -v
 python3 cern_support/test_supervise_oo_50k.py -v
 ```
 
@@ -135,6 +136,42 @@ substructure outputs are generated only after those gates pass.
 entry point: it requires both markers to report `accepted_pairs=50000`, exits
 immediately if a final `status=PASS` marker already exists, and otherwise runs
 the same combined analysis when both halves are ready.
+
+## Prehydro-Only Alpha Retuning Leg
+
+`run_oo_validation_chunk.py --run-prehydro-only` runs exactly one Plan-B AA
+variant. It is mutually exclusive with `--run-prehydro-pair`; no no-prehydro
+baseline is generated. The output keeps the conventional `with_prehydro`
+variant label and records the requested alpha in both `summary.tsv` and
+`task_NNNNN_prehydro_only_summary.tsv`.
+
+The 100k alpha=0.335 campaign is prepared and submitted with:
+
+```bash
+production/oo_planb_2509/cern_support/submit_oo_v2_prehydro_only_100k.sh
+```
+
+The campaign builder requires the combined task manifest SHA256
+`2317bd840ee8fffcc71f4b216a34ec4c22d5d7fa91eddb78dc81c1cd7f0a9a5e`.
+This fixes task IDs `0--99999`, hard seeds `900000--999999`, and the same
+hydro assignment used by the existing two-leg V2 sample. It repackages the
+existing V2 executable without rebuilding it and requires executable SHA256
+`0d4c68b6ded87379e598e41670dd0bf8f8a39c234f0a9176b1b73ce6e2d88649`.
+Only the Python runner and embedded 100k manifest change.
+
+Ten submit files with 10,000 jobs each respect the CERN per-submission limit.
+Condor output, error, and event logs are disabled because each wrapper uploads
+its status and physics archive directly to EOS. Run
+`cern_support/supervise_oo_prehydro_only.py` against the campaign work area to
+audit every archive and resubmit only missing, failed, or malformed task IDs.
+The strict audit rejects a wrong alpha, wrong seed or hydro provenance, a
+nonzero return code, or any archive containing an accidental baseline leg.
+
+For RAA, jet spectra, and substructure comparisons, join the alpha=0.335 leg
+to the existing no-prehydro and alpha=0.37 archives by `task_id`. Before using
+a joined task, require identical hard seed, hydro slot/event/Ncoll, hydro
+payload checksum, PYTHIA event weight, and hard marker. The existing one-million
+event pp denominator is reused; this campaign submits no pp jobs.
 
 For a clearly labeled completion-order provisional snapshot before exact
 closure, pass each disjoint local EOS mirror as a repeated `--source` to
