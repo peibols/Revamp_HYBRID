@@ -13,6 +13,7 @@ import tarfile
 import time
 
 from supervise_oo_v2 import (
+    campaign_constraint,
     log,
     parse_status,
     parse_tsv_member,
@@ -30,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target", type=int, default=100_000)
     parser.add_argument("--expected-alpha", type=float, required=True)
     parser.add_argument("--expected-broadening-k", type=float, default=15.0)
+    parser.add_argument("--job-priority", type=int, default=100)
     parser.add_argument("--sleep-s", type=int, default=900)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -208,11 +210,50 @@ def ready_ids(
     return ready
 
 
+def enforce_job_priority(args: argparse.Namespace) -> None:
+    """Keep newly materialized factory jobs at the campaign priority."""
+    if args.dry_run:
+        log(f"dry run: would enforce JobPrio={args.job_priority}")
+        return
+    constraint = (
+        f"{campaign_constraint(args.campaign)} && "
+        f"JobPrio != {args.job_priority}"
+    )
+    query_command = (
+        f"condor_q -name {args.schedd} -constraint '{constraint}' "
+        "-af ClusterId"
+    )
+    query = subprocess.run(
+        [args.cernctl, "run", "bash", "-lc", query_command],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    mismatched = [line for line in query.stdout.splitlines() if line.strip()]
+    if not mismatched:
+        return
+    edit_command = (
+        f"condor_qedit -name {args.schedd} -constraint '{constraint}' "
+        f"JobPrio {args.job_priority}"
+    )
+    subprocess.run(
+        [args.cernctl, "run", "bash", "-lc", edit_command],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    log(
+        f"set JobPrio={args.job_priority} for "
+        f"{len(mismatched)} newly materialized job(s)"
+    )
+
+
 def supervise_once(args: argparse.Namespace) -> bool:
     assignments = load_assignments(args.task_manifest, args.target)
     local_eos = args.work / "eos_snapshot"
     seen_path = args.work / "prehydro_only_queue_seen.txt"
     states, active_aa, held_aa = query_jobs(args)
+    enforce_job_priority(args)
     if active_aa and not seen_path.exists():
         seen_path.write_text(
             f"date={datetime.now().astimezone().isoformat(timespec='seconds')}\n"

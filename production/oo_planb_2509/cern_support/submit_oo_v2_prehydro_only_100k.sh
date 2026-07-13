@@ -23,6 +23,7 @@ MAX_JOBS_PER_SUBMIT="${MAX_JOBS_PER_SUBMIT:-10000}"
 SEED_OFFSET="${SEED_OFFSET:-900000}"
 TIMEOUT_S="${TIMEOUT_S:-72000}"
 JOB_FLAVOUR="${JOB_FLAVOUR:-tomorrow}"
+JOB_PRIORITY="${JOB_PRIORITY:-100}"
 DRY_RUN="${DRY_RUN:-false}"
 STORE_PREHYDRO_TABLE="${STORE_PREHYDRO_TABLE:-false}"
 
@@ -44,6 +45,10 @@ case "${STORE_PREHYDRO_TABLE}" in
 esac
 if [[ "${TARGET}" != "100000" || "${MAX_JOBS_PER_SUBMIT}" != "10000" ]]; then
   echo "This campaign is pinned to TARGET=100000 and MAX_JOBS_PER_SUBMIT=10000" >&2
+  exit 1
+fi
+if [[ ! "${JOB_PRIORITY}" =~ ^-?[0-9]+$ ]]; then
+  echo "JOB_PRIORITY must be an integer" >&2
   exit 1
 fi
 python3 - "${ALPHA}" "${BROADENING_K}" <<'PY'
@@ -160,13 +165,16 @@ environment = "KIND=aa EOS_BASE=${EOS_BASE} PAYLOAD_EOS_BASE=${SHARED_PAYLOAD_EO
 +JobFlavour = "${JOB_FLAVOUR}"
 +JobBatchName = "OO_alpha0335_only_100k_part_${part}"
 +OOAlphaCampaign = "${CAMPAIGN}"
-priority = -10
+priority = ${JOB_PRIORITY}
 request_cpus = 1
 request_memory = 4000
 request_disk = 4000000
 queue chunk_id from aa_chunk_ids_part_${part}.txt
 EOF_SUB
 done
+
+# The strict supervisor uses this canonical template for missing-task retries.
+cp "${WORK}/oo_alpha0335_aa_part_00.sub" "${WORK}/oo_no_moliere_aa.sub"
 
 SOURCE_COMMIT="$(git -C "${SOURCE}" rev-parse HEAD)"
 RUNNER_SHA256="$(sha256sum "${SUPPORT}/run_oo_validation_chunk.py" | awk '{print $1}')"
@@ -218,7 +226,7 @@ wrapper_sha256=${WRAPPER_SHA256}
 attractor_sha256=${EXPECTED_ATTRACTOR_SHA256}
 submit_parts=10
 jobs_per_submit=10000
-job_priority=-10
+job_priority=${JOB_PRIORITY}
 condor_logs=/dev/null
 pp_generated=false
 reference_v2_first50k_eos=${SHARED_PAYLOAD_EOS_BASE}
@@ -250,6 +258,7 @@ scp -q -o BatchMode=yes \
   "${CERN_REMOTE}:${AFS_WORK}/cern_support/run_chunk_job.sh"
 scp -q -o BatchMode=yes "${WORK}"/aa_chunk_ids_part_*.txt \
   "${WORK}"/oo_alpha0335_aa_part_*.sub \
+  "${WORK}/oo_no_moliere_aa.sub" \
   "${CERN_REMOTE}:${AFS_WORK}/"
 ssh -o BatchMode=yes "${CERN_REMOTE}" \
   "cp ${TMP_REMOTE}/mmli_runtime_alma9.tar.gz ${EOS_BASE}/payloads/mmli_runtime_alma9.tar.gz && chmod +x ${AFS_WORK}/cern_support/run_chunk_job.sh"

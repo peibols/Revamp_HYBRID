@@ -8,7 +8,9 @@ from pathlib import Path
 import sys
 import tarfile
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 
 SUPPORT = Path(__file__).parent
@@ -163,6 +165,52 @@ class PrehydroOnlyArchiveTest(unittest.TestCase):
                 expected_broadening_k=15.0,
             )
         )
+
+    @mock.patch.object(MODULE.subprocess, "run")
+    def test_enforces_priority_for_new_factory_jobs(self, run: mock.Mock) -> None:
+        run.side_effect = [
+            SimpleNamespace(stdout="3905011\n3905011\n"),
+            SimpleNamespace(stdout='Set attribute "JobPrio" for 2 matching jobs.\n'),
+        ]
+        args = SimpleNamespace(
+            campaign="campaign",
+            cernctl="cernctl",
+            dry_run=False,
+            job_priority=100,
+            schedd="schedd.example",
+        )
+
+        MODULE.enforce_job_priority(args)
+
+        query_command = run.call_args_list[0].args[0][-1]
+        edit_command = run.call_args_list[1].args[0][-1]
+        self.assertIn("condor_q -name schedd.example", query_command)
+        self.assertIn("JobPrio != 100", query_command)
+        self.assertIn("condor_qedit -name schedd.example", edit_command)
+        self.assertTrue(edit_command.endswith("JobPrio 100"))
+        self.assertEqual(run.call_count, 2)
+        run.assert_called_with(
+            mock.ANY,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+    @mock.patch.object(MODULE.subprocess, "run")
+    def test_priority_check_accepts_no_mismatches(self, run: mock.Mock) -> None:
+        run.return_value = SimpleNamespace(stdout="")
+        args = SimpleNamespace(
+            campaign="campaign",
+            cernctl="cernctl",
+            dry_run=False,
+            job_priority=100,
+            schedd="schedd.example",
+        )
+
+        MODULE.enforce_job_priority(args)
+
+        self.assertEqual(run.call_count, 1)
+        self.assertIn("condor_q -name schedd.example", run.call_args.args[0][-1])
 
 
 if __name__ == "__main__":
