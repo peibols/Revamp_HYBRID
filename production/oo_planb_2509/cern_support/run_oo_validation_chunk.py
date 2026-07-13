@@ -421,6 +421,56 @@ def read_staged_hydro_metadata(hydro_dir: Path) -> dict[str, int]:
     return parsed
 
 
+def alpha_tag(value: float) -> str:
+    return f"{value:.12g}".replace("-", "m").replace(".", "p").replace("+", "")
+
+
+def build_aa_variants(
+    *,
+    base_run_dir: Path,
+    task_id: int,
+    run_prehydro_pair: bool,
+    no_prehydro_alpha: float,
+    prehydro_alpha: float,
+    additional_prehydro_alphas: list[float],
+) -> list[tuple[str, Path, bool, float]]:
+    variants: list[tuple[str, Path, bool, float]] = [
+        ("no_prehydro", base_run_dir, False, no_prehydro_alpha)
+    ]
+    if not run_prehydro_pair:
+        if additional_prehydro_alphas:
+            raise ValueError(
+                "additional prehydro alphas require --run-prehydro-pair"
+            )
+        return variants
+
+    variants.append(
+        (
+            "with_prehydro",
+            base_run_dir.with_name(f"task_{task_id:05d}_prehydro"),
+            True,
+            prehydro_alpha,
+        )
+    )
+    seen = {prehydro_alpha}
+    for alpha in additional_prehydro_alphas:
+        if alpha in seen:
+            raise ValueError(f"duplicate prehydro alpha {alpha}")
+        seen.add(alpha)
+        tag = alpha_tag(alpha)
+        variants.append(
+            (
+                f"with_prehydro_alpha_{tag}",
+                base_run_dir.with_name(
+                    f"task_{task_id:05d}_prehydro_alpha_{tag}"
+                ),
+                True,
+                alpha,
+            )
+        )
+    return variants
+
+
 def generate_planb_prehydro(
     *,
     reference_hydro: Path,
@@ -653,6 +703,16 @@ def main() -> int:
         help="HYBRID mode-0 stopping-strength alpha for the Plan-B leg",
     )
     ap.add_argument(
+        "--additional-prehydro-alpha",
+        type=float,
+        action="append",
+        default=[],
+        help=(
+            "additional Plan-B alpha to run against the same no-prehydro "
+            "baseline; may be repeated"
+        ),
+    )
+    ap.add_argument(
         "--broadening-k",
         type=float,
         default=DEFAULT_BROADENING_K,
@@ -680,6 +740,10 @@ def main() -> int:
         ("--no-prehydro-alpha", args.no_prehydro_alpha),
         ("--prehydro-alpha", args.prehydro_alpha),
         ("--broadening-k", args.broadening_k),
+        *(
+            ("--additional-prehydro-alpha", value)
+            for value in args.additional_prehydro_alpha
+        ),
     ):
         if not math.isfinite(value) or value < 0.0:
             ap.error(f"{name} must be finite and nonnegative, got {value}")
@@ -769,18 +833,14 @@ def main() -> int:
         if not (hydro_dir / "evolution_all_xyeta.dat").exists():
             raise FileNotFoundError(hydro_dir / "evolution_all_xyeta.dat")
         base_run_dir = work / args.run_name / "aa" / run_hydro_label / f"task_{args.task_id:05d}"
-        variants: list[tuple[str, Path, bool, float]] = [
-            ("no_prehydro", base_run_dir, False, args.no_prehydro_alpha)
-        ]
-        if args.run_prehydro_pair:
-            variants.append(
-                (
-                    "with_prehydro",
-                    base_run_dir.with_name(f"task_{args.task_id:05d}_prehydro"),
-                    True,
-                    args.prehydro_alpha,
-                )
-            )
+        variants = build_aa_variants(
+            base_run_dir=base_run_dir,
+            task_id=args.task_id,
+            run_prehydro_pair=args.run_prehydro_pair,
+            no_prehydro_alpha=args.no_prehydro_alpha,
+            prehydro_alpha=args.prehydro_alpha,
+            additional_prehydro_alphas=args.additional_prehydro_alpha,
+        )
     else:
         hydro_index = -1
         cent = "pp_reference"

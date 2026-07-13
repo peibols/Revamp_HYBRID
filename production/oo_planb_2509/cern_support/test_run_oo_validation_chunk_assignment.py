@@ -98,6 +98,46 @@ class V2AssignmentTest(unittest.TestCase):
             self.assertEqual(values["kappa"], "15.0")
             self.assertEqual(values["use_prehydro"], "true")
 
+    def test_build_aa_variants_shares_one_no_prehydro_baseline(self) -> None:
+        base = Path("runs/check/aa/hydro/task_00007")
+        variants = MODULE.build_aa_variants(
+            base_run_dir=base,
+            task_id=7,
+            run_prehydro_pair=True,
+            no_prehydro_alpha=0.37,
+            prehydro_alpha=0.34,
+            additional_prehydro_alphas=[0.355],
+        )
+        self.assertEqual(
+            variants,
+            [
+                ("no_prehydro", base, False, 0.37),
+                (
+                    "with_prehydro",
+                    Path("runs/check/aa/hydro/task_00007_prehydro"),
+                    True,
+                    0.34,
+                ),
+                (
+                    "with_prehydro_alpha_0p355",
+                    Path("runs/check/aa/hydro/task_00007_prehydro_alpha_0p355"),
+                    True,
+                    0.355,
+                ),
+            ],
+        )
+
+    def test_build_aa_variants_rejects_duplicate_alpha(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duplicate prehydro alpha"):
+            MODULE.build_aa_variants(
+                base_run_dir=Path("task_00007"),
+                task_id=7,
+                run_prehydro_pair=True,
+                no_prehydro_alpha=0.37,
+                prehydro_alpha=0.34,
+                additional_prehydro_alphas=[0.34],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
