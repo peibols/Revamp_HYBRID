@@ -131,6 +131,10 @@ missing task IDs, requires exact 100,000-row manifest closure, and produces one
 100k ROOT file. Hadron RAA, jet RAA for R=0.1/0.2/0.4/0.8, inclusive and
 pT-sliced jet spectra/substructure, charge-response, and migration-safe paired
 substructure outputs are generated only after those gates pass.
+`analysis/watch_oo_v2_100k_final_analysis.sh` is the restart-safe unattended
+entry point: it requires both markers to report `accepted_pairs=50000`, exits
+immediately if a final `status=PASS` marker already exists, and otherwise runs
+the same combined analysis when both halves are ready.
 
 The wrapper separates physics output storage from immutable input storage.
 `EOS_BASE` receives the new status and output archives, `PAYLOAD_EOS_BASE`
