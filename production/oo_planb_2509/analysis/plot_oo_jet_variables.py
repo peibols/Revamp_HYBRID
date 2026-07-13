@@ -79,13 +79,13 @@ def variable_specs(
 ) -> list[VariableSpec]:
     if radius_digit == 1:
         mass_edges = np.array(
-            [-8, -4, -2, -1, 0, 0.5, 1, 1.5, 2, 3, 4, 6, 10, 16, 32, 64],
+            [-16, -8, -4, -2, -1, 0, 0.5, 1, 1.5, 2, 3, 4, 6, 10, 16, 32, 64],
             dtype=float,
         )
         multiplicity_edges = np.arange(0.5, 41.5, 1.0)
         rg_edges = np.linspace(0.0, 0.125, 21)
         girth_edges = np.linspace(0.0, 0.08, 21)
-        max_kt_edges = np.geomspace(0.00125, 50.0, 20)
+        max_kt_edges = np.geomspace(0.0005, 50.0, 20)
     elif radius_digit == 2:
         mass_edges = np.array(
             [-16, -8, -4, -2, 0, 1, 2, 3, 4, 6, 8, 12, 20, 32, 64, 128],
