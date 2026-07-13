@@ -322,6 +322,55 @@ class ConverterTest(unittest.TestCase):
             self.assertIn("AA task-manifest closure failed", result.stderr)
             self.assertFalse(output.exists())
 
+    @unittest.skipUnless(
+        shutil.which("root-config") and shutil.which("fastjet-config"),
+        "ROOT and FastJet are required",
+    )
+    def test_provisional_manifest_mode_records_missing_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            source = work / "source"
+            (source / "outputs/aa").mkdir(parents=True)
+            (source / "status/aa").mkdir(parents=True)
+            make_archive(source / "outputs/aa/chunk_7.tar.gz")
+            (source / "status/aa/chunk_7.txt").write_text(
+                "kind=aa\ntask_id=7\nstatus=success\nexit_code=0\n"
+            )
+            manifest = work / "aa_task_manifest.tsv"
+            manifest.write_text(
+                "task_id\thard_seed\thydro_slot\thydro_event_id\thydro_ncoll"
+                "\thydro_payload_sha256\n"
+                f"7\t12345\t3\t777\t42\t{'a' * 64}\n"
+                f"8\t12346\t4\t777\t42\t{'a' * 64}\n"
+            )
+            output = work / "paired.root"
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "--source",
+                    f"first={source}",
+                    "--output",
+                    str(output),
+                    "--build-dir",
+                    str(work / "build"),
+                    "--aa-task-manifest",
+                    str(manifest),
+                    "--allow-incomplete-aa-task-manifest",
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            summary = json.loads(output.with_suffix(".summary.json").read_text())
+            self.assertEqual(summary["acceptedPairs"], 1)
+            self.assertEqual(summary["aaTaskManifest"]["rows"], 2)
+            self.assertEqual(summary["aaTaskManifest"]["acceptedRows"], 1)
+            self.assertEqual(summary["aaTaskManifest"]["missingRows"], 1)
+            self.assertEqual(
+                summary["aaTaskManifest"]["closure"], "INCOMPLETE_ALLOWED"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

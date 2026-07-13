@@ -9,6 +9,7 @@ PP_LOCAL_EOS="${PP_LOCAL_EOS:-${ROOT}/test/tmp_oo_10k_prehydro_raa_20260709/loca
 PP_JET_CACHE="${PP_JET_CACHE:-${PP_LOCAL_EOS}/analysis_cache/oo5360_pp1m_jet_spectrum_r01020408_v2.tsv}"
 BUILD_DIR="${BUILD_DIR:-${SNAPSHOT}/build}"
 OVERWRITE="${OVERWRITE:-false}"
+REUSE_HADRON_RAA="${REUSE_HADRON_RAA:-false}"
 
 LOCAL_EOS="${SNAPSHOT}/local_eos"
 TASK_MANIFEST="${SNAPSHOT}/aa_task_manifest.tsv"
@@ -33,17 +34,48 @@ mkdir -p "${RAA_OUT}" "$(dirname -- "${ROOT_OUT}")" "${JET_OUT}" \
   "${JET_RAA_OUT}" "${CHARGE_OUT}" "${PAIRED_OUT}" "${VALIDATION_OUT}" \
   "${BUILD_DIR}"
 
-python3 "${SCRIPT_DIR}/analyze_oo_prehydro_pair.py" \
-  --local-eos "${LOCAL_EOS}" \
-  --pp-local-eos "${PP_LOCAL_EOS}" \
-  --out-dir "${RAA_OUT}" \
-  --require-paired-aa \
-  --aa-events-per-chunk 1 \
-  --aa-task-manifest "${TASK_MANIFEST}"
+case "${REUSE_HADRON_RAA}" in
+  1|true|TRUE)
+    python3 - "${RAA_OUT}/oo5360_c0_5_prehydro_overlay_raa.tsv" "${COUNT}" <<'PY'
+import csv
+import math
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+expected = int(sys.argv[2])
+with path.open() as handle:
+    rows = list(csv.DictReader(handle, delimiter="\t"))
+if (
+    len(rows) != 18
+    or {row["variant"] for row in rows} != {"no_prehydro", "with_prehydro"}
+    or {int(row["aa_events"]) for row in rows} != {expected}
+    or {int(row["pp_events"]) for row in rows} != {1_000_000}
+    or any(not math.isfinite(float(row["raa"])) for row in rows)
+):
+    raise SystemExit("existing hadron RAA failed resume validation")
+print(f"Reusing validated hadron RAA for {expected} frozen pairs")
+PY
+    ;;
+  0|false|FALSE)
+    python3 "${SCRIPT_DIR}/analyze_oo_prehydro_pair.py" \
+      --local-eos "${LOCAL_EOS}" \
+      --pp-local-eos "${PP_LOCAL_EOS}" \
+      --out-dir "${RAA_OUT}" \
+      --require-paired-aa \
+      --aa-events-per-chunk 1 \
+      --aa-task-manifest "${TASK_MANIFEST}"
+    ;;
+  *)
+    echo "REUSE_HADRON_RAA must be true or false, got: ${REUSE_HADRON_RAA}" >&2
+    exit 1
+    ;;
+esac
 
 converter_args=(
   --source "v2_fullstats=${LOCAL_EOS}"
   --aa-task-manifest "${TASK_MANIFEST}"
+  --allow-incomplete-aa-task-manifest
   --output "${ROOT_OUT}"
   --build-dir "${BUILD_DIR}"
   --progress-every 500
@@ -147,6 +179,14 @@ if conversion["acceptedPairs"] != expected:
     raise SystemExit("ROOT accepted-pair count does not match the frozen snapshot")
 if conversion["rejectedArchives"] or conversion["skippedChunkRecords"]:
     raise SystemExit("ROOT conversion rejected or skipped a frozen strict archive")
+manifest = conversion.get("aaTaskManifest")
+if (
+    manifest is None
+    or manifest.get("acceptedRows") != expected
+    or manifest.get("closure") != "INCOMPLETE_ALLOWED"
+    or manifest.get("missingRows") != manifest.get("rows") - expected
+):
+    raise SystemExit("ROOT conversion did not record audited provisional manifest closure")
 if len(raa_rows) != 18 or {int(row["aa_events"]) for row in raa_rows} != {expected}:
     raise SystemExit("RAA table does not contain the expected frozen event count")
 if (
@@ -193,6 +233,10 @@ report = {
     "rootAcceptedPairs": conversion["acceptedPairs"],
     "rootRejectedArchives": conversion["rejectedArchives"],
     "rootSkippedChunkRecords": conversion["skippedChunkRecords"],
+    "manifestRows": manifest["rows"],
+    "manifestAcceptedRows": manifest["acceptedRows"],
+    "manifestMissingRows": manifest["missingRows"],
+    "manifestClosure": manifest["closure"],
     "ppEvents": int(raa_rows[0]["pp_events"]),
     "raaRows": len(raa_rows),
     "jetRaaRows": len(jet_raa_rows),

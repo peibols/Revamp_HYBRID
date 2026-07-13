@@ -586,6 +586,14 @@ def make_parser() -> argparse.ArgumentParser:
             "provenance across all sources"
         ),
     )
+    parser.add_argument(
+        "--allow-incomplete-aa-task-manifest",
+        action="store_true",
+        help=(
+            "allow manifest rows absent from an explicitly provisional snapshot; "
+            "present rows still receive full provenance and duplicate-ID validation"
+        ),
+    )
     return parser
 
 
@@ -605,6 +613,10 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
     task_assignments = (
         load_aa_task_manifest(task_manifest) if task_manifest is not None else None
     )
+    if args.allow_incomplete_aa_task_manifest and task_assignments is None:
+        raise ValueError(
+            "--allow-incomplete-aa-task-manifest requires --aa-task-manifest"
+        )
 
     output = args.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -781,7 +793,11 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
                 raise RuntimeError(
                     f"ROOT writer exited with code {return_code}; inspect {writer_log}"
                 )
-            if task_assignments is not None and args.limit is None:
+            if (
+                task_assignments is not None
+                and args.limit is None
+                and not args.allow_incomplete_aa_task_manifest
+            ):
                 missing_task_ids = set(task_assignments) - accepted_task_ids
                 if missing_task_ids:
                     preview = ",".join(
@@ -854,10 +870,15 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
                 "sha256": sha256(task_manifest),
                 "rows": len(task_assignments),
                 "acceptedRows": len(accepted_task_ids),
+                "missingRows": len(set(task_assignments) - accepted_task_ids),
                 "closure": (
                     "PASS"
                     if args.limit is None and set(task_assignments) == accepted_task_ids
-                    else "NOT_REQUIRED_LIMITED"
+                    else (
+                        "INCOMPLETE_ALLOWED"
+                        if args.allow_incomplete_aa_task_manifest
+                        else "NOT_REQUIRED_LIMITED"
+                    )
                 ),
             }
             if task_manifest is not None and task_assignments is not None
