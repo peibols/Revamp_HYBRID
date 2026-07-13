@@ -79,7 +79,7 @@ def variable_specs(
 ) -> list[VariableSpec]:
     if radius_digit == 1:
         mass_edges = np.array(
-            [-16, -8, -4, -2, -1, 0, 0.5, 1, 1.5, 2, 3, 4, 6, 10, 16, 32, 64],
+            [-32, -16, -8, -4, -2, -1, 0, 0.5, 1, 1.5, 2, 3, 4, 6, 10, 16, 32, 64],
             dtype=float,
         )
         multiplicity_edges = np.arange(0.5, 41.5, 1.0)
