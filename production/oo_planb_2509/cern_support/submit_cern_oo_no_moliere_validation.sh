@@ -5,6 +5,7 @@ WORK="${WORK:-${ROOT}/test/oo5360_no_moliere_raa_20260606}"
 SUPPORT="${WORK}/cern_support"
 CERNCTL="${CERNCTL:-/data/yjlee/cernLxplus/cernctl}"
 CERN_REMOTE="${CERN_REMOTE:-lxplus}"
+SCHEDD="${SCHEDD:-}"
 CAMPAIGN="${CAMPAIGN:-hybrid_oo5360_c0_5_no_moliere_paired_prehydro_pthat4_unbounded_20260709}"
 EOS_BASE="${EOS_BASE:-/eos/user/y/yjlee/${CAMPAIGN}}"
 JOB_PAYLOAD_EOS_BASE="${JOB_PAYLOAD_EOS_BASE:-${EOS_BASE}}"
@@ -222,6 +223,7 @@ echo "eos_base=${EOS_BASE}"
 echo "job_payload_eos_base=${JOB_PAYLOAD_EOS_BASE}"
 echo "job_runtime_payload_eos_base=${JOB_RUNTIME_PAYLOAD_EOS_BASE}"
 echo "afs_work=${AFS_WORK}"
+echo "schedd=${SCHEDD:-default}"
 echo "mmli_source=${MMLI_SOURCE_ROOT}"
 echo "dry_run=${DRY_RUN}"
 echo "aa_centrality=${AA_CENTRALITY_LABEL} aa_centrality_index=${AA_CENTRALITY_INDEX}"
@@ -396,7 +398,12 @@ if [[ "${DRY_RUN}" == "1" || "${DRY_RUN}" == "true" || "${DRY_RUN}" == "TRUE" ]]
   echo "dry_run_note=skipping remote submit-file copy and condor_submit_dag"
 else
   scp -q -o BatchMode=yes "${WORK}/build_oo_no_moliere.sub" "${WORK}/oo_no_moliere_aa.sub" "${WORK}/oo_no_moliere_pp.sub" "${WORK}/aa_chunk_ids.txt" "${WORK}/pp_chunk_ids.txt" "${WORK}/campaign.dag" "${CERN_REMOTE}:${AFS_WORK}/"
-  "${CERNCTL}" run bash -lc "source /etc/profile.d/modules.sh 2>/dev/null || true; module load lxbatch/eossubmit >/dev/null 2>&1; cd ${AFS_WORK} && condor_submit_dag -force campaign.dag" | tee "${WORK}/logs/submit_cern_oo_no_moliere_validation.log"
+  if [[ -n "${SCHEDD}" ]]; then
+    SCHEDD_ADDRESS_FILE="${TMP_REMOTE}/schedd_address"
+    "${CERNCTL}" run bash -c "address=\$(condor_status -schedd -constraint 'Name == \"${SCHEDD}\"' -af MyAddress); test -n \"\${address}\"; test \"\$(printf '%s\\n' \"\${address}\" | wc -l)\" -eq 1; printf '%s\\n' \"\${address}\" > ${SCHEDD_ADDRESS_FILE}; cd ${AFS_WORK} && condor_submit_dag -force -schedd-address-file ${SCHEDD_ADDRESS_FILE} campaign.dag" | tee "${WORK}/logs/submit_cern_oo_no_moliere_validation.log"
+  else
+    "${CERNCTL}" run bash -lc "source /etc/profile.d/modules.sh 2>/dev/null || true; module load lxbatch/eossubmit >/dev/null 2>&1; cd ${AFS_WORK} && condor_submit_dag -force campaign.dag" | tee "${WORK}/logs/submit_cern_oo_no_moliere_validation.log"
+  fi
 fi
 cat > "${WORK}/campaign_manifest.txt" <<EOF_MANIFEST
 date=$(date -Is)
@@ -405,6 +412,7 @@ eos_base=${EOS_BASE}
 job_payload_eos_base=${JOB_PAYLOAD_EOS_BASE}
 job_runtime_payload_eos_base=${JOB_RUNTIME_PAYLOAD_EOS_BASE}
 afs_work=${AFS_WORK}
+schedd=${SCHEDD:-default}
 mmli_source=${MMLI_SOURCE_ROOT}
 source_git_branch=${SOURCE_GIT_BRANCH}
 source_git_commit=${SOURCE_GIT_COMMIT}
