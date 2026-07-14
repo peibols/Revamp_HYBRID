@@ -189,6 +189,22 @@ produces the three-way hadron/jet overlays and matched substructure summary.
 Completion-order snapshots must retain the provisional diagnostic label until
 the final common 100k task set is available.
 
+Run the complete V2-style three-way jet-spectrum suite with:
+
+```bash
+analysis/run_oo_v3_jet_spectra.sh \
+  ROOT_NO_ALPHA037.root ROOT_NO_ALPHA0335.root OUTPUT_DIR EXPECTED_EVENTS
+```
+
+The wrapper analyzes the inclusive selections `pT > 20` and `pT > 30 GeV`
+and the disjoint selections `20--30`, `30--50`, `50--80`, and `>80 GeV` for
+anti-kT radii 0.1, 0.2, 0.4, and 0.8. It produces three-way kinematics and
+substructure overlays for every selection and radius (48 detailed plots) plus
+an integrated momentum-slice summary. The merge requires the no-prehydro
+histograms from the two aligned ROOT pairs to agree exactly. The summary also
+requires the four disjoint intervals to close to the inclusive `pT > 20 GeV`
+cross section for every radius and all three variants.
+
 For a clearly labeled completion-order provisional snapshot before exact
 closure, pass each disjoint local EOS mirror as a repeated `--source` to
 `analysis/freeze_oo_v2_snapshot.py`, together with the combined manifest. The

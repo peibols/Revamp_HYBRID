@@ -311,6 +311,7 @@ def merge_jet_raa(
             )
         axis.axhline(1.0, color="0.55", linewidth=0.9)
         axis.set_xscale("log")
+        axis.set_xlim(15.0, 230.0)
         axis.set_ylim(0.35, 1.35)
         axis.set_title(f"anti-$k_T$ R={radius:.1f}")
         axis.grid(alpha=0.2)
