@@ -29,7 +29,9 @@
 namespace {
 
 constexpr std::array<char, 8> kPairMagic{'O', 'O', 'P', 'A', 'I', 'R', '1', '\0'};
-constexpr const char *kSchemaVersion = "oo-paired-root-v4";
+constexpr const char *kSchemaVersion = "oo-paired-root-v5";
+constexpr double kHbarCGeVFm = 0.19732698;
+constexpr double kFormationTimeCorrectedPtMin = 30.0;
 
 #pragma pack(push, 1)
 struct PairHeader {
@@ -377,6 +379,22 @@ struct JetRecord {
   double max_kt_z = std::numeric_limits<double>::quiet_NaN();
   double max_kt_rg = std::numeric_limits<double>::quiet_NaN();
   double max_kt_primary = std::numeric_limits<double>::quiet_NaN();
+  std::vector<float> formation_tau_f;
+  std::vector<float> formation_tau_f_small_angle;
+  std::vector<float> formation_z;
+  std::vector<float> formation_theta;
+  std::vector<float> formation_delta_r;
+  std::vector<float> formation_kt;
+  std::vector<float> formation_parent_energy;
+  int formation_invalid_splits = 0;
+  int formation_hardest_valid = 0;
+  double formation_hardest_tau_f = std::numeric_limits<double>::quiet_NaN();
+  double formation_hardest_tau_f_small_angle = std::numeric_limits<double>::quiet_NaN();
+  double formation_hardest_z = std::numeric_limits<double>::quiet_NaN();
+  double formation_hardest_theta = std::numeric_limits<double>::quiet_NaN();
+  double formation_hardest_delta_r = std::numeric_limits<double>::quiet_NaN();
+  double formation_hardest_kt = std::numeric_limits<double>::quiet_NaN();
+  double formation_hardest_parent_energy = std::numeric_limits<double>::quiet_NaN();
   double normal_pt = 0.0;
   double positive_wake_pt = 0.0;
   double negative_wake_pt = 0.0;
@@ -406,10 +424,75 @@ struct SoftDropResult {
   double max_kt_z = std::numeric_limits<double>::quiet_NaN();
   double max_kt_rg = std::numeric_limits<double>::quiet_NaN();
   double max_kt_primary = std::numeric_limits<double>::quiet_NaN();
+  std::vector<float> formation_tau_f;
+  std::vector<float> formation_tau_f_small_angle;
+  std::vector<float> formation_z;
+  std::vector<float> formation_theta;
+  std::vector<float> formation_delta_r;
+  std::vector<float> formation_kt;
+  std::vector<float> formation_parent_energy;
+  int formation_invalid_splits = 0;
+  int formation_hardest_index = -1;
+  double formation_hardest_kt = -std::numeric_limits<double>::infinity();
 };
 
+struct FormationTimeRecord {
+  double tau_f = std::numeric_limits<double>::quiet_NaN();
+  double tau_f_small_angle = std::numeric_limits<double>::quiet_NaN();
+  double z = std::numeric_limits<double>::quiet_NaN();
+  double theta = std::numeric_limits<double>::quiet_NaN();
+  double delta_r = std::numeric_limits<double>::quiet_NaN();
+  double kt = std::numeric_limits<double>::quiet_NaN();
+  double parent_energy = std::numeric_limits<double>::quiet_NaN();
+};
+
+bool calculate_formation_time(const fastjet::PseudoJet &parent,
+                              const fastjet::PseudoJet &first,
+                              const fastjet::PseudoJet &second,
+                              FormationTimeRecord &record) {
+  const double first_momentum =
+      std::sqrt(first.px() * first.px() + first.py() * first.py() + first.pz() * first.pz());
+  const double second_momentum = std::sqrt(second.px() * second.px() + second.py() * second.py() +
+                                           second.pz() * second.pz());
+  const double parent_energy = parent.e();
+  if (!(parent_energy > 0.0 && first.e() > 0.0 && second.e() > 0.0 &&
+        first_momentum > 0.0 && second_momentum > 0.0)) {
+    return false;
+  }
+  const double z_first = first.e() / parent_energy;
+  const double z_second = second.e() / parent_energy;
+  if (!(z_first > 0.0 && z_second > 0.0)) {
+    return false;
+  }
+  const double cosine = std::clamp(
+      (first.px() * second.px() + first.py() * second.py() + first.pz() * second.pz()) /
+          (first_momentum * second_momentum),
+      -1.0, 1.0);
+  const double one_minus_cosine = 1.0 - cosine;
+  const double delta_r = first.delta_R(second);
+  const double exact_denominator =
+      2.0 * parent_energy * z_first * z_second * one_minus_cosine;
+  const double small_angle_denominator =
+      parent_energy * z_first * z_second * delta_r * delta_r;
+  if (!(exact_denominator > 0.0 && small_angle_denominator > 0.0)) {
+    return false;
+  }
+  record.tau_f = kHbarCGeVFm / exact_denominator;
+  record.tau_f_small_angle = kHbarCGeVFm / small_angle_denominator;
+  record.z = std::min(z_first, z_second);
+  record.theta = std::acos(cosine);
+  record.delta_r = delta_r;
+  record.kt = std::min(first.pt(), second.pt()) * delta_r;
+  record.parent_energy = parent_energy;
+  return std::isfinite(record.tau_f) && std::isfinite(record.tau_f_small_angle) &&
+         std::isfinite(record.z) && std::isfinite(record.theta) &&
+         std::isfinite(record.delta_r) && std::isfinite(record.kt) &&
+         std::isfinite(record.parent_energy);
+}
+
 SoftDropResult calculate_declustering(const std::vector<fastjet::PseudoJet> &constituents,
-                                      double radius, double z_cut, double beta) {
+                                      double radius, double z_cut, double beta,
+                                      bool retain_formation_time) {
   SoftDropResult result;
   if (constituents.size() < 2) {
     return result;
@@ -441,8 +524,34 @@ SoftDropResult calculate_declustering(const std::vector<fastjet::PseudoJet> &con
       result.max_kt_z = z;
       result.max_kt_rg = rg;
     }
+    if (retain_formation_time) {
+      FormationTimeRecord formation;
+      if (calculate_formation_time(node, first, second, formation)) {
+        result.formation_tau_f.push_back(static_cast<float>(formation.tau_f));
+        result.formation_tau_f_small_angle.push_back(
+            static_cast<float>(formation.tau_f_small_angle));
+        result.formation_z.push_back(static_cast<float>(formation.z));
+        result.formation_theta.push_back(static_cast<float>(formation.theta));
+        result.formation_delta_r.push_back(static_cast<float>(formation.delta_r));
+        result.formation_kt.push_back(static_cast<float>(formation.kt));
+        result.formation_parent_energy.push_back(static_cast<float>(formation.parent_energy));
+        const int candidate = static_cast<int>(result.formation_kt.size()) - 1;
+        if (formation.kt > result.formation_hardest_kt) {
+          result.formation_hardest_index = candidate;
+          result.formation_hardest_kt = formation.kt;
+        }
+      } else {
+        ++result.formation_invalid_splits;
+      }
+    }
     stack.push_back(first);
     stack.push_back(second);
+  }
+  if (retain_formation_time &&
+      result.formation_tau_f.size() +
+              static_cast<std::size_t>(result.formation_invalid_splits) !=
+          constituents.size() - 1) {
+    throw std::runtime_error("C/A formation-time tree does not have Nconstituent-1 splits");
   }
 
   fastjet::PseudoJet current = root;
@@ -621,8 +730,10 @@ std::vector<JetRecord> make_jets(const std::vector<ParticleRecord> &particles, d
       record.y = 0.5 * std::log((record.energy + record.pz) / (record.energy - record.pz));
     }
 
-    const SoftDropResult declustering =
-        calculate_declustering(constituents, radius, options.z_cut, options.beta);
+    const bool retain_formation_time =
+        radius >= 0.4 - 1e-12 && record.pt > kFormationTimeCorrectedPtMin;
+    const SoftDropResult declustering = calculate_declustering(
+        constituents, radius, options.z_cut, options.beta, retain_formation_time);
     record.soft_drop_valid = declustering.valid ? 1 : 0;
     record.zg = declustering.zg;
     record.rg = declustering.rg;
@@ -633,6 +744,30 @@ std::vector<JetRecord> make_jets(const std::vector<ParticleRecord> &particles, d
     record.max_kt_z = declustering.max_kt_z;
     record.max_kt_rg = declustering.max_kt_rg;
     record.max_kt_primary = declustering.max_kt_primary;
+    if (retain_formation_time) {
+      record.formation_tau_f = declustering.formation_tau_f;
+      record.formation_tau_f_small_angle = declustering.formation_tau_f_small_angle;
+      record.formation_z = declustering.formation_z;
+      record.formation_theta = declustering.formation_theta;
+      record.formation_delta_r = declustering.formation_delta_r;
+      record.formation_kt = declustering.formation_kt;
+      record.formation_parent_energy = declustering.formation_parent_energy;
+      record.formation_invalid_splits = declustering.formation_invalid_splits;
+      if (declustering.formation_hardest_index >= 0) {
+        const std::size_t hardest =
+            static_cast<std::size_t>(declustering.formation_hardest_index);
+        record.formation_hardest_valid = 1;
+        record.formation_hardest_tau_f = declustering.formation_tau_f.at(hardest);
+        record.formation_hardest_tau_f_small_angle =
+            declustering.formation_tau_f_small_angle.at(hardest);
+        record.formation_hardest_z = declustering.formation_z.at(hardest);
+        record.formation_hardest_theta = declustering.formation_theta.at(hardest);
+        record.formation_hardest_delta_r = declustering.formation_delta_r.at(hardest);
+        record.formation_hardest_kt = declustering.formation_kt.at(hardest);
+        record.formation_hardest_parent_energy =
+            declustering.formation_parent_energy.at(hardest);
+      }
+    }
     records.push_back(record);
   }
   return records;
@@ -731,7 +866,8 @@ void match_jets(std::vector<JetRecord> &no_prehydro, std::vector<JetRecord> &wit
 
 class RadiusBranches {
  public:
-  RadiusBranches(TTree *tree, std::string prefix) : prefix_(std::move(prefix)) {
+  RadiusBranches(TTree *tree, std::string prefix, bool store_formation_time)
+      : prefix_(std::move(prefix)), store_formation_time_(store_formation_time) {
     branch(tree, "Eta", eta_);
     branch(tree, "Y", y_);
     branch(tree, "Phi", phi_);
@@ -781,11 +917,33 @@ class RadiusBranches {
     branch(tree, "PairMatchDR", pair_match_dr_);
     branch(tree, "PairMatchOtherPt", pair_match_other_pt_);
     branch(tree, "PairMatchOtherHardPartonId", pair_match_other_hard_parton_id_);
+    if (store_formation_time_) {
+      branch(tree, "FormationTauF", formation_tau_f_);
+      branch(tree, "FormationTauFSmallAngle", formation_tau_f_small_angle_);
+      branch(tree, "FormationZ", formation_z_);
+      branch(tree, "FormationTheta", formation_theta_);
+      branch(tree, "FormationDeltaR", formation_delta_r_);
+      branch(tree, "FormationKt", formation_kt_);
+      branch(tree, "FormationParentE", formation_parent_energy_);
+      branch(tree, "FormationOffset", formation_offset_);
+      branch(tree, "FormationInvalidSplits", formation_invalid_splits_);
+      branch(tree, "FormationHardestValid", formation_hardest_valid_);
+      branch(tree, "FormationHardestTauF", formation_hardest_tau_f_);
+      branch(tree, "FormationHardestTauFSmallAngle", formation_hardest_tau_f_small_angle_);
+      branch(tree, "FormationHardestZ", formation_hardest_z_);
+      branch(tree, "FormationHardestTheta", formation_hardest_theta_);
+      branch(tree, "FormationHardestDeltaR", formation_hardest_delta_r_);
+      branch(tree, "FormationHardestKt", formation_hardest_kt_);
+      branch(tree, "FormationHardestParentE", formation_hardest_parent_energy_);
+    }
   }
 
   void assign(const std::vector<JetRecord> &records) {
     clear();
     reserve(records.size());
+    if (store_formation_time_) {
+      formation_offset_.push_back(0);
+    }
     for (const JetRecord &record : records) {
       push(eta_, record.eta);
       push(y_, record.y);
@@ -836,6 +994,35 @@ class RadiusBranches {
       push(pair_match_dr_, record.pair_match_dr);
       push(pair_match_other_pt_, record.pair_match_other_pt);
       pair_match_other_hard_parton_id_.push_back(record.pair_match_other_hard_parton_id);
+      if (store_formation_time_) {
+        formation_tau_f_.insert(formation_tau_f_.end(), record.formation_tau_f.begin(),
+                                record.formation_tau_f.end());
+        formation_tau_f_small_angle_.insert(
+            formation_tau_f_small_angle_.end(), record.formation_tau_f_small_angle.begin(),
+            record.formation_tau_f_small_angle.end());
+        formation_z_.insert(formation_z_.end(), record.formation_z.begin(),
+                            record.formation_z.end());
+        formation_theta_.insert(formation_theta_.end(), record.formation_theta.begin(),
+                                record.formation_theta.end());
+        formation_delta_r_.insert(formation_delta_r_.end(), record.formation_delta_r.begin(),
+                                  record.formation_delta_r.end());
+        formation_kt_.insert(formation_kt_.end(), record.formation_kt.begin(),
+                             record.formation_kt.end());
+        formation_parent_energy_.insert(formation_parent_energy_.end(),
+                                        record.formation_parent_energy.begin(),
+                                        record.formation_parent_energy.end());
+        formation_offset_.push_back(static_cast<int>(formation_tau_f_.size()));
+        formation_invalid_splits_.push_back(record.formation_invalid_splits);
+        formation_hardest_valid_.push_back(record.formation_hardest_valid);
+        push(formation_hardest_tau_f_, record.formation_hardest_tau_f);
+        push(formation_hardest_tau_f_small_angle_,
+             record.formation_hardest_tau_f_small_angle);
+        push(formation_hardest_z_, record.formation_hardest_z);
+        push(formation_hardest_theta_, record.formation_hardest_theta);
+        push(formation_hardest_delta_r_, record.formation_hardest_delta_r);
+        push(formation_hardest_kt_, record.formation_hardest_kt);
+        push(formation_hardest_parent_energy_, record.formation_hardest_parent_energy);
+      }
     }
   }
 
@@ -856,6 +1043,9 @@ class RadiusBranches {
     for (auto *values : int_vectors()) {
       values->reserve(size);
     }
+    if (store_formation_time_) {
+      formation_offset_.reserve(size + 1);
+    }
   }
 
   void clear() {
@@ -865,6 +1055,10 @@ class RadiusBranches {
     for (auto *values : int_vectors()) {
       values->clear();
     }
+    for (auto *values : formation_float_vectors()) {
+      values->clear();
+    }
+    formation_offset_.clear();
   }
 
   std::vector<std::vector<float> *> float_vectors() {
@@ -880,17 +1074,29 @@ class RadiusBranches {
             &max_kt_,       &max_kt_z_,           &max_kt_rg_,
             &max_kt_primary_, &normal_pt_,        &positive_wake_pt_,
             &negative_wake_pt_, &wake_fraction_,  &pair_match_dr_,
-            &pair_match_other_pt_, &hard_parton_pt_, &hard_parton_dr_};
+            &pair_match_other_pt_, &hard_parton_pt_, &hard_parton_dr_,
+            &formation_hardest_tau_f_, &formation_hardest_tau_f_small_angle_,
+            &formation_hardest_z_, &formation_hardest_theta_,
+            &formation_hardest_delta_r_, &formation_hardest_kt_,
+            &formation_hardest_parent_energy_};
   }
 
   std::vector<std::vector<int> *> int_vectors() {
     return {&soft_drop_valid_, &n_sd_,              &mult_,
             &n_normal_,        &n_positive_wake_,   &n_negative_wake_,
             &n_negative_thermal_, &n_hadronized_holes_, &hard_parton_id_,
-            &pair_match_index_, &pair_match_other_hard_parton_id_};
+            &pair_match_index_, &pair_match_other_hard_parton_id_,
+            &formation_invalid_splits_, &formation_hardest_valid_};
+  }
+
+  std::vector<std::vector<float> *> formation_float_vectors() {
+    return {&formation_tau_f_, &formation_tau_f_small_angle_, &formation_z_,
+            &formation_theta_, &formation_delta_r_, &formation_kt_,
+            &formation_parent_energy_};
   }
 
   std::string prefix_;
+  bool store_formation_time_ = false;
   std::vector<float> eta_, y_, phi_, pt_, mass_, energy_, px_, py_, pz_;
   std::vector<float> raw_eta_, raw_y_, raw_phi_, raw_pt_, raw_mass_;
   std::vector<float> zg_, rg_, sd_pt_, sd_mass_;
@@ -905,6 +1111,15 @@ class RadiusBranches {
   std::vector<int> pair_match_other_hard_parton_id_;
   std::vector<float> hard_parton_pt_, hard_parton_dr_;
   std::vector<float> pair_match_dr_, pair_match_other_pt_;
+  std::vector<float> formation_tau_f_, formation_tau_f_small_angle_;
+  std::vector<float> formation_z_, formation_theta_, formation_delta_r_;
+  std::vector<float> formation_kt_, formation_parent_energy_;
+  std::vector<int> formation_offset_;
+  std::vector<int> formation_invalid_splits_, formation_hardest_valid_;
+  std::vector<float> formation_hardest_tau_f_, formation_hardest_tau_f_small_angle_;
+  std::vector<float> formation_hardest_z_, formation_hardest_theta_;
+  std::vector<float> formation_hardest_delta_r_, formation_hardest_kt_;
+  std::vector<float> formation_hardest_parent_energy_;
 };
 
 class JetTree {
@@ -919,10 +1134,10 @@ class JetTree {
     tree_->Branch("nJet2", &n_jet2_);
     tree_->Branch("nJet4", &n_jet4_);
     tree_->Branch("nJet8", &n_jet8_);
-    jet1_ = std::make_unique<RadiusBranches>(tree_, "jet1");
-    jet2_ = std::make_unique<RadiusBranches>(tree_, "jet2");
-    jet4_ = std::make_unique<RadiusBranches>(tree_, "jet4");
-    jet8_ = std::make_unique<RadiusBranches>(tree_, "jet8");
+    jet1_ = std::make_unique<RadiusBranches>(tree_, "jet1", false);
+    jet2_ = std::make_unique<RadiusBranches>(tree_, "jet2", false);
+    jet4_ = std::make_unique<RadiusBranches>(tree_, "jet4", true);
+    jet8_ = std::make_unique<RadiusBranches>(tree_, "jet8", true);
   }
 
   void fill(const EventMeta &metadata, const std::vector<JetRecord> &jets1,
@@ -1066,6 +1281,14 @@ void write_metadata(TFile &output, const Options &options, std::uint64_t pair_co
       "substructureDefinition",
       "positive constituents only; Cambridge/Aachen reclustering; Soft Drop first passing hardest-branch split; MaxKt over full C/A tree; normal-only effective multiplicity excludes wake hadrons");
   substructure_definition.Write();
+  TNamed formation_time_definition(
+      "formationTimeDefinition",
+      "R=0.4,0.8 full C/A trees; tau_f=hbarc/[2 Eparent z1 z2 (1-cos(theta12))], hbarc=0.19732698 GeV fm, zi=Ei/Eparent, exact three-dimensional theta12; small-angle audit replaces 1-cos(theta12) by DeltaR12^2/2; hardest split maximizes min(pT1,pT2)*DeltaR12 over the full tree");
+  formation_time_definition.Write();
+  TNamed formation_time_interpretation(
+      "formationTimeInterpretation",
+      "final-hadron Cambridge/Aachen formation-time estimator; not generator-level parton-shower history; negative wake and hadronized holes affect corrected jet selection through 4MomSub but are excluded from the nonlinear constituent tree");
+  formation_time_interpretation.Write();
   TNamed hard_parton_definition(
       "hardPartonMatchDefinition",
       "one-to-one nearest-axis matching of raw-label -2 outgoing hard-parton markers to raw jet axes within DeltaR<R");
@@ -1075,6 +1298,7 @@ void write_metadata(TFile &output, const Options &options, std::uint64_t pair_co
   TParameter<double>("softDropZCut", options.z_cut).Write();
   TParameter<double>("softDropBeta", options.beta).Write();
   TParameter<double>("pairMatchDRFraction", options.match_dr_fraction).Write();
+  TParameter<double>("formationTimeCorrectedPtMin", kFormationTimeCorrectedPtMin).Write();
 
   int source_index = 0;
   std::string source_name;

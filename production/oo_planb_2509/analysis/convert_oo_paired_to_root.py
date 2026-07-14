@@ -27,7 +27,7 @@ PARTICLE_RECORD = struct.Struct("<ddddii")
 PAIR_MAGIC = b"OOPAIR1\0"
 CHUNK_PATTERN = re.compile(r"chunk_(\d+)\.(?:tar\.gz|txt)$")
 ALLOWED_LABELS = {-2, 0, 1, 2, 3}
-SCHEMA_VERSION = "oo-paired-root-v4"
+SCHEMA_VERSION = "oo-paired-root-v5"
 JET_RADIUS_DIGITS = (1, 2, 4, 8)
 
 
@@ -701,6 +701,29 @@ def validate_root(path: Path, expected_pairs: int) -> dict[str, int]:
                 "PairMatchOtherHardPartonId",
             )
         )
+        if radius_digit in (4, 8):
+            jet_branches.update(
+                f"jet{radius_digit}{suffix}"
+                for suffix in (
+                    "FormationTauF",
+                    "FormationTauFSmallAngle",
+                    "FormationZ",
+                    "FormationTheta",
+                    "FormationDeltaR",
+                    "FormationKt",
+                    "FormationParentE",
+                    "FormationOffset",
+                    "FormationInvalidSplits",
+                    "FormationHardestValid",
+                    "FormationHardestTauF",
+                    "FormationHardestTauFSmallAngle",
+                    "FormationHardestZ",
+                    "FormationHardestTheta",
+                    "FormationHardestDeltaR",
+                    "FormationHardestKt",
+                    "FormationHardestParentE",
+                )
+            )
     required_trees = {
         "noPrehydro/Hadrons": hadron_branches,
         "withPrehydro/Hadrons": hadron_branches,
@@ -1053,6 +1076,15 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
             "softDropBeta": args.beta,
             "pairMatchDRFraction": args.match_dr_fraction,
             "hardPartonMatchDRFraction": 1.0,
+            "formationTime": {
+                "storedRadii": [0.4, 0.8],
+                "correctedJetPtMinExclusiveGeV": 30.0,
+                "reclustering": "Cambridge-Aachen E-scheme",
+                "constituents": "normal plus positive wake",
+                "negativeCorrection": "ghost association and jet-level 4MomSub only",
+                "hbarCGeVFm": 0.19732698,
+                "singleSplitting": "global maximum kT over the full C/A tree",
+            },
         },
         "output": str(output),
         "outputBytes": output.stat().st_size,
@@ -1060,6 +1092,8 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
         "audit": str(audit_output),
         "writerLog": str(writer_log),
         "writerBinary": str(writer),
+        "writerSource": str(args.writer_source.resolve()),
+        "writerSourceSha256": sha256(args.writer_source.resolve()),
         "rootVersion": command_output(["root-config", "--version"]),
         "fastjetVersion": command_output(["fastjet-config", "--version"]),
         "inventory": str(args.inventory.resolve()) if args.inventory else None,

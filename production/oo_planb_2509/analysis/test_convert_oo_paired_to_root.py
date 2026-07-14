@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import math
 from pathlib import Path
 import shutil
 import subprocess
@@ -47,6 +48,8 @@ def make_archive(
     task_id: int = 7,
     seed: int = 12345,
     hydro_index: int = 3,
+    no_px: float = 4.0,
+    with_px: float = 3.5,
 ) -> None:
     base = "runs/campaign/aa/hydro_03_C0-5"
     payload_sha256 = "a" * 64
@@ -68,7 +71,7 @@ def make_archive(
             f"{base}/{task}/summary.tsv",
             (summary_header + "no_prehydro\t0\t\t0\t0\t1.0\t/no\n").encode(),
         )
-        add_member(tar, f"{base}/{task}/HYBRID_Hadrons.out", event_text(4.0))
+        add_member(tar, f"{base}/{task}/HYBRID_Hadrons.out", event_text(no_px))
         add_member(
             tar,
             f"{base}/{task}_prehydro/summary.tsv",
@@ -77,7 +80,7 @@ def make_archive(
         add_member(
             tar,
             f"{base}/{task}_prehydro/HYBRID_Hadrons.out",
-            event_text(3.5, with_weight),
+            event_text(with_px, with_weight),
         )
 
 
@@ -225,7 +228,11 @@ class ConverterTest(unittest.TestCase):
             source = work / "source"
             (source / "outputs" / "aa").mkdir(parents=True)
             (source / "status" / "aa").mkdir(parents=True)
-            make_archive(source / "outputs" / "aa" / "chunk_7.tar.gz")
+            make_archive(
+                source / "outputs" / "aa" / "chunk_7.tar.gz",
+                no_px=40.0,
+                with_px=35.0,
+            )
             (source / "status" / "aa" / "chunk_7.txt").write_text(
                 "kind=aa\ntask_id=7\nstatus=success\nexit_code=0\n"
             )
@@ -279,6 +286,18 @@ class ConverterTest(unittest.TestCase):
                         "jet4Pt",
                         "jet4RawPt",
                         "jet4NegativeWakePt",
+                        "jet4FormationTauF",
+                        "jet4FormationTauFSmallAngle",
+                        "jet4FormationZ",
+                        "jet4FormationTheta",
+                        "jet4FormationDeltaR",
+                        "jet4FormationKt",
+                        "jet4FormationParentE",
+                        "jet4FormationOffset",
+                        "jet4FormationInvalidSplits",
+                        "jet4FormationHardestValid",
+                        "jet4FormationHardestTauF",
+                        "jet4FormationHardestKt",
                     ],
                     library="ak",
                 )
@@ -301,6 +320,34 @@ class ConverterTest(unittest.TestCase):
                 self.assertEqual(int(jets.jet2PairMatchOtherHardPartonId[0][0]), 21)
                 self.assertGreater(float(jets.jet4NegativeWakePt[0][0]), 0.0)
                 self.assertLess(float(jets.jet4Pt[0][0]), float(jets.jet4RawPt[0][0]))
+                self.assertEqual(ak.to_list(jets.jet4FormationOffset[0]), [0, 1])
+                self.assertEqual(len(jets.jet4FormationTauF[0]), 1)
+                self.assertEqual(int(jets.jet4FormationInvalidSplits[0][0]), 0)
+                self.assertEqual(int(jets.jet4FormationHardestValid[0][0]), 1)
+                tau_f = float(jets.jet4FormationTauF[0][0])
+                tau_f_small = float(jets.jet4FormationTauFSmallAngle[0][0])
+                z = float(jets.jet4FormationZ[0][0])
+                theta = float(jets.jet4FormationTheta[0][0])
+                delta_r = float(jets.jet4FormationDeltaR[0][0])
+                parent_energy = float(jets.jet4FormationParentE[0][0])
+                self.assertAlmostEqual(
+                    tau_f,
+                    0.19732698
+                    / (2.0 * parent_energy * z * (1.0 - z) * (1.0 - math.cos(theta))),
+                    places=5,
+                )
+                self.assertAlmostEqual(
+                    tau_f_small,
+                    0.19732698 / (parent_energy * z * (1.0 - z) * delta_r**2),
+                    places=5,
+                )
+                self.assertAlmostEqual(
+                    float(jets.jet4FormationHardestTauF[0][0]), tau_f
+                )
+                self.assertAlmostEqual(
+                    float(jets.jet4FormationHardestKt[0][0]),
+                    float(jets.jet4FormationKt[0][0]),
+                )
 
     @unittest.skipUnless(
         shutil.which("root-config") and shutil.which("fastjet-config"),
