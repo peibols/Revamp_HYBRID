@@ -369,8 +369,17 @@ def plot_substructure(
     write_tsv(out_dir / "oo5360_v3_jet_variables_pt30_summary.tsv", summary_rows)
 
     plots: list[Path] = []
-    figure, axes = plt.subplots(2, 2, figsize=(10.2, 7.4), sharex=True)
-    for axis, radius in zip(axes.flat, RADII):
+    figure, axes = plt.subplots(
+        2,
+        4,
+        figsize=(14.4, 6.2),
+        sharex="col",
+        gridspec_kw={"height_ratios": [3.0, 1.0], "hspace": 0.06, "wspace": 0.28},
+    )
+    for column, radius in enumerate(RADII):
+        upper = axes[0, column]
+        lower = axes[1, column]
+        selected_by_variant: dict[str, list[dict[str, str]]] = {}
         for variant in VARIANTS:
             selected = [
                 row
@@ -381,6 +390,7 @@ def plot_substructure(
                 and math.isclose(float(row["radius"]), radius)
             ]
             selected.sort(key=lambda row: int(row["bin_index"]))
+            selected_by_variant[variant] = selected
             widths = np.array(
                 [float(row["bin_high"]) - float(row["bin_low"]) for row in selected]
             )
@@ -390,7 +400,7 @@ def plot_substructure(
             errors = np.array([float(row["stat_error_mb"]) for row in selected])
             norm = float(np.sum(values * widths))
             style = STYLES[variant]
-            axis.errorbar(
+            upper.errorbar(
                 [float(row["bin_center"]) for row in selected],
                 values / norm,
                 yerr=errors / norm,
@@ -401,15 +411,70 @@ def plot_substructure(
                 markersize=3.7,
                 capsize=1.5,
             )
-        axis.set_title(f"R={radius:.1f}")
-        axis.grid(alpha=0.2)
-    axes[0, 0].legend(frameon=False, fontsize=8)
-    for axis in axes[-1, :]:
-        axis.set_xlabel(r"$p_{TD}$")
-    for axis in axes[:, 0]:
-        axis.set_ylabel("normalized weighted density")
+
+        upper.set_title(f"R={radius:.1f}")
+        upper.grid(alpha=0.2)
+        upper.tick_params(labelbottom=False)
+        if column == 0:
+            upper.set_ylabel("normalized weighted density")
+            upper.legend(frameon=False, fontsize=8)
+
+        lower.axhline(1.0, color="0.45", linewidth=0.9)
+        ratio_values: list[np.ndarray] = []
+        ratio_errors: list[np.ndarray] = []
+        no_rows = selected_by_variant["no_prehydro"]
+        no_values = np.array(
+            [float(row["differential_cross_section_mb"]) for row in no_rows]
+        )
+        no_errors = np.array([float(row["stat_error_mb"]) for row in no_rows])
+        denominator_is_resolved = no_values > 2.0 * no_errors
+        for variant in ("prehydro_alpha037", "prehydro_alpha0335"):
+            selected = selected_by_variant[variant]
+            ratio = np.array([float(row["pre_over_no_ratio"]) for row in selected])
+            error = np.array([float(row["ratio_stat_error"]) for row in selected])
+            centers = np.array([float(row["bin_center"]) for row in selected])
+            finite = (
+                np.isfinite(ratio)
+                & np.isfinite(error)
+                & denominator_is_resolved
+                & (error < 0.5)
+            )
+            style = STYLES[variant]
+            lower.errorbar(
+                centers[finite],
+                ratio[finite],
+                yerr=error[finite],
+                color=style["color"],
+                marker=style["marker"],
+                linestyle="none",
+                markersize=3.0,
+                linewidth=0.8,
+                capsize=1.2,
+            )
+            ratio_values.append(ratio[finite])
+            ratio_errors.append(error[finite])
+        combined_ratio = np.concatenate(ratio_values)
+        combined_error = np.concatenate(ratio_errors)
+        low = min(1.0, float(np.min(combined_ratio - combined_error)))
+        high = max(1.0, float(np.max(combined_ratio + combined_error)))
+        padding = max(0.04, 0.12 * (high - low))
+        lower.set_ylim(max(0.0, low - padding), high + padding)
+        lower.set_xlabel(r"$p_{TD}$")
+        lower.grid(alpha=0.2)
+        if column == 0:
+            lower.set_ylabel("Plan B / no")
+
     figure.suptitle(r"Independent jets, $p_T>30$ GeV; matched hard-event set")
-    figure.tight_layout()
+    figure.text(
+        0.5,
+        0.012,
+        "Upper: unit-normalized weighted distributions. Lower: paired differential-yield "
+        "ratios to no pre-hydro with delete-one-event jackknife errors; ratio points require "
+        r"no-pre-hydro bin content $>2\sigma$ and ratio error $<0.5$.",
+        ha="center",
+        fontsize=8.5,
+    )
+    figure.subplots_adjust(top=0.90, bottom=0.13, left=0.065, right=0.99)
     ptd_plot = out_dir / "oo5360_v3_ptd_distributions.pdf"
     figure.savefig(ptd_plot)
     figure.savefig(ptd_plot.with_suffix(".png"), dpi=180)
@@ -628,6 +693,13 @@ def main() -> int:
         "matchedTriplets": args.expected_events,
         "normalization": "PythiaParallel sigmaGen/sum(weight), applied once; common 1M pp denominator",
         "uncertainty": "delete-one-AA-event jackknife; pp uncertainty combined independently for RAA",
+        "ptdRatioDisplay": {
+            "denominator": "no_prehydro",
+            "quantity": "paired differential-yield ratio",
+            "minimumNoPrehydroSignificance": 2.0,
+            "maximumDisplayedRatioStatError": 0.5,
+            "note": "display cuts affect ratio markers only; tables and upper distributions are unfiltered",
+        },
         "hadronRaa10to14": {
             variant: {
                 "value": float(row_at(hadron_rows, variant, 10.0)["raa"]),
