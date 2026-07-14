@@ -162,6 +162,77 @@ substructure overlays, migration-safe paired Soft Drop and momentum-dispersion
 audit, pT-slice closure, and inclusive jet-RAA workflow all include R=0.1,
 R=0.2, R=0.4, and R=0.8. The effective-charge response remains scoped to
 R=0.2, R=0.4, and R=0.8.
+
+## Formation-time estimator (schema v5)
+
+Schema v5 stores the Cambridge--Aachen declustering tree needed for the
+final-state formation-time estimator for R=0.4 and R=0.8 jets with
+4MomSub-corrected `Pt > 30 GeV`. The calculation is performed in the C++ ROOT
+writer from the original double-precision hadron four-vectors and FastJet
+history. Reconstructing the tree later from the rounded float hadron branches
+is not equivalent and is not supported for this observable.
+
+For every valid internal node,
+
+```text
+tau_f [fm/c] = 0.19732698
+               / (2 E_parent z1 z2 [1-cos(theta12)])
+zi           = Ei / E_parent
+z            = min(z1,z2)
+kT           = min(pT1,pT2) DeltaR12.
+```
+
+`theta12` is the exact three-dimensional opening angle calculated from the
+two child momentum vectors, and `E_parent` is the C/A parent energy. The
+stored small-angle audit replaces `1-cos(theta12)` by `DeltaR12^2/2`; it is a
+validation quantity, not the nominal estimator.
+
+The C/A tree contains normal and positive-wake hadrons at physical
+four-momentum. Raw-label-2 negative wake particles and raw-label-3 hadronized
+holes are ghost-associated during anti-kT reconstruction and subtracted from
+the jet four-vector. They therefore affect the corrected-pT selection but are
+not inserted into the nonlinear C/A constituent tree. This is deliberate:
+4MomSub does not define a unique negative-subtracted nonlinear tree.
+
+For `jet4*` and `jet8*`, schema v5 adds:
+
+| Branch suffix | Definition |
+| --- | --- |
+| `FormationTauF` | flat vector of exact `tau_f` values for all valid full-tree splits |
+| `FormationTauFSmallAngle` | corresponding DeltaR small-angle audit values |
+| `FormationZ` | `min(E1,E2)/E_parent` |
+| `FormationTheta` | exact three-dimensional opening angle |
+| `FormationDeltaR` | rapidity-azimuth distance between the children |
+| `FormationKt` | `min(pT1,pT2) DeltaR12` |
+| `FormationParentE` | parent energy in GeV |
+| `FormationOffset` | cumulative split offset for each stored jet; length is `nJet+1` |
+| `FormationInvalidSplits` | per-jet count of nodes rejected by finite/positive checks |
+| `FormationHardestValid` | one when a valid full-tree split exists |
+| `FormationHardest*` | values at the global maximum-`kT` full-tree split |
+
+The seven all-split branches are flat event vectors to remain compatible with
+ROOT collection dictionaries. Splits for jet `j` occupy
+`FormationOffset[j]:FormationOffset[j+1]`. For every retained jet, the writer
+and analyzer require `valid splits + invalid splits = Mult - 1`. Jets outside
+the declared radius/pT scope have empty split ranges and invalid count zero.
+
+`analysis/plot_oo_jet_formation_time.py` produces event-weighted
+`dN/dlog10(tau_f)` spectra, cross-section tables, exact/small-angle audits,
+and `tau_f` versus `z`, `DeltaR`, and `kT` distributions. It reports every
+valid full-tree declustering and, separately, one global hardest-`kT` split
+per jet. Corrected-pT intervals are `(30,50]`, `(50,80]`, and `(80,infinity)`.
+The biased-PYTHIA event weight is applied once. Ratios and integrated
+diagnostics use paired delete-one-run jackknives; plotted one-dimensional
+ratios require at least 20 no-prehydro entries in a bin.
+
+For the three-way V3 comparison, run the pair analyzer once on each aligned
+ROOT file and merge with `analysis/plot_oo_v3_jet_formation_time.py`. The
+merger refuses differing no-prehydro spectra, summaries, or two-dimensional
+tables. Cambridge--Aachen declustering here is a formation-time estimator
+reconstructed from final jet constituents. It does **not** reproduce the
+generator-level parton-shower history or identify the actual splitting time
+of a shower parton.
+
 The preferred final-state effective-charge proxy is
 
 ```text
@@ -207,6 +278,7 @@ Run the parser tests with:
 
 ```bash
 python3 production/oo_planb_2509/analysis/test_convert_oo_paired_to_root.py -v
+python3 production/oo_planb_2509/analysis/test_plot_oo_jet_formation_time.py -v
 ```
 
 For the weighted no/with-prehydro jet-variable comparison, use

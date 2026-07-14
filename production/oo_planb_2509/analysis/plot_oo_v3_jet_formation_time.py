@@ -191,6 +191,13 @@ def plot_spectra(
     )
     for column, split_kind in enumerate(("all", "hardest_kt")):
         split_rows = [row for row in selected if row["splitting_selection"] == split_kind]
+        no_rows = sorted(
+            (row for row in split_rows if row["variant"] == "no_prehydro"),
+            key=lambda row: int(row["bin_index"]),
+        )
+        no_raw_by_bin = np.asarray(
+            [int(row["raw_entries_in_bin"]) for row in no_rows], dtype=np.int64
+        )
         ratios_for_limits = []
         errors_for_limits = []
         for variant in VARIANTS:
@@ -222,13 +229,15 @@ def plot_spectra(
                 ratio_error = np.asarray(
                     [float(row["ratio_stat_error"]) for row in variant_rows]
                 )
-                ratios_for_limits.append(ratio)
-                errors_for_limits.append(ratio_error)
+                ratio_for_plot = np.where(no_raw_by_bin >= 20, ratio, np.nan)
+                error_for_plot = np.where(no_raw_by_bin >= 20, ratio_error, np.nan)
+                ratios_for_limits.append(ratio_for_plot)
+                errors_for_limits.append(error_for_plot)
                 finite_errorbar(
                     axes[1, column],
                     x,
-                    ratio,
-                    ratio_error,
+                    ratio_for_plot,
+                    error_for_plot,
                     color=STYLES[variant]["color"],
                     marker=STYLES[variant]["marker"],
                     markersize=3.2,
@@ -268,7 +277,7 @@ def plot_spectra(
     figure.text(
         0.5,
         0.008,
-        r"Vertical lines: $\tau=0.1$ and $0.24$ fm/$c$. Paired delete-one-run jackknife errors.",
+        r"Vertical lines: $\tau=0.1$ and $0.24$ fm/$c$. Jackknife ratios require $N_{\rm no}\geq20$ per bin.",
         ha="center",
         fontsize=8,
     )
@@ -413,7 +422,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "weighted_yield_stat_error",
             "differential_cross_section_mb",
             "cross_section_stat_error_mb",
-            "raw_entries",
+            "raw_entries_in_bin",
+            "raw_entries_total",
             "underflow_entries",
             "overflow_entries",
         ),

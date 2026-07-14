@@ -98,17 +98,51 @@ def event_count(values: np.ndarray, event_count_total: int) -> np.ndarray:
     return np.bincount(values, minlength=event_count_total).astype(np.float64)
 
 
+def paired_ratio_of_ratios(
+    first_numerator: np.ndarray,
+    first_denominator: np.ndarray,
+    second_numerator: np.ndarray,
+    second_denominator: np.ndarray,
+    weights: np.ndarray,
+) -> tuple[float, float]:
+    weighted = [
+        weights * counts
+        for counts in (
+            first_numerator,
+            first_denominator,
+            second_numerator,
+            second_denominator,
+        )
+    ]
+    totals = [float(np.sum(values)) for values in weighted]
+    if any(value <= 0.0 for value in totals):
+        return math.nan, math.nan
+    value = (totals[0] / totals[1]) / (totals[2] / totals[3])
+    leave = (
+        (totals[0] - weighted[0]) / (totals[1] - weighted[1])
+    ) / ((totals[2] - weighted[2]) / (totals[3] - weighted[3]))
+    return value, float(base.jackknife_error(leave))
+
+
 def weighted_histogram_matrix(
     values: np.ndarray,
     event_indices: np.ndarray,
     weights: np.ndarray,
     edges: np.ndarray,
-) -> tuple[np.ndarray, int, int, int]:
+) -> tuple[np.ndarray, np.ndarray, int, int, int]:
     finite = np.isfinite(values)
+    finite_values = values[finite]
     matrix, underflow, overflow = base.histogram_matrix(
-        values[finite], event_indices[finite], weights, edges
+        finite_values, event_indices[finite], weights, edges
     )
-    return matrix, int(np.count_nonzero(finite)), underflow, overflow
+    raw_by_bin, _ = np.histogram(finite_values, bins=edges)
+    return (
+        matrix,
+        raw_by_bin.astype(np.int64),
+        int(np.count_nonzero(finite)),
+        underflow,
+        overflow,
+    )
 
 
 def differential_from_matrix(
@@ -210,8 +244,8 @@ def spectrum_plot(
         finite_errorbar(
             axes[1, column],
             centers,
-            ratio["values"],
-            ratio["errors"],
+            ratio["plot_values"],
+            ratio["plot_errors"],
             color="#333333",
             marker="o",
             markersize=3.2,
@@ -225,7 +259,9 @@ def spectrum_plot(
         axes[1, column].set_ylabel("Plan B / no pre-hydro")
         axes[1, column].set_xlabel(r"$\log_{10}(\tau_{\rm f}/[\mathrm{fm}/c])$")
         axes[1, column].axhline(1.0, color="0.5", linewidth=0.9)
-        axes[1, column].set_ylim(base.ratio_limits(ratio["values"], ratio["errors"]))
+        axes[1, column].set_ylim(
+            base.ratio_limits(ratio["plot_values"], ratio["plot_errors"])
+        )
         for row in range(2):
             axes[row, column].grid(alpha=0.2)
             axes[row, column].set_xlim(edges[0], edges[-1])
@@ -245,7 +281,7 @@ def spectrum_plot(
     figure.text(
         0.5,
         0.008,
-        r"Vertical lines: $\tau=0.1$ and $0.24$ fm/$c$. Paired delete-one-run jackknife errors.",
+        r"Vertical lines: $\tau=0.1$ and $0.24$ fm/$c$. Jackknife ratios require $N_{\rm no}\geq20$ per bin.",
         ha="center",
         fontsize=8,
     )
@@ -670,6 +706,7 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
             "using sum(w*sigmaGen)/sum(w)^2; the biased-PYTHIA weight is applied once"
         ),
         "uncertainty": "paired delete-one-run jackknife",
+        "ratioPlotMinimumNoPrehydroEntriesPerBin": 20,
         "interpretation": (
             "Cambridge-Aachen declustering is a final-constituent formation-time "
             "estimator and does not reproduce generator-level parton-shower history"
@@ -689,6 +726,8 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                 "hardest_kt": {},
             }
             selection_metadata: dict[str, Any] = {}
+            integrated_counts: dict[str, dict[str, np.ndarray]] = {}
+            selection_summary_rows: dict[str, dict[str, Any]] = {}
             for variant in VARIANTS:
                 arrays = variants[variant]
                 selection = selections[variant]
@@ -709,7 +748,13 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                 if not np.array_equal(all_event_indices, small_event_indices):
                     raise ValueError("exact/small-angle split ordering differs")
                 all_log_tau = np.log10(all_tau)
-                all_matrix, raw_all, all_underflow, all_overflow = weighted_histogram_matrix(
+                (
+                    all_matrix,
+                    raw_all_by_bin,
+                    raw_all,
+                    all_underflow,
+                    all_overflow,
+                ) = weighted_histogram_matrix(
                     all_log_tau, all_event_indices, weights, tau_edges
                 )
                 all_values, all_errors = weighted_yield_from_matrix(
@@ -721,11 +766,22 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                 hardest_tau, hardest_event_indices = flatten_hardest(
                     arrays, selection, "hardestTauF"
                 )
+                integrated_counts[variant] = {
+                    "selected_jets": selected_jet_counts,
+                    "all_splits": event_count(all_event_indices, event_count_total),
+                    "hardest_splits": event_count(
+                        hardest_event_indices, event_count_total
+                    ),
+                }
                 hardest_log_tau = np.log10(hardest_tau)
-                hardest_matrix, raw_hardest, hardest_underflow, hardest_overflow = (
-                    weighted_histogram_matrix(
-                        hardest_log_tau, hardest_event_indices, weights, tau_edges
-                    )
+                (
+                    hardest_matrix,
+                    raw_hardest_by_bin,
+                    raw_hardest,
+                    hardest_underflow,
+                    hardest_overflow,
+                ) = weighted_histogram_matrix(
+                    hardest_log_tau, hardest_event_indices, weights, tau_edges
                 )
                 hardest_values, hardest_errors = weighted_yield_from_matrix(
                     hardest_matrix, weights, tau_edges
@@ -740,6 +796,7 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                     "cross_section": all_cross_section,
                     "cross_section_errors": all_cross_section_errors,
                     "raw": raw_all,
+                    "raw_by_bin": raw_all_by_bin,
                     "underflow": all_underflow,
                     "overflow": all_overflow,
                 }
@@ -750,6 +807,7 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                     "cross_section": hardest_cross_section,
                     "cross_section_errors": hardest_cross_section_errors,
                     "raw": raw_hardest,
+                    "raw_by_bin": raw_hardest_by_bin,
                     "underflow": hardest_underflow,
                     "overflow": hardest_overflow,
                 }
@@ -784,31 +842,47 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                 negative_fraction = base.paired_integrated_ratio(
                     negative_wake_count, selected_jet_counts, weights
                 )[0] if weighted_jets > 0.0 else math.nan
-                summary_rows.append(
-                    {
-                        "variant": variant,
-                        "radius": f"{radius:.1f}",
-                        "pt_low_exclusive_GeV": f"{pt_low:g}",
-                        "pt_high_inclusive_GeV": "inf" if pt_high is None else f"{pt_high:g}",
-                        "raw_selected_jets": int(np.sum(selected_jet_counts)),
-                        "events_with_selected_jets": int(np.count_nonzero(selected_jet_counts)),
-                        "weighted_selected_jets": f"{weighted_jets:.12e}",
-                        "selected_jet_cross_section_mb": f"{integrated_jets.cross_section:.12e}",
-                        "selected_jet_cross_section_error_mb": f"{integrated_jets.error:.12e}",
-                        "raw_valid_all_splits": raw_all,
-                        "raw_valid_hardest_splits": raw_hardest,
-                        "invalid_splits": invalid_splits,
-                        "weighted_all_splits": f"{weighted_splits:.12e}",
-                        "weighted_hardest_splits": f"{weighted_hardest:.12e}",
-                        "weighted_splits_per_selected_jet": f"{mean_splits_per_jet:.12e}",
-                        "weighted_positive_wake_jet_fraction": f"{positive_fraction:.12e}",
-                        "weighted_negative_wake_or_hole_jet_fraction": f"{negative_fraction:.12e}",
-                        "small_over_exact_tau_median": f"{median_ratio:.12e}",
-                        "small_over_exact_tau_p16": f"{p16_ratio:.12e}",
-                        "small_over_exact_tau_p84": f"{p84_ratio:.12e}",
-                        "abs_log10_small_over_exact_tau_p95": f"{p95_abs_log:.12e}",
-                    }
-                )
+                summary_row = {
+                    "variant": variant,
+                    "radius": f"{radius:.1f}",
+                    "pt_low_exclusive_GeV": f"{pt_low:g}",
+                    "pt_high_inclusive_GeV": (
+                        "inf" if pt_high is None else f"{pt_high:g}"
+                    ),
+                    "raw_selected_jets": int(np.sum(selected_jet_counts)),
+                    "events_with_selected_jets": int(
+                        np.count_nonzero(selected_jet_counts)
+                    ),
+                    "weighted_selected_jets": f"{weighted_jets:.12e}",
+                    "selected_jet_cross_section_mb": (
+                        f"{integrated_jets.cross_section:.12e}"
+                    ),
+                    "selected_jet_cross_section_error_mb": (
+                        f"{integrated_jets.error:.12e}"
+                    ),
+                    "raw_valid_all_splits": raw_all,
+                    "raw_valid_hardest_splits": raw_hardest,
+                    "invalid_splits": invalid_splits,
+                    "weighted_all_splits": f"{weighted_splits:.12e}",
+                    "weighted_hardest_splits": f"{weighted_hardest:.12e}",
+                    "weighted_splits_per_selected_jet": (
+                        f"{mean_splits_per_jet:.12e}"
+                    ),
+                    "weighted_positive_wake_jet_fraction": (
+                        f"{positive_fraction:.12e}"
+                    ),
+                    "weighted_negative_wake_or_hole_jet_fraction": (
+                        f"{negative_fraction:.12e}"
+                    ),
+                    "small_over_exact_tau_median": f"{median_ratio:.12e}",
+                    "small_over_exact_tau_p16": f"{p16_ratio:.12e}",
+                    "small_over_exact_tau_p84": f"{p84_ratio:.12e}",
+                    "abs_log10_small_over_exact_tau_p95": (
+                        f"{p95_abs_log:.12e}"
+                    ),
+                }
+                summary_rows.append(summary_row)
+                selection_summary_rows[variant] = summary_row
                 selection_metadata[variant] = {
                     "rawSelectedJets": int(np.sum(selected_jet_counts)),
                     "eventsWithSelectedJets": int(np.count_nonzero(selected_jet_counts)),
@@ -824,6 +898,58 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                     "absLog10SmallOverExactTauP95": p95_abs_log,
                 }
 
+            for count_name, field_name in (
+                ("selected_jets", "selected_jet_yield"),
+                ("all_splits", "all_split_yield"),
+                ("hardest_splits", "hardest_split_yield"),
+            ):
+                integrated_ratio, integrated_error = base.paired_integrated_ratio(
+                    integrated_counts["withPrehydro"][count_name],
+                    integrated_counts["noPrehydro"][count_name],
+                    weights,
+                )
+                selection_summary_rows["noPrehydro"][
+                    f"pre_over_no_{field_name}"
+                ] = "1.000000000000e+00"
+                selection_summary_rows["noPrehydro"][
+                    f"pre_over_no_{field_name}_stat_error"
+                ] = "0.000000000000e+00"
+                selection_summary_rows["withPrehydro"][
+                    f"pre_over_no_{field_name}"
+                ] = f"{integrated_ratio:.12e}"
+                selection_summary_rows["withPrehydro"][
+                    f"pre_over_no_{field_name}_stat_error"
+                ] = f"{integrated_error:.12e}"
+                selection_metadata["withPrehydro"][
+                    f"preOverNo{field_name.title().replace('_', '')}"
+                ] = integrated_ratio
+                selection_metadata["withPrehydro"][
+                    f"preOverNo{field_name.title().replace('_', '')}StatError"
+                ] = integrated_error
+            split_rate_ratio, split_rate_error = paired_ratio_of_ratios(
+                integrated_counts["withPrehydro"]["all_splits"],
+                integrated_counts["withPrehydro"]["selected_jets"],
+                integrated_counts["noPrehydro"]["all_splits"],
+                integrated_counts["noPrehydro"]["selected_jets"],
+                weights,
+            )
+            for variant, value, error in (
+                ("noPrehydro", 1.0, 0.0),
+                ("withPrehydro", split_rate_ratio, split_rate_error),
+            ):
+                selection_summary_rows[variant][
+                    "pre_over_no_splits_per_selected_jet"
+                ] = f"{value:.12e}"
+                selection_summary_rows[variant][
+                    "pre_over_no_splits_per_selected_jet_stat_error"
+                ] = f"{error:.12e}"
+            selection_metadata["withPrehydro"][
+                "preOverNoSplitsPerSelectedJet"
+            ] = split_rate_ratio
+            selection_metadata["withPrehydro"][
+                "preOverNoSplitsPerSelectedJetStatError"
+            ] = split_rate_error
+
             for split_kind in ("all", "hardest_kt"):
                 ratio, ratio_error = base.paired_ratio(
                     result[split_kind]["withPrehydro"]["matrix"],
@@ -832,6 +958,16 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                 result[split_kind]["ratio"] = {
                     "values": ratio,
                     "errors": ratio_error,
+                    "plot_values": np.where(
+                        result[split_kind]["noPrehydro"]["raw_by_bin"] >= 20,
+                        ratio,
+                        np.nan,
+                    ),
+                    "plot_errors": np.where(
+                        result[split_kind]["noPrehydro"]["raw_by_bin"] >= 20,
+                        ratio_error,
+                        np.nan,
+                    ),
                 }
                 for variant in VARIANTS:
                     item = result[split_kind][variant]
@@ -861,7 +997,8 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                                     if variant == "noPrehydro"
                                     else f"{ratio_error[bin_index]:.12e}"
                                 ),
-                                "raw_entries": item["raw"],
+                                "raw_entries_in_bin": int(item["raw_by_bin"][bin_index]),
+                                "raw_entries_total": item["raw"],
                                 "underflow_entries": item["underflow"],
                                 "overflow_entries": item["overflow"],
                             }

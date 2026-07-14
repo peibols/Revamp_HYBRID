@@ -65,6 +65,22 @@ class FormationTimePlotTest(unittest.TestCase):
         median = plotter.weighted_quantile(values, weights, [0.5])[0]
         self.assertGreater(median, 5.0)
 
+    def test_paired_ratio_of_ratios_uses_shared_runs(self) -> None:
+        weights = np.array([1.0, 2.0, 3.0])
+        value, error = plotter.paired_ratio_of_ratios(
+            np.array([2.0, 1.0, 3.0]),
+            np.array([1.0, 1.0, 2.0]),
+            np.array([1.0, 2.0, 2.0]),
+            np.array([1.0, 1.0, 1.0]),
+            weights,
+        )
+        expected = ((2.0 + 2.0 + 9.0) / (1.0 + 2.0 + 6.0)) / (
+            (1.0 + 4.0 + 6.0) / (1.0 + 2.0 + 3.0)
+        )
+        self.assertAlmostEqual(value, expected)
+        self.assertTrue(np.isfinite(error))
+        self.assertGreater(error, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

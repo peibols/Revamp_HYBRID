@@ -43,6 +43,7 @@ python3 analysis/test_convert_oo_paired_to_root.py -v
 python3 analysis/test_plot_oo_jet_variables.py -v
 python3 analysis/test_plot_oo_jet_charge_response.py -v
 python3 analysis/test_plot_oo_jet_paired_substructure.py -v
+python3 analysis/test_plot_oo_jet_formation_time.py -v
 python3 analysis/test_summarize_oo_jet_pt_slices.py -v
 python3 cern_support/test_monitor_oo_1m_prehydro_raa.py -v
 python3 cern_support/test_run_chunk_job.py -v
@@ -204,6 +205,31 @@ an integrated momentum-slice summary. The merge requires the no-prehydro
 histograms from the two aligned ROOT pairs to agree exactly. The summary also
 requires the four disjoint intervals to close to the inclusive `pT > 20 GeV`
 cross section for every radius and all three variants.
+
+The schema-v5 formation-time analysis is run separately on each aligned ROOT
+pair:
+
+```bash
+python3 analysis/plot_oo_jet_formation_time.py \
+  --input-root ROOT_NO_ALPHA037.root \
+  --out-dir OUTPUT_DIR/alpha037 \
+  --prefix oo5360_alpha037_formation_time
+
+python3 analysis/plot_oo_jet_formation_time.py \
+  --input-root ROOT_NO_ALPHA0335.root \
+  --out-dir OUTPUT_DIR/alpha0335 \
+  --prefix oo5360_alpha0335_formation_time
+```
+
+Pass both spectra, summary, correlation, and metadata outputs to
+`analysis/plot_oo_v3_jet_formation_time.py` for the three-way merge. The merge
+requires exact agreement of the duplicated no-prehydro leg. Results cover
+R=0.4 and R=0.8 in `(30,50]`, `(50,80]`, and `(80,infinity)` GeV. The C/A
+tree contains normal plus positive-wake hadrons; negative wake and hadronized
+holes affect the corrected jet selection through jet-level 4MomSub but do not
+define a negative-subtracted nonlinear tree. Both all-tree and global
+hardest-`kT` estimators use paired delete-one-run jackknife errors. This is a
+final-constituent formation-time estimator, not generator shower history.
 
 For a clearly labeled completion-order provisional snapshot before exact
 closure, pass each disjoint local EOS mirror as a repeated `--source` to
