@@ -67,6 +67,19 @@ class PairedArchive:
 
 
 @dataclasses.dataclass(frozen=True)
+class PrehydroOnlyArchive:
+    task_id: int
+    seed: int
+    hydro_index: int
+    hydro_event_id: int
+    hydro_ncoll: int
+    hydro_payload_sha256: str
+    energy_loss_alpha: float
+    broadening_k: float
+    event: HybridEvent
+
+
+@dataclasses.dataclass(frozen=True)
 class Source:
     name: str
     path: Path
@@ -293,6 +306,154 @@ def parse_paired_archive(path: Path, expected_chunk_id: int | None = None) -> Pa
     )
 
 
+def parse_prehydro_only_archive(
+    path: Path,
+    *,
+    expected_chunk_id: int | None = None,
+    expected_alpha: float | None = None,
+    expected_broadening_k: float | None = None,
+) -> PrehydroOnlyArchive:
+    with tarfile.open(path, "r:gz") as tar:
+        members = tar.getmembers()
+        dedicated = [
+            member
+            for member in members
+            if member.name.endswith("_prehydro_only_summary.tsv")
+        ]
+        if len(dedicated) != 1:
+            raise ArchiveValidationError(
+                f"expected one prehydro-only summary, found {len(dedicated)}"
+            )
+        dedicated_rows = parse_tsv(
+            read_tar_member(tar, dedicated[0]).decode("utf-8", errors="strict"),
+            dedicated[0].name,
+        )
+        if len(dedicated_rows) != 1:
+            raise ArchiveValidationError("prehydro-only summary must contain one row")
+
+        variant_summaries = [
+            member for member in members if member.name.endswith("/summary.tsv")
+        ]
+        if len(variant_summaries) != 1:
+            raise ArchiveValidationError(
+                f"expected one variant summary, found {len(variant_summaries)}"
+            )
+        variant_rows = parse_tsv(
+            read_tar_member(tar, variant_summaries[0]).decode(
+                "utf-8", errors="strict"
+            ),
+            variant_summaries[0].name,
+        )
+        if len(variant_rows) != 1:
+            raise ArchiveValidationError("variant summary must contain one row")
+
+        dedicated_row = dedicated_rows[0]
+        variant_row = variant_rows[0]
+        required = {
+            "variant": "with_prehydro",
+            "use_prehydro": "1",
+            "returncode": "0",
+            "timeout": "0",
+        }
+        for description, row in (
+            ("prehydro-only summary", dedicated_row),
+            ("variant summary", variant_row),
+        ):
+            for key, expected in required.items():
+                if row.get(key) != expected:
+                    raise ArchiveValidationError(
+                        f"{description} has {key}={row.get(key)!r}, expected {expected!r}"
+                    )
+
+        identity_fields = (
+            "task_id",
+            "seed",
+            "hydro_event_id",
+            "hydro_ncoll",
+            "hydro_payload_sha256",
+            "energy_loss_alpha",
+            "broadening_k",
+        )
+        for key in identity_fields:
+            if dedicated_row.get(key) != variant_row.get(key):
+                raise ArchiveValidationError(
+                    f"prehydro-only summaries disagree on {key}"
+                )
+        dedicated_hydro_index = dedicated_row.get(
+            "hydro_slot", dedicated_row.get("hydro_index")
+        )
+        if dedicated_hydro_index != variant_row.get("hydro_slot"):
+            raise ArchiveValidationError(
+                "prehydro-only summaries disagree on hydro slot/index"
+            )
+        if dedicated_row.get("kind") not in (None, "aa"):
+            raise ArchiveValidationError("prehydro-only summary kind is not aa")
+        if dedicated_row.get("events") not in (None, "1"):
+            raise ArchiveValidationError("prehydro-only summary event count is not one")
+        try:
+            task_id = int(variant_row["task_id"])
+            seed = int(variant_row["seed"])
+            hydro_index = int(variant_row["hydro_slot"])
+            hydro_event_id = int(variant_row["hydro_event_id"])
+            hydro_ncoll = int(variant_row["hydro_ncoll"])
+            payload_sha256 = variant_row["hydro_payload_sha256"]
+            alpha = float(variant_row["energy_loss_alpha"])
+            broadening_k = float(variant_row["broadening_k"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ArchiveValidationError(
+                f"invalid prehydro-only summary identity: {error}"
+            ) from error
+        if expected_chunk_id is not None and task_id != expected_chunk_id:
+            raise ArchiveValidationError(
+                f"prehydro-only task_id={task_id} does not match chunk {expected_chunk_id}"
+            )
+        if expected_alpha is not None and not close_enough(alpha, expected_alpha):
+            raise ArchiveValidationError(
+                f"prehydro-only alpha={alpha}, expected {expected_alpha}"
+            )
+        if expected_broadening_k is not None and not close_enough(
+            broadening_k, expected_broadening_k
+        ):
+            raise ArchiveValidationError(
+                f"prehydro-only broadening K={broadening_k}, expected {expected_broadening_k}"
+            )
+        if not re.fullmatch(r"[0-9a-f]{64}", payload_sha256):
+            raise ArchiveValidationError("invalid hydro payload SHA256")
+
+        parent = str(PurePosixPath(variant_summaries[0].name).parent)
+        hadrons = [
+            member
+            for member in members
+            if member.name == f"{parent}/HYBRID_Hadrons.out"
+        ]
+        if len(hadrons) != 1 or not hadrons[0].isfile() or hadrons[0].size <= 0:
+            raise ArchiveValidationError("prehydro-only archive has no unique hadron output")
+        task_base = f"task_{task_id:05d}"
+        forbidden = (
+            f"/{task_base}/HYBRID_Hadrons.out",
+            f"/{task_base}_pair_summary.tsv",
+        )
+        if any(
+            member.name.endswith(suffix)
+            for member in members
+            for suffix in forbidden
+        ):
+            raise ArchiveValidationError("prehydro-only archive contains a baseline leg")
+        event = parse_hybrid_event(read_tar_member(tar, hadrons[0]), hadrons[0].name)
+
+    return PrehydroOnlyArchive(
+        task_id=task_id,
+        seed=seed,
+        hydro_index=hydro_index,
+        hydro_event_id=hydro_event_id,
+        hydro_ncoll=hydro_ncoll,
+        hydro_payload_sha256=payload_sha256,
+        energy_loss_alpha=alpha,
+        broadening_k=broadening_k,
+        event=event,
+    )
+
+
 def load_aa_task_manifest(path: Path) -> dict[int, dict[str, str]]:
     with path.open(newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
@@ -334,6 +495,44 @@ def validate_pair_task_assignment(
             raise ArchiveValidationError(
                 f"task {task_id}: {field}={actual}, expected {expected}"
             )
+
+
+def validate_prehydro_only_task_assignment(
+    archive: PrehydroOnlyArchive,
+    *,
+    task_id: int,
+    assignment: dict[str, str],
+) -> None:
+    expected_values: dict[str, int | str] = {
+        "task_id": task_id,
+        "seed": int(assignment["hard_seed"]),
+        "hydro_index": int(assignment["hydro_slot"]),
+        "hydro_event_id": int(assignment["hydro_event_id"]),
+        "hydro_ncoll": int(assignment["hydro_ncoll"]),
+        "hydro_payload_sha256": assignment["hydro_payload_sha256"],
+    }
+    for field, expected in expected_values.items():
+        actual = getattr(archive, field)
+        if actual != expected:
+            raise ArchiveValidationError(
+                f"task {task_id}: prehydro-only {field}={actual}, expected {expected}"
+            )
+
+
+def validate_hard_event_identity(
+    reference: HybridEvent, candidate: HybridEvent
+) -> None:
+    validate_pair_metadata(reference, candidate)
+    reference_markers = tuple(
+        particle for particle in reference.particles if particle.raw_label == -2
+    )
+    candidate_markers = tuple(
+        particle for particle in candidate.particles if particle.raw_label == -2
+    )
+    if reference_markers != candidate_markers:
+        raise ArchiveValidationError(
+            "matched variants have different outgoing hard-parton markers"
+        )
 
 
 def parse_source(value: str) -> Source:

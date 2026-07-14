@@ -22,11 +22,11 @@ sys.modules[SPEC.name] = converter
 SPEC.loader.exec_module(converter)
 
 
-def event_text(px: float, weight: float = 2.5) -> bytes:
+def event_text(px: float, weight: float = 2.5, hard_px: float = 5.0) -> bytes:
     return (
         "# event 0\n"
         f"weight {weight} cross 17.5 X 0.2 Y -0.3\n"
-        "5 0 0 0 21 -2\n"
+        f"{hard_px} 0 0 0 21 -2\n"
         f"{px} 0 0 0.13957 211 0\n"
         "1.0 0.2 0 0.13957 211 1\n"
         "0.1 0.02 0 0.13957 -211 2\n"
@@ -81,6 +81,55 @@ def make_archive(
         )
 
 
+def make_prehydro_only_archive(
+    path: Path,
+    *,
+    task_id: int = 7,
+    seed: int = 12345,
+    hydro_index: int = 3,
+    hard_px: float = 5.0,
+) -> None:
+    base = "runs/campaign/aa/hydro_03_C0-5"
+    task = f"task_{task_id:05d}"
+    header = (
+        "variant\tuse_prehydro\tenergy_loss_alpha\tbroadening_k\t"
+        "prehydro_file\treturncode\ttimeout\tseconds\tdir\ttask_id\tseed\t"
+        "centrality\thydro_slot\thydro_event_id\thydro_ncoll\t"
+        "hydro_payload_sha256\n"
+    )
+    row = (
+        f"with_prehydro\t1\t0.335\t15.0\tpre.tsv\t0\t0\t1.0\t/with\t"
+        f"{task_id}\t{seed}\tC0-5\t{hydro_index}\t777\t42\t{'a' * 64}\n"
+    )
+    dedicated_header = (
+        "kind\ttask_id\tseed\tevents\tcentrality\thydro_index\t"
+        "hydro_event_id\thydro_ncoll\thydro_payload_sha256\tvariant\t"
+        "use_prehydro\tenergy_loss_alpha\tbroadening_k\tprehydro_file\t"
+        "returncode\ttimeout\tseconds\tdir\n"
+    )
+    dedicated_row = (
+        f"aa\t{task_id}\t{seed}\t1\tC0-5\t{hydro_index}\t777\t42\t"
+        f"{'a' * 64}\twith_prehydro\t1\t0.335\t15.0\tpre.tsv\t0\t0\t"
+        "1.0\t/with\n"
+    )
+    with tarfile.open(path, "w:gz") as tar:
+        add_member(
+            tar,
+            f"{base}/{task}_prehydro/summary.tsv",
+            (header + row).encode(),
+        )
+        add_member(
+            tar,
+            f"{base}/{task}_prehydro/HYBRID_Hadrons.out",
+            event_text(3.7, hard_px=hard_px),
+        )
+        add_member(
+            tar,
+            f"{base}/{task}_prehydro_only_summary.tsv",
+            (dedicated_header + dedicated_row).encode(),
+        )
+
+
 class ConverterTest(unittest.TestCase):
     def test_parse_strict_pair(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -130,6 +179,38 @@ class ConverterTest(unittest.TestCase):
             converter.validate_pair_task_assignment(
                 pair, task_id=7, assignment=assignment
             )
+
+    def test_parse_and_match_prehydro_only_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            paired_path = work / "paired.tar.gz"
+            alpha_path = work / "alpha.tar.gz"
+            make_archive(paired_path)
+            make_prehydro_only_archive(alpha_path)
+            pair = converter.parse_paired_archive(paired_path, expected_chunk_id=7)
+            alpha = converter.parse_prehydro_only_archive(
+                alpha_path,
+                expected_chunk_id=7,
+                expected_alpha=0.335,
+                expected_broadening_k=15.0,
+            )
+        self.assertEqual(alpha.seed, pair.seed)
+        self.assertEqual(alpha.hydro_index, pair.hydro_index)
+        converter.validate_hard_event_identity(pair.no_prehydro, alpha.event)
+
+    def test_reject_prehydro_only_hard_marker_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            paired_path = work / "paired.tar.gz"
+            alpha_path = work / "alpha.tar.gz"
+            make_archive(paired_path)
+            make_prehydro_only_archive(alpha_path, hard_px=6.0)
+            pair = converter.parse_paired_archive(paired_path)
+            alpha = converter.parse_prehydro_only_archive(alpha_path)
+        with self.assertRaisesRegex(
+            converter.ArchiveValidationError, "hard-parton markers"
+        ):
+            converter.validate_hard_event_identity(pair.no_prehydro, alpha.event)
 
     @unittest.skipUnless(
         shutil.which("root-config") and shutil.which("fastjet-config"),

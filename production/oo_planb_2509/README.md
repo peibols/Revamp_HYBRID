@@ -176,6 +176,19 @@ a joined task, require identical hard seed, hydro slot/event/Ncoll, hydro
 payload checksum, PYTHIA event weight, and hard marker. The existing one-million
 event pp denominator is reused; this campaign submits no pp jobs.
 
+`analysis/freeze_oo_v3_snapshot.py` freezes the strict intersection of one or
+more disjoint paired-reference mirrors and the alpha=0.335 mirror. It records
+the exact task list and hashes, then hard-links only the common status/archive
+pairs into separate reference and alpha trees. Feed that frozen task list to
+`analysis/convert_oo_v3_to_roots.py`; it builds two pair-aligned ROOT files,
+`no/alpha=0.37` and `no/alpha=0.335`, and aborts on any disagreement in task,
+hydro provenance, event metadata, hard vertex, or outgoing hard-parton
+markers. After running the standard jet-RAA, jet-variable, and paired-
+substructure analyzers on both ROOT files, `analysis/make_oo_v3_comparison.py`
+produces the three-way hadron/jet overlays and matched substructure summary.
+Completion-order snapshots must retain the provisional diagnostic label until
+the final common 100k task set is available.
+
 For a clearly labeled completion-order provisional snapshot before exact
 closure, pass each disjoint local EOS mirror as a repeated `--source` to
 `analysis/freeze_oo_v2_snapshot.py`, together with the combined manifest. The
