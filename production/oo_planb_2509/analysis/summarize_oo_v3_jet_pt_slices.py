@@ -126,7 +126,7 @@ def validate(
         "status": "PASS",
         "checks": [
             "four slices form the exclusive-lower/inclusive-upper pT>20 partition",
-            "all slices use the same event count and normalization",
+            "all slices use the same event count and absolute cross-section normalization",
             "all radii and all three variants close to their inclusive spectra",
         ],
         "crossSectionClosureDifferenceMb": closure,

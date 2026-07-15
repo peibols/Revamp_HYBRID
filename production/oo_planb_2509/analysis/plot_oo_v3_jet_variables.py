@@ -519,7 +519,16 @@ def main() -> int:
         "ptMinGeV": args.pt_min,
         "ptMaxGeV": args.pt_max,
         "selection": base.pt_range_label(args.pt_min, args.pt_max),
-        "normalization": "PythiaParallel sigmaGen/sum(weight), applied once",
+        "normalization": (
+            "PythiaParallel sigmaGen/sum(weight), applied once; absolute cross "
+            "sections retained in TSV; plotted shapes use each variant's "
+            "selected-jet cross section"
+        ),
+        "shapeRatio": (
+            "[(1/sigmaJetPre)dSigmaPre/dx]/"
+            "[(1/sigmaJetNo)dSigmaNo/dx]; selected-jet normalization is "
+            "recomputed in every paired delete-one-run replica"
+        ),
         "uncertainty": "paired delete-one-AA-event jackknife",
         "inputs": {
             "histAlpha037": str(args.hist_alpha037.resolve()),

@@ -703,12 +703,17 @@ def plot_substructure(
                 label=(style["label"] if label is None else f"{style['label']}: {label}"),
             )
 
-    draw_matched_series(axes[0, 0], "delta_mult", offset=0.006, label=r"$\Delta N_+$")
     draw_matched_series(
-        axes[0, 0], "delta_total_mult", offset=0.012, label=r"$\Delta N_{\rm signed}$"
+        axes[0, 0], "delta_mult", offset=0.006, label=r"$\Delta N_{\rm Mult}$"
+    )
+    draw_matched_series(
+        axes[0, 0],
+        "delta_total_mult",
+        offset=0.012,
+        label=r"$\Delta N_{\rm TotalMult}$",
     )
     axes[0, 0].set_ylabel("pre-hydro minus no-pre mean multiplicity")
-    axes[0, 0].legend(frameon=False, fontsize=7)
+    response_handles, response_labels = axes[0, 0].get_legend_handles_labels()
 
     draw_matched_series(axes[0, 1], "delta_zg", offset=0.006)
     axes[0, 1].set_ylabel(r"$\langle z_g^{\rm pre}-z_g^{\rm no}\rangle$ (both pass)")
@@ -741,6 +746,14 @@ def plot_substructure(
         axes[1, 2], "relative_mean_tauf_shift", scale=100.0, offset=0.006
     )
     axes[1, 2].set_ylabel(r"relative arithmetic-mean $\tau_f$ shift [%]")
+    axes[1, 2].text(
+        0.03,
+        0.96,
+        "long-tail sensitive\nuse log-mean for a stable location shift",
+        transform=axes[1, 2].transAxes,
+        va="top",
+        fontsize=7.5,
+    )
 
     for axis in axes.flat:
         axis.axhline(0.0, color="#111111", linewidth=1.0)
@@ -750,6 +763,15 @@ def plot_substructure(
     figure.suptitle(
         r"No-prehydro-selected one-to-one matched jets, $p_T>30$ GeV, $|\eta|<2$"
     )
+    figure.legend(
+        response_handles,
+        response_labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.945),
+        ncol=4,
+        frameon=False,
+        fontsize=7,
+    )
     figure.text(
         0.5,
         0.01,
@@ -758,7 +780,7 @@ def plot_substructure(
         ha="center",
         fontsize=8.5,
     )
-    figure.tight_layout(rect=(0.0, 0.035, 1.0, 0.95))
+    figure.tight_layout(rect=(0.0, 0.035, 1.0, 0.90))
     response_plot = out_dir / "oo5360_v3_matched_observable_response.pdf"
     figure.savefig(response_plot)
     figure.savefig(response_plot.with_suffix(".png"), dpi=180)
@@ -869,11 +891,20 @@ def main() -> int:
         "status": "PASS",
         "publicationStatus": "PROVISIONAL_COMPLETION_ORDER_MATCHED_DIAGNOSTIC",
         "matchedTriplets": args.expected_events,
-        "normalization": "PythiaParallel sigmaGen/sum(weight), applied once; common 1M pp denominator",
+        "normalization": (
+            "PythiaParallel sigmaGen/sum(weight), applied once; common 1M pp "
+            "denominator for RAA; jet shapes normalized by each variant's "
+            "selected-jet cross section"
+        ),
         "uncertainty": "delete-one-AA-event jackknife; pp uncertainty combined independently for RAA",
         "ptdRatioDisplay": {
             "denominator": "no_prehydro",
-            "quantity": "paired differential-yield ratio",
+            "quantity": "paired selected-jet-normalized shape ratio",
+            "definition": (
+                "[(1/sigmaJetPre)dSigmaPre/dx]/"
+                "[(1/sigmaJetNo)dSigmaNo/dx]"
+            ),
+            "normalizationRecomputedInEveryJackknifeReplica": True,
             "minimumNoPrehydroSignificance": 2.0,
             "maximumDisplayedRatioStatError": 0.5,
             "note": "display cuts affect ratio markers only; tables and upper distributions are unfiltered",
