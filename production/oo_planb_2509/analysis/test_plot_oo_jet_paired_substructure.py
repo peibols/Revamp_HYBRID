@@ -72,6 +72,18 @@ class PairedSubstructureTest(unittest.TestCase):
         pre_ptd = [[value[0] + 0.01] for value in no_ptd]
         no_normal_ptd = [[value[0] + 0.05] for value in no_ptd]
         pre_normal_ptd = [[value[0] + 0.02] for value in no_normal_ptd]
+        no_zg = [[0.20 + 0.01 * index] for index in range(len(pair_ids))]
+        pre_zg = [[value[0] + 0.01] for value in no_zg]
+        no_rg = [[0.05 + 0.005 * index] for index in range(len(pair_ids))]
+        pre_rg = [[value[0] + 0.005] for value in no_rg]
+        no_mult = [[10 + index] for index in range(len(pair_ids))]
+        pre_mult = [[value[0] + 1] for value in no_mult]
+        no_total_mult = [[value[0] - 2] for value in no_mult]
+        pre_total_mult = [[value[0] - 1] for value in no_mult]
+        no_girth = [[0.03 + 0.002 * index] for index in range(len(pair_ids))]
+        pre_girth = [[value[0] * 1.02] for value in no_girth]
+        no_maxkt = [[2.0 + 0.1 * index] for index in range(len(pair_ids))]
+        pre_maxkt = [[value[0] * 1.05] for value in no_maxkt]
         neff = [[1.4], [1.8], [4.0], [4.5], [9.0], [10.0], [14.0], [16.0]]
         hard_id = [[1], [2], [21], [21], [1], [2], [21], [21]]
         match_index = [[0] for _ in pair_ids]
@@ -95,6 +107,12 @@ class PairedSubstructureTest(unittest.TestCase):
                 no_branches[f"{prefix}PtD"] = ak.Array(no_ptd)
                 no_branches[f"{prefix}NormalPtD"] = ak.Array(no_normal_ptd)
                 no_branches[f"{prefix}NormalEffectiveMultiplicity"] = ak.Array(neff)
+                no_branches[f"{prefix}Zg"] = ak.Array(no_zg)
+                no_branches[f"{prefix}Rg"] = ak.Array(no_rg)
+                no_branches[f"{prefix}Mult"] = ak.Array(no_mult)
+                no_branches[f"{prefix}TotalMult"] = ak.Array(no_total_mult)
+                no_branches[f"{prefix}G"] = ak.Array(no_girth)
+                no_branches[f"{prefix}MaxKt"] = ak.Array(no_maxkt)
                 no_branches[f"{prefix}SoftDropValid"] = ak.Array(no_sd)
                 no_branches[f"{prefix}HardPartonId"] = ak.Array(hard_id)
                 no_branches[f"{prefix}PairMatchIndex"] = ak.Array(match_index)
@@ -105,8 +123,39 @@ class PairedSubstructureTest(unittest.TestCase):
                 pre_branches[f"{prefix}Pt"] = ak.Array(pre_pt)
                 pre_branches[f"{prefix}PtD"] = ak.Array(pre_ptd)
                 pre_branches[f"{prefix}NormalPtD"] = ak.Array(pre_normal_ptd)
+                pre_branches[f"{prefix}Zg"] = ak.Array(pre_zg)
+                pre_branches[f"{prefix}Rg"] = ak.Array(pre_rg)
+                pre_branches[f"{prefix}Mult"] = ak.Array(pre_mult)
+                pre_branches[f"{prefix}TotalMult"] = ak.Array(pre_total_mult)
+                pre_branches[f"{prefix}G"] = ak.Array(pre_girth)
+                pre_branches[f"{prefix}MaxKt"] = ak.Array(pre_maxkt)
                 pre_branches[f"{prefix}SoftDropValid"] = ak.Array(pre_sd)
                 pre_branches[f"{prefix}HardPartonId"] = ak.Array(hard_id)
+                if radius_digit in (4, 8):
+                    no_branches[f"{prefix}FormationTauF"] = ak.Array(
+                        [[1.0, 2.0] for _ in pair_ids]
+                    )
+                    no_branches[f"{prefix}FormationOffset"] = ak.Array(
+                        [[0, 2] for _ in pair_ids]
+                    )
+                    no_branches[f"{prefix}FormationHardestValid"] = ak.Array(
+                        [[1] for _ in pair_ids]
+                    )
+                    no_branches[f"{prefix}FormationHardestTauF"] = ak.Array(
+                        [[1.5] for _ in pair_ids]
+                    )
+                    pre_branches[f"{prefix}FormationTauF"] = ak.Array(
+                        [[1.1, 2.2] for _ in pair_ids]
+                    )
+                    pre_branches[f"{prefix}FormationOffset"] = ak.Array(
+                        [[0, 2] for _ in pair_ids]
+                    )
+                    pre_branches[f"{prefix}FormationHardestValid"] = ak.Array(
+                        [[1] for _ in pair_ids]
+                    )
+                    pre_branches[f"{prefix}FormationHardestTauF"] = ak.Array(
+                        [[1.65] for _ in pair_ids]
+                    )
 
             with uproot.recreate(root_path) as root_file:
                 root_file["Pairs"] = {
@@ -183,6 +232,13 @@ class PairedSubstructureTest(unittest.TestCase):
             self.assertAlmostEqual(
                 paired["all"]["delta_normal_ptd"]["value"], 0.02
             )
+            self.assertAlmostEqual(paired["all"]["delta_mult"]["value"], 1.0)
+            self.assertAlmostEqual(
+                paired["all"]["delta_total_mult"]["value"], 1.0
+            )
+            self.assertAlmostEqual(
+                paired["all"]["delta_mean_tauf"]["value"], 0.15
+            )
             for radius_digit in analysis.RADIUS_DIGITS:
                 self.assertTrue(
                     (
@@ -192,6 +248,9 @@ class PairedSubstructureTest(unittest.TestCase):
                 )
             self.assertTrue(
                 (out_dir / "test_paired_paired_substructure_summary.pdf").is_file()
+            )
+            self.assertTrue(
+                (out_dir / "test_paired_matched_observable_response.pdf").is_file()
             )
             self.assertTrue(
                 (out_dir / "test_paired_paired_observables.tsv").is_file()

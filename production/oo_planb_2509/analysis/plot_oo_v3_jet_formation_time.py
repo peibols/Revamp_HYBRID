@@ -23,16 +23,16 @@ import plot_oo_jet_variables as base
 
 VARIANTS = ("no_prehydro", "prehydro_alpha037", "prehydro_alpha0335")
 STYLES = {
-    "no_prehydro": {"label": "No pre-hydro", "color": "#0072B2", "marker": "o"},
+    "no_prehydro": {"label": "No pre-hydro", "color": "#111111", "marker": None},
     "prehydro_alpha037": {
-        "label": r"Plan B, $\alpha=0.37$",
-        "color": "#D55E00",
-        "marker": "s",
+        "label": r"Pre-hydro, $\alpha=0.37$",
+        "color": "#0072B2",
+        "marker": "o",
     },
     "prehydro_alpha0335": {
-        "label": r"Plan B, $\alpha=0.335$",
-        "color": "#009E73",
-        "marker": "^",
+        "label": r"Pre-hydro, $\alpha=0.335$",
+        "color": "#D62728",
+        "marker": "o",
     },
 }
 SPECTRUM_STRUCTURE = (
@@ -207,23 +207,39 @@ def plot_spectra(
             )
             x = np.asarray([float(row["log10_tau_center"]) for row in variant_rows])
             values = np.asarray(
-                [float(row["weighted_yield_per_event"]) for row in variant_rows]
+                [float(row["selected_jet_normalized_density"]) for row in variant_rows]
             )
             errors = np.asarray(
-                [float(row["weighted_yield_stat_error"]) for row in variant_rows]
+                [
+                    float(row["selected_jet_normalized_density_stat_error"])
+                    for row in variant_rows
+                ]
             )
-            finite_errorbar(
-                axes[0, column],
-                x,
-                values,
-                errors,
-                color=STYLES[variant]["color"],
-                marker=STYLES[variant]["marker"],
-                markersize=3.2,
-                linewidth=1.0,
-                capsize=1.8,
-                label=STYLES[variant]["label"],
-            )
+            if variant == "no_prehydro":
+                edges = [float(variant_rows[0]["log10_tau_low"])] + [
+                    float(row["log10_tau_high"]) for row in variant_rows
+                ]
+                axes[0, column].stairs(
+                    values,
+                    edges,
+                    color=STYLES[variant]["color"],
+                    linewidth=1.7,
+                    label=STYLES[variant]["label"],
+                )
+            else:
+                finite_errorbar(
+                    axes[0, column],
+                    x,
+                    values,
+                    errors,
+                    color=STYLES[variant]["color"],
+                    marker=STYLES[variant]["marker"],
+                    markersize=3.2,
+                    linestyle="none",
+                    linewidth=1.0,
+                    capsize=1.8,
+                    label=STYLES[variant]["label"],
+                )
             if variant != "no_prehydro":
                 ratio = np.asarray([float(row["pre_over_no_ratio"]) for row in variant_rows])
                 ratio_error = np.asarray(
@@ -247,7 +263,7 @@ def plot_spectra(
                 )
         axes[0, column].set_yscale("log")
         axes[0, column].set_ylabel(
-            r"$dN_{w,\rm split}/(N_{w,\rm evt}\,d\log_{10}\tau_{\rm f})$"
+            r"$(1/\sigma_{\rm jet})\,d\sigma_{\rm split}/d\log_{10}\tau_{\rm f}$"
         )
         axes[1, column].set_ylabel("pre-hydro / no pre-hydro")
         axes[1, column].set_xlabel(r"$\log_{10}(\tau_{\rm f}/[\mathrm{fm}/c])$")
@@ -300,7 +316,7 @@ def grid_from_rows(
     for row in selected:
         x_index = int(row["x_bin_index"])
         y_index = int(row["log10_tau_bin_index"])
-        density[x_index, y_index] = float(row["weighted_density_per_event"])
+        density[x_index, y_index] = float(row["selected_jet_normalized_density"])
         raw[x_index, y_index] = float(row["raw_entries"])
         x_edges[x_index] = float(row["x_low"])
         x_edges[x_index + 1] = float(row["x_high"])
@@ -324,9 +340,9 @@ def plot_correlations(
         "kt": r"$\log_{10}(k_T/\mathrm{GeV})$",
     }
     figure, axes = plt.subplots(3, 3, figsize=(13.6, 10.0), sharey=True)
-    axes[0, 0].set_title("No pre-hydro weighted density")
-    axes[0, 1].set_title(r"Plan B $\alpha=0.37$ / no")
-    axes[0, 2].set_title(r"Plan B $\alpha=0.335$ / no")
+    axes[0, 0].set_title(r"No pre-hydro $(1/\sigma_{\rm jet})$ density")
+    axes[0, 1].set_title(r"Pre-hydro $\alpha=0.37$ / no")
+    axes[0, 2].set_title(r"Pre-hydro $\alpha=0.335$ / no")
     for row_index, name in enumerate(("z", "deltaR", "kt")):
         correlation_rows = [row for row in selected if row["correlation"] == name]
         no_density, no_raw, x_edges, tau_edges = grid_from_rows(
@@ -349,7 +365,7 @@ def plot_correlations(
             no_mesh,
             ax=axes[row_index, 0],
             pad=0.01,
-            label="weighted density / event",
+            label=r"$(1/\sigma_{\rm jet})d^2\sigma_{\rm split}/dx\,d\log\tau_f$",
         )
         for column, variant in enumerate(
             ("prehydro_alpha037", "prehydro_alpha0335"), start=1
@@ -420,6 +436,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         (
             "weighted_yield_per_event",
             "weighted_yield_stat_error",
+            "selected_jet_normalized_density",
+            "selected_jet_normalized_density_stat_error",
             "differential_cross_section_mb",
             "cross_section_stat_error_mb",
             "raw_entries_in_bin",
@@ -442,7 +460,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         read_tsv(args.correlations_alpha037),
         read_tsv(args.correlations_alpha0335),
         CORRELATION_STRUCTURE,
-        ("raw_entries", "weighted_density_per_event", "weighted_density_mb"),
+        (
+            "raw_entries",
+            "selected_jet_normalized_density",
+            "weighted_density_per_event",
+            "weighted_density_mb",
+        ),
     )
     for radius in pair.RADII:
         for pt_low, pt_high in pair.PT_INTERVALS:

@@ -22,18 +22,18 @@ RADII = ("0.1", "0.2", "0.4", "0.8")
 STYLES = {
     "no_prehydro": {
         "label": "No pre-hydro",
+        "color": "#111111",
+        "marker": None,
+    },
+    "prehydro_alpha037": {
+        "label": r"Pre-hydro, $\alpha=0.37$",
         "color": "#0072B2",
         "marker": "o",
     },
-    "prehydro_alpha037": {
-        "label": r"Plan B, $\alpha=0.37$",
-        "color": "#D55E00",
-        "marker": "s",
-    },
     "prehydro_alpha0335": {
-        "label": r"Plan B, $\alpha=0.335$",
-        "color": "#009E73",
-        "marker": "^",
+        "label": r"Pre-hydro, $\alpha=0.335$",
+        "color": "#D62728",
+        "marker": "o",
     },
 }
 
@@ -182,28 +182,40 @@ def plot(path: Path, slices: list[dict[str, object]]) -> None:
         lower = axes[1, column]
         for offset, variant in zip((-0.12, 0.0, 0.12), VARIANTS):
             style = STYLES[variant]
-            upper.errorbar(
-                x + offset,
-                [
-                    value(item, radius, variant, "integratedJetCrossSectionMb")
-                    for item in slices
-                ],
-                yerr=[
-                    value(
-                        item,
-                        radius,
-                        variant,
-                        "integratedJetCrossSectionErrorMb",
-                    )
-                    for item in slices
-                ],
-                color=style["color"],
-                marker=style["marker"],
-                markersize=4.8,
-                linewidth=1.2,
-                capsize=2.3,
-                label=style["label"],
-            )
+            values = [
+                value(item, radius, variant, "integratedJetCrossSectionMb")
+                for item in slices
+            ]
+            if variant == "no_prehydro":
+                upper.plot(
+                    x,
+                    values,
+                    color=style["color"],
+                    drawstyle="steps-mid",
+                    linewidth=1.7,
+                    label=style["label"],
+                )
+            else:
+                upper.errorbar(
+                    x + offset,
+                    values,
+                    yerr=[
+                        value(
+                            item,
+                            radius,
+                            variant,
+                            "integratedJetCrossSectionErrorMb",
+                        )
+                        for item in slices
+                    ],
+                    color=style["color"],
+                    marker=style["marker"],
+                    linestyle="none",
+                    markersize=4.8,
+                    linewidth=1.2,
+                    capsize=2.3,
+                    label=style["label"],
+                )
         lower.axhline(1.0, color="0.45", linewidth=0.9)
         for offset, variant in zip((-0.04, 0.04), RATIO_VARIANTS):
             style = STYLES[variant]
@@ -239,7 +251,7 @@ def plot(path: Path, slices: list[dict[str, object]]) -> None:
     figure.text(
         0.5,
         0.012,
-        "23,278 matched tasks; PythiaParallel normalization; paired delete-one-event jackknife.",
+        f"{int(slices[0]['expectedEvents']):,} matched tasks; PythiaParallel normalization; paired delete-one-event jackknife.",
         ha="center",
         fontsize=8.5,
     )

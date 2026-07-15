@@ -25,18 +25,18 @@ VARIANTS = ("no_prehydro", "prehydro_alpha037", "prehydro_alpha0335")
 STYLES = {
     "no_prehydro": {
         "label": "No pre-hydro",
+        "color": "#111111",
+        "marker": None,
+    },
+    "prehydro_alpha037": {
+        "label": r"Pre-hydro, $\alpha=0.37$",
         "color": "#0072B2",
         "marker": "o",
     },
-    "prehydro_alpha037": {
-        "label": r"Plan B, $\alpha=0.37$",
-        "color": "#D55E00",
-        "marker": "s",
-    },
     "prehydro_alpha0335": {
-        "label": r"Plan B, $\alpha=0.335$",
-        "color": "#009E73",
-        "marker": "^",
+        "label": r"Pre-hydro, $\alpha=0.335$",
+        "color": "#D62728",
+        "marker": "o",
     },
 }
 RADII = (0.1, 0.2, 0.4, 0.8)
@@ -213,18 +213,29 @@ def make_hadron_raa(
         low = np.array([float(row["pt_low"]) for row in selected])
         high = np.array([float(row["pt_high"]) for row in selected])
         style = STYLES[variant]
-        axis.errorbar(
-            x,
-            [float(row["raa"]) for row in selected],
-            xerr=[x - low, high - x],
-            yerr=[float(row["stat_error"]) for row in selected],
-            color=style["color"],
-            marker=style["marker"],
-            label=style["label"],
-            linewidth=1.6,
-            markersize=5.0,
-            capsize=2.0,
-        )
+        values = [float(row["raa"]) for row in selected]
+        if variant == "no_prehydro":
+            axis.stairs(
+                values,
+                np.concatenate((low[:1], high)),
+                color=style["color"],
+                linewidth=1.8,
+                label=style["label"],
+            )
+        else:
+            axis.errorbar(
+                x,
+                values,
+                xerr=[x - low, high - x],
+                yerr=[float(row["stat_error"]) for row in selected],
+                color=style["color"],
+                marker=style["marker"],
+                linestyle="none",
+                label=style["label"],
+                linewidth=1.2,
+                markersize=4.5,
+                capsize=2.0,
+            )
     axis.axhline(1.0, color="0.5", linewidth=1.0)
     axis.set_xscale("log")
     axis.set_xlim(3.8, 160)
@@ -298,17 +309,31 @@ def merge_jet_raa(
             ]
             selected.sort(key=lambda row: float(row["pt_low"]))
             style = STYLES[variant]
-            axis.errorbar(
-                [float(row["pt_center"]) for row in selected],
-                [float(row["raa"]) for row in selected],
-                yerr=[float(row["stat_error"]) for row in selected],
-                color=style["color"],
-                marker=style["marker"],
-                label=style["label"],
-                linewidth=1.4,
-                markersize=4.2,
-                capsize=1.8,
-            )
+            values = [float(row["raa"]) for row in selected]
+            if variant == "no_prehydro":
+                edges = [float(selected[0]["pt_low"])] + [
+                    float(row["pt_high"]) for row in selected
+                ]
+                axis.stairs(
+                    values,
+                    edges,
+                    color=style["color"],
+                    linewidth=1.7,
+                    label=style["label"],
+                )
+            else:
+                axis.errorbar(
+                    [float(row["pt_center"]) for row in selected],
+                    values,
+                    yerr=[float(row["stat_error"]) for row in selected],
+                    color=style["color"],
+                    marker=style["marker"],
+                    linestyle="none",
+                    label=style["label"],
+                    linewidth=1.1,
+                    markersize=4.0,
+                    capsize=1.8,
+                )
         axis.axhline(1.0, color="0.55", linewidth=0.9)
         axis.set_xscale("log")
         axis.set_xlim(15.0, 230.0)
@@ -391,32 +416,43 @@ def plot_substructure(
             ]
             selected.sort(key=lambda row: int(row["bin_index"]))
             selected_by_variant[variant] = selected
-            widths = np.array(
-                [float(row["bin_high"]) - float(row["bin_low"]) for row in selected]
-            )
             values = np.array(
-                [float(row["differential_cross_section_mb"]) for row in selected]
+                [float(row["normalized_density"]) for row in selected]
             )
-            errors = np.array([float(row["stat_error_mb"]) for row in selected])
-            norm = float(np.sum(values * widths))
+            errors = np.array(
+                [float(row["normalized_density_stat_error"]) for row in selected]
+            )
             style = STYLES[variant]
-            upper.errorbar(
-                [float(row["bin_center"]) for row in selected],
-                values / norm,
-                yerr=errors / norm,
-                color=style["color"],
-                marker=style["marker"],
-                label=style["label"],
-                linewidth=1.3,
-                markersize=3.7,
-                capsize=1.5,
-            )
+            if variant == "no_prehydro":
+                edges = [float(selected[0]["bin_low"])] + [
+                    float(row["bin_high"]) for row in selected
+                ]
+                upper.stairs(
+                    values,
+                    edges,
+                    color=style["color"],
+                    linewidth=1.7,
+                    label=style["label"],
+                )
+            else:
+                upper.errorbar(
+                    [float(row["bin_center"]) for row in selected],
+                    values,
+                    yerr=errors,
+                    color=style["color"],
+                    marker=style["marker"],
+                    linestyle="none",
+                    label=style["label"],
+                    linewidth=1.0,
+                    markersize=3.5,
+                    capsize=1.5,
+                )
 
         upper.set_title(f"R={radius:.1f}")
         upper.grid(alpha=0.2)
         upper.tick_params(labelbottom=False)
         if column == 0:
-            upper.set_ylabel("normalized weighted density")
+            upper.set_ylabel(r"$(1/\sigma_{\rm jet})\,d\sigma/dp_{TD}$")
             upper.legend(frameon=False, fontsize=8)
 
         lower.axhline(1.0, color="0.45", linewidth=0.9)
@@ -424,9 +460,11 @@ def plot_substructure(
         ratio_errors: list[np.ndarray] = []
         no_rows = selected_by_variant["no_prehydro"]
         no_values = np.array(
-            [float(row["differential_cross_section_mb"]) for row in no_rows]
+            [float(row["normalized_density"]) for row in no_rows]
         )
-        no_errors = np.array([float(row["stat_error_mb"]) for row in no_rows])
+        no_errors = np.array(
+            [float(row["normalized_density_stat_error"]) for row in no_rows]
+        )
         denominator_is_resolved = no_values > 2.0 * no_errors
         for variant in ("prehydro_alpha037", "prehydro_alpha0335"):
             selected = selected_by_variant[variant]
@@ -462,13 +500,13 @@ def plot_substructure(
         lower.set_xlabel(r"$p_{TD}$")
         lower.grid(alpha=0.2)
         if column == 0:
-            lower.set_ylabel("Plan B / no")
+            lower.set_ylabel("Pre-hydro / no")
 
     figure.suptitle(r"Independent jets, $p_T>30$ GeV; matched hard-event set")
     figure.text(
         0.5,
         0.012,
-        "Upper: unit-normalized weighted distributions. Lower: paired differential-yield "
+        r"Upper: per-variant $(1/\sigma_{\rm jet})d\sigma/dp_{TD}$. Lower: paired normalized-shape "
         "ratios to no pre-hydro with delete-one-event jackknife errors; ratio points require "
         r"no-pre-hydro bin content $>2\sigma$ and ratio error $<0.5$.",
         ha="center",
@@ -484,8 +522,8 @@ def plot_substructure(
     figure, axes = plt.subplots(2, 2, figsize=(10.2, 7.4), sharex=True, sharey=True)
     for axis, radius in zip(axes.flat, RADII):
         for label, rows, color, marker in (
-            (r"$\alpha=0.37$ / no pre-hydro", hist_first, "#D55E00", "s"),
-            (r"$\alpha=0.335$ / no pre-hydro", hist_second, "#009E73", "^"),
+            (r"Pre-hydro $\alpha=0.37$ / no", hist_first, "#0072B2", "o"),
+            (r"Pre-hydro $\alpha=0.335$ / no", hist_second, "#D62728", "o"),
         ):
             selected = [
                 row
@@ -517,8 +555,10 @@ def plot_substructure(
     for axis in axes[-1, :]:
         axis.set_xlabel(r"jet $p_T$ [GeV]")
     for axis in axes[:, 0]:
-        axis.set_ylabel("spectrum ratio to no pre-hydro")
-    figure.suptitle(r"Same-seed paired-weight jet spectra, $30<p_T<300$ GeV")
+        axis.set_ylabel("normalized-shape ratio to no pre-hydro")
+    figure.suptitle(
+        r"Same-seed $(1/\sigma_{\rm jet})d\sigma/dp_T$ shapes, $30<p_T<300$ GeV"
+    )
     figure.tight_layout()
     spectrum_plot = out_dir / "oo5360_v3_jet_spectrum_ratios.pdf"
     figure.savefig(spectrum_plot)
@@ -551,12 +591,40 @@ def plot_substructure(
                 paired_observables037, "relative_mean_ptd_shift"
             ),
             "fail": selected_failure(paired_failures037),
+            **{
+                observable: selected_observable(paired_observables037, observable)
+                for observable in (
+                    "delta_mult",
+                    "delta_total_mult",
+                    "delta_zg",
+                    "delta_rg",
+                    "relative_mean_girth_shift",
+                    "relative_mean_maxkt_shift",
+                    "delta_mean_log10_tauf",
+                    "delta_hardest_log10_tauf",
+                    "relative_mean_tauf_shift",
+                )
+            },
         },
         "prehydro_alpha0335": {
             "ptd": selected_observable(
                 paired_observables0335, "relative_mean_ptd_shift"
             ),
             "fail": selected_failure(paired_failures0335),
+            **{
+                observable: selected_observable(paired_observables0335, observable)
+                for observable in (
+                    "delta_mult",
+                    "delta_total_mult",
+                    "delta_zg",
+                    "delta_rg",
+                    "relative_mean_girth_shift",
+                    "relative_mean_maxkt_shift",
+                    "delta_mean_log10_tauf",
+                    "delta_hardest_log10_tauf",
+                    "relative_mean_tauf_shift",
+                )
+            },
         },
     }
     figure, axes = plt.subplots(1, 2, figsize=(10.0, 4.3))
@@ -606,6 +674,97 @@ def plot_substructure(
     plt.close(figure)
     plots.append(shift_plot)
 
+    figure, axes = plt.subplots(2, 3, figsize=(14.6, 8.0))
+
+    def draw_matched_series(axis, observable, *, scale=1.0, offset=0.0, label=None):
+        for variant_index, variant in enumerate(
+            ("prehydro_alpha037", "prehydro_alpha0335")
+        ):
+            style = STYLES[variant]
+            x_values = np.asarray(RADII) + offset * (2 * variant_index - 1)
+            axis.errorbar(
+                x_values,
+                [
+                    scale * float(shifts[variant][observable][radius]["value"])
+                    for radius in RADII
+                ],
+                yerr=[
+                    scale
+                    * float(
+                        shifts[variant][observable][radius]["eventJackknifeError"]
+                    )
+                    for radius in RADII
+                ],
+                color=style["color"],
+                marker=style["marker"],
+                linestyle="none",
+                markersize=4.0,
+                capsize=2.0,
+                label=(style["label"] if label is None else f"{style['label']}: {label}"),
+            )
+
+    draw_matched_series(axes[0, 0], "delta_mult", offset=0.006, label=r"$\Delta N_+$")
+    draw_matched_series(
+        axes[0, 0], "delta_total_mult", offset=0.012, label=r"$\Delta N_{\rm signed}$"
+    )
+    axes[0, 0].set_ylabel("pre-hydro minus no-pre mean multiplicity")
+    axes[0, 0].legend(frameon=False, fontsize=7)
+
+    draw_matched_series(axes[0, 1], "delta_zg", offset=0.006)
+    axes[0, 1].set_ylabel(r"$\langle z_g^{\rm pre}-z_g^{\rm no}\rangle$ (both pass)")
+    draw_matched_series(axes[0, 2], "delta_rg", offset=0.006)
+    axes[0, 2].set_ylabel(r"$\langle R_g^{\rm pre}-R_g^{\rm no}\rangle$ (both pass)")
+
+    draw_matched_series(
+        axes[1, 0], "relative_mean_girth_shift", scale=100.0, offset=0.006,
+        label="girth"
+    )
+    draw_matched_series(
+        axes[1, 0], "relative_mean_maxkt_shift", scale=100.0, offset=0.012,
+        label=r"maximum $k_T$"
+    )
+    axes[1, 0].set_ylabel("relative weighted-mean shift [%]")
+    axes[1, 0].legend(frameon=False, fontsize=7)
+
+    draw_matched_series(
+        axes[1, 1], "delta_mean_log10_tauf", offset=0.006,
+        label="all-split jet mean"
+    )
+    draw_matched_series(
+        axes[1, 1], "delta_hardest_log10_tauf", offset=0.012,
+        label=r"hardest-$k_T$ split"
+    )
+    axes[1, 1].set_ylabel(r"$\Delta\langle\log_{10}(\tau_f/{\rm fm})\rangle$")
+    axes[1, 1].legend(frameon=False, fontsize=7)
+
+    draw_matched_series(
+        axes[1, 2], "relative_mean_tauf_shift", scale=100.0, offset=0.006
+    )
+    axes[1, 2].set_ylabel(r"relative arithmetic-mean $\tau_f$ shift [%]")
+
+    for axis in axes.flat:
+        axis.axhline(0.0, color="#111111", linewidth=1.0)
+        axis.set_xticks(RADII)
+        axis.set_xlabel("jet radius R")
+        axis.grid(alpha=0.2)
+    figure.suptitle(
+        r"No-prehydro-selected one-to-one matched jets, $p_T>30$ GeV, $|\eta|<2$"
+    )
+    figure.text(
+        0.5,
+        0.01,
+        r"Blue: pre-hydro $\alpha=0.37$; red: pre-hydro $\alpha=0.335$. "
+        r"Formation-time response is available for $R=0.4,0.8$ only.",
+        ha="center",
+        fontsize=8.5,
+    )
+    figure.tight_layout(rect=(0.0, 0.035, 1.0, 0.95))
+    response_plot = out_dir / "oo5360_v3_matched_observable_response.pdf"
+    figure.savefig(response_plot)
+    figure.savefig(response_plot.with_suffix(".png"), dpi=180)
+    plt.close(figure)
+    plots.append(response_plot)
+
     summary = {
         variant: {
             f"R{radius:.1f}": {
@@ -619,6 +778,25 @@ def plot_substructure(
                 "deltaSoftDropFailFractionError": float(
                     shifts[variant]["fail"][radius]["eventJackknifeError"]
                 ),
+                "extendedResponse": {
+                    observable: {
+                        "value": float(shifts[variant][observable][radius]["value"]),
+                        "error": float(
+                            shifts[variant][observable][radius]["eventJackknifeError"]
+                        ),
+                    }
+                    for observable in (
+                        "delta_mult",
+                        "delta_total_mult",
+                        "delta_zg",
+                        "delta_rg",
+                        "relative_mean_girth_shift",
+                        "relative_mean_maxkt_shift",
+                        "delta_mean_log10_tauf",
+                        "delta_hardest_log10_tauf",
+                        "relative_mean_tauf_shift",
+                    )
+                },
             }
             for radius in RADII
         }

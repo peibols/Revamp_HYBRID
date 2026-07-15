@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure migration-safe paired Soft Drop and pTD changes in OO jets."""
+"""Measure migration-safe paired OO jet substructure changes."""
 
 from __future__ import annotations
 
@@ -51,6 +51,22 @@ OBSERVABLES = (
     "delta_normal_ptd",
     "relative_normal_ptd",
     "relative_mean_normal_ptd_shift",
+    "delta_mult",
+    "relative_mean_mult_shift",
+    "delta_total_mult",
+    "relative_mean_total_mult_shift",
+    "delta_zg",
+    "relative_mean_zg_shift",
+    "delta_rg",
+    "relative_mean_rg_shift",
+    "delta_girth",
+    "relative_mean_girth_shift",
+    "delta_maxkt",
+    "relative_mean_maxkt_shift",
+    "delta_mean_tauf",
+    "relative_mean_tauf_shift",
+    "delta_mean_log10_tauf",
+    "delta_hardest_log10_tauf",
 )
 
 
@@ -293,6 +309,37 @@ def matched_flat(
     )
 
 
+def formation_jet_summaries(
+    flat_tau_f: ak.Array, offsets: ak.Array
+) -> tuple[ak.Array, ak.Array]:
+    """Return per-jet arithmetic mean tau_f and mean log10(tau_f)."""
+    mean_tau_events: list[list[float]] = []
+    mean_log_events: list[list[float]] = []
+    for event_values, event_offsets in zip(
+        ak.to_list(flat_tau_f), ak.to_list(offsets), strict=True
+    ):
+        if not event_offsets or event_offsets[0] != 0:
+            raise ValueError("formation offsets must start at zero")
+        if event_offsets[-1] != len(event_values):
+            raise ValueError("formation offsets do not close on the flat split vector")
+        if any(second < first for first, second in zip(event_offsets, event_offsets[1:])):
+            raise ValueError("formation offsets must be monotonic")
+        event_means: list[float] = []
+        event_log_means: list[float] = []
+        for first, second in zip(event_offsets, event_offsets[1:]):
+            values = np.asarray(event_values[first:second], dtype=float)
+            values = values[np.isfinite(values) & (values > 0.0)]
+            if values.size:
+                event_means.append(float(np.mean(values)))
+                event_log_means.append(float(np.mean(np.log10(values))))
+            else:
+                event_means.append(math.nan)
+                event_log_means.append(math.nan)
+        mean_tau_events.append(event_means)
+        mean_log_events.append(event_log_means)
+    return ak.Array(mean_tau_events), ak.Array(mean_log_events)
+
+
 def estimate_to_dict(estimate: RatioEstimate) -> dict[str, object]:
     return {
         "value": estimate.value,
@@ -373,7 +420,7 @@ def draw_transition_matrix(axis, estimates, title: str) -> None:
                 fontsize=8,
                 color=color,
             )
-    axis.set_xticks((0, 1), ("Plan B fail", "Plan B pass"))
+    axis.set_xticks((0, 1), ("Pre-hydro fail", "Pre-hydro pass"))
     axis.set_yticks((0, 1), ("No-pre fail", "No-pre pass"))
     axis.set_title(title, fontsize=10)
     axis.tick_params(labelsize=8)
@@ -405,7 +452,7 @@ def plot_radius(
     x_flavor = np.arange(len(FLAVORS), dtype=float)
     for offset, key, label, marker in (
         (-0.08, "no_fail_fraction", "No-pre fail", "o"),
-        (0.08, "pre_fail_fraction", "Plan B fail", "s"),
+        (0.08, "pre_fail_fraction", "Pre-hydro fail", "s"),
     ):
         finite_errorbar(
             axes[0, 2],
@@ -447,7 +494,7 @@ def plot_radius(
     axes[1, 0].set_xticks(
         x_flavor, [FLAVOR_LABELS[item] for item in FLAVORS]
     )
-    axes[1, 0].set_ylabel("Plan B minus no-pre fail fraction [points]")
+    axes[1, 0].set_ylabel("Pre-hydro minus no-pre fail fraction [points]")
     axes[1, 0].grid(alpha=0.22)
 
     x_category = np.arange(len(PLOT_CATEGORIES), dtype=float)
@@ -521,7 +568,7 @@ def plot_radius(
         )
     figure.suptitle(
         rf"O16+O16 5.36 TeV, anti-$k_T$ R={radius:.1f}, {pt_label}; "
-        r"select no-pre jet, follow matched Plan-B jet",
+        r"select no-pre jet, follow matched pre-hydro jet",
         fontsize=13,
         y=0.99,
     )
@@ -591,7 +638,7 @@ def plot_radius_summary(
         )
     axes[0].axhline(0.0, color="0.5", linewidth=0.9)
     axes[0].set_xticks(x, labels)
-    axes[0].set_ylabel("Plan B minus no-pre SD-fail fraction [points]")
+    axes[0].set_ylabel("Pre-hydro minus no-pre SD-fail fraction [points]")
     axes[0].legend(frameon=False, fontsize=8)
     axes[0].grid(alpha=0.22)
 
@@ -683,6 +730,140 @@ def plot_radius_summary(
     return pdf, png
 
 
+def plot_matched_observable_summary(
+    out_dir: Path,
+    prefix: str,
+    observable_by_radius,
+) -> tuple[Path, Path]:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    x = np.arange(len(RADIUS_DIGITS), dtype=float)
+    labels = [f"R=0.{item}" for item in RADIUS_DIGITS]
+    all_jets = {
+        radius: observable_by_radius[radius]["all"]["all"]
+        for radius in RADIUS_DIGITS
+    }
+    figure, axes = plt.subplots(2, 3, figsize=(15.4, 8.2))
+
+    for offset, key, label, marker, color in (
+        (-0.08, "delta_mult", r"$\Delta N_{+}$", "o", "#0072B2"),
+        (0.08, "delta_total_mult", r"$\Delta N_{\rm signed}$", "s", "#D55E00"),
+    ):
+        finite_errorbar(
+            axes[0, 0],
+            x + offset,
+            [all_jets[radius][key].value for radius in RADIUS_DIGITS],
+            [all_jets[radius][key].event_error for radius in RADIUS_DIGITS],
+            marker=marker,
+            linestyle="none",
+            color=color,
+            capsize=2.5,
+            label=label,
+        )
+    axes[0, 0].set_ylabel("Pre-hydro minus no-pre mean multiplicity")
+    axes[0, 0].legend(frameon=False, fontsize=8)
+
+    for axis, key, label in (
+        (axes[0, 1], "delta_zg", r"$\langle z_g^{\rm pre}-z_g^{\rm no}\rangle$"),
+        (axes[0, 2], "delta_rg", r"$\langle R_g^{\rm pre}-R_g^{\rm no}\rangle$"),
+    ):
+        finite_errorbar(
+            axis,
+            x,
+            [all_jets[radius][key].value for radius in RADIUS_DIGITS],
+            [all_jets[radius][key].event_error for radius in RADIUS_DIGITS],
+            marker="o",
+            linestyle="none",
+            color="#333333",
+            capsize=2.5,
+        )
+        axis.set_ylabel(label + " (both SD pass)")
+
+    for key, label, marker, color in (
+        ("relative_mean_girth_shift", "girth", "o", "#0072B2"),
+        ("relative_mean_maxkt_shift", r"maximum $k_T$", "s", "#D55E00"),
+    ):
+        finite_errorbar(
+            axes[1, 0],
+            x,
+            [100.0 * all_jets[radius][key].value for radius in RADIUS_DIGITS],
+            [100.0 * all_jets[radius][key].event_error for radius in RADIUS_DIGITS],
+            marker=marker,
+            linestyle="none",
+            color=color,
+            capsize=2.5,
+            label=label,
+        )
+    axes[1, 0].set_ylabel("relative weighted-mean shift [%]")
+    axes[1, 0].legend(frameon=False, fontsize=8)
+
+    for key, label, marker, color in (
+        ("delta_mean_log10_tauf", "all-split jet mean", "o", "#0072B2"),
+        ("delta_hardest_log10_tauf", r"hardest-$k_T$ split", "s", "#D55E00"),
+    ):
+        finite_errorbar(
+            axes[1, 1],
+            x,
+            [all_jets[radius][key].value for radius in RADIUS_DIGITS],
+            [all_jets[radius][key].event_error for radius in RADIUS_DIGITS],
+            marker=marker,
+            linestyle="none",
+            color=color,
+            capsize=2.5,
+            label=label,
+        )
+    axes[1, 1].set_ylabel(r"$\Delta\langle\log_{10}(\tau_f/{\rm fm})\rangle$")
+    axes[1, 1].legend(frameon=False, fontsize=8)
+
+    finite_errorbar(
+        axes[1, 2],
+        x,
+        [
+            100.0 * all_jets[radius]["relative_mean_tauf_shift"].value
+            for radius in RADIUS_DIGITS
+        ],
+        [
+            100.0 * all_jets[radius]["relative_mean_tauf_shift"].event_error
+            for radius in RADIUS_DIGITS
+        ],
+        marker="o",
+        linestyle="none",
+        color="#333333",
+        capsize=2.5,
+    )
+    axes[1, 2].set_ylabel(r"relative arithmetic-mean $\tau_f$ shift [%]")
+
+    for axis in axes.flat:
+        axis.axhline(0.0, color="0.55", linewidth=0.9)
+        axis.set_xticks(x, labels)
+        axis.grid(alpha=0.22)
+    figure.suptitle(
+        "One-to-one matched all-jet substructure response",
+        fontsize=13,
+    )
+    figure.text(
+        0.5,
+        0.01,
+        "No-prehydro jet selection; matched pre-hydro jet has no pT threshold. "
+        "Formation-time entries exist only for R=0.4 and R=0.8.",
+        ha="center",
+        fontsize=8.5,
+    )
+    figure.subplots_adjust(
+        left=0.075, right=0.985, bottom=0.12, top=0.91, wspace=0.32, hspace=0.3
+    )
+    stem = out_dir / f"{prefix}_matched_observable_response"
+    pdf = stem.with_suffix(".pdf")
+    png = stem.with_suffix(".png")
+    figure.savefig(pdf)
+    figure.savefig(png, dpi=180)
+    plt.close(figure)
+    return pdf, png
+
+
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-root", type=Path, required=True)
@@ -722,6 +903,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "PtD",
         "NormalPtD",
         "NormalEffectiveMultiplicity",
+        "Zg",
+        "Rg",
+        "Mult",
+        "TotalMult",
+        "G",
+        "MaxKt",
         "SoftDropValid",
         "HardPartonId",
         "PairMatchIndex",
@@ -733,8 +920,20 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "Pt",
         "PtD",
         "NormalPtD",
+        "Zg",
+        "Rg",
+        "Mult",
+        "TotalMult",
+        "G",
+        "MaxKt",
         "SoftDropValid",
         "HardPartonId",
+    )
+    formation_suffixes = (
+        "FormationTauF",
+        "FormationOffset",
+        "FormationHardestValid",
+        "FormationHardestTauF",
     )
     with uproot.open(input_root) as root_file:
         pairs = root_file["Pairs"].arrays(
@@ -749,6 +948,13 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             pre_branches.extend(
                 f"jet{radius_digit}{suffix}" for suffix in pre_suffixes
             )
+            if radius_digit in (4, 8):
+                no_branches.extend(
+                    f"jet{radius_digit}{suffix}" for suffix in formation_suffixes
+                )
+                pre_branches.extend(
+                    f"jet{radius_digit}{suffix}" for suffix in formation_suffixes
+                )
         no_arrays = root_file["noPrehydro/Jets"].arrays(
             no_branches, library="ak"
         )
@@ -797,8 +1003,23 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             "no matched-jet pT threshold"
         ),
         "softDropTransition": (
-            "status in no-prehydro selected jet versus its matched Plan-B jet"
+            "status in no-prehydro selected jet versus its matched pre-hydro jet"
         ),
+        "matchedObservableDefinitions": {
+            "multiplicity": "Mult=NNormal+NPositiveWake",
+            "totalMultiplicity": "TotalMult=NNormal+NPositiveWake-NNegativeWake",
+            "zgRg": "paired differences require SoftDropValid=1 in both jets",
+            "formationMeanTauF": (
+                "arithmetic mean of all valid exact-angle C/A split tau_f values "
+                "within each jet; R=0.4 and R=0.8 only"
+            ),
+            "formationMeanLog10TauF": (
+                "mean log10(tau_f/[fm/c]) over all valid C/A splits within each jet"
+            ),
+            "formationHardestLog10TauF": (
+                "log10(tau_f/[fm/c]) at the global maximum-kT C/A split"
+            ),
+        },
         "singleCoreCategories": (
             "single-like NormalEffectiveMultiplicity<3; intermediate 3-8; "
             "many-like >=8, all defined on the no-prehydro jet"
@@ -856,6 +1077,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 "PtD",
                 "NormalPtD",
                 "NormalEffectiveMultiplicity",
+                "Zg",
+                "Rg",
+                "Mult",
+                "TotalMult",
+                "G",
+                "MaxKt",
                 "SoftDropValid",
                 "HardPartonId",
                 "PairMatchOtherPt",
@@ -870,6 +1097,55 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             )
             for suffix in pre_suffixes
         }
+        if radius_digit in (4, 8):
+            no_mean_tau, no_mean_log_tau = formation_jet_summaries(
+                no_arrays[f"{prefix}FormationTauF"],
+                no_arrays[f"{prefix}FormationOffset"],
+            )
+            pre_mean_tau, pre_mean_log_tau = formation_jet_summaries(
+                pre_arrays[f"{prefix}FormationTauF"],
+                pre_arrays[f"{prefix}FormationOffset"],
+            )
+            no_values["MeanTauF"] = selected_flat(no_mean_tau, selection)
+            no_values["MeanLog10TauF"] = selected_flat(
+                no_mean_log_tau, selection
+            )
+            pre_values["MeanTauF"] = matched_flat(
+                pre_mean_tau, safe_match_index, selection
+            )
+            pre_values["MeanLog10TauF"] = matched_flat(
+                pre_mean_log_tau, safe_match_index, selection
+            )
+            no_values["FormationHardestValid"] = selected_flat(
+                no_arrays[f"{prefix}FormationHardestValid"], selection
+            )
+            no_values["FormationHardestTauF"] = selected_flat(
+                no_arrays[f"{prefix}FormationHardestTauF"], selection
+            )
+            pre_values["FormationHardestValid"] = matched_flat(
+                pre_arrays[f"{prefix}FormationHardestValid"],
+                safe_match_index,
+                selection,
+            )
+            pre_values["FormationHardestTauF"] = matched_flat(
+                pre_arrays[f"{prefix}FormationHardestTauF"],
+                safe_match_index,
+                selection,
+            )
+        else:
+            empty = np.full(len(event_indices), math.nan)
+            no_values["MeanTauF"] = empty.copy()
+            no_values["MeanLog10TauF"] = empty.copy()
+            pre_values["MeanTauF"] = empty.copy()
+            pre_values["MeanLog10TauF"] = empty.copy()
+            no_values["FormationHardestValid"] = np.zeros(
+                len(event_indices), dtype=int
+            )
+            no_values["FormationHardestTauF"] = empty.copy()
+            pre_values["FormationHardestValid"] = np.zeros(
+                len(event_indices), dtype=int
+            )
+            pre_values["FormationHardestTauF"] = empty.copy()
 
         no_pt_flat = no_values["Pt"].astype(float)
         pre_pt_flat = pre_values["Pt"].astype(float)
@@ -910,6 +1186,41 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         pre_ptd = pre_values["PtD"].astype(float)
         no_normal_ptd = no_values["NormalPtD"].astype(float)
         pre_normal_ptd = pre_values["NormalPtD"].astype(float)
+        no_zg = no_values["Zg"].astype(float)
+        pre_zg = pre_values["Zg"].astype(float)
+        no_rg = no_values["Rg"].astype(float)
+        pre_rg = pre_values["Rg"].astype(float)
+        no_mult = no_values["Mult"].astype(float)
+        pre_mult = pre_values["Mult"].astype(float)
+        no_total_mult = no_values["TotalMult"].astype(float)
+        pre_total_mult = pre_values["TotalMult"].astype(float)
+        no_girth = no_values["G"].astype(float)
+        pre_girth = pre_values["G"].astype(float)
+        no_maxkt = no_values["MaxKt"].astype(float)
+        pre_maxkt = pre_values["MaxKt"].astype(float)
+        no_mean_tauf = no_values["MeanTauF"].astype(float)
+        pre_mean_tauf = pre_values["MeanTauF"].astype(float)
+        no_mean_log_tauf = no_values["MeanLog10TauF"].astype(float)
+        pre_mean_log_tauf = pre_values["MeanLog10TauF"].astype(float)
+        no_hardest_tauf = no_values["FormationHardestTauF"].astype(float)
+        pre_hardest_tauf = pre_values["FormationHardestTauF"].astype(float)
+        both_sd_valid = no_sd_valid & pre_sd_valid
+        both_mean_tauf_valid = (
+            np.isfinite(no_mean_tauf)
+            & (no_mean_tauf > 0.0)
+            & np.isfinite(pre_mean_tauf)
+            & (pre_mean_tauf > 0.0)
+        )
+        both_hardest_tauf_valid = (
+            no_values["FormationHardestValid"].astype(int) == 1
+        ) & (
+            pre_values["FormationHardestValid"].astype(int) == 1
+        ) & (
+            np.isfinite(no_hardest_tauf)
+            & (no_hardest_tauf > 0.0)
+            & np.isfinite(pre_hardest_tauf)
+            & (pre_hardest_tauf > 0.0)
+        )
         observable_values = {
             "epsilon_pre": epsilon_pre,
             "delta_ptd": pre_ptd - no_ptd,
@@ -918,7 +1229,27 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             "relative_normal_ptd": (
                 pre_normal_ptd / no_normal_ptd - 1.0
             ),
+            "delta_mult": pre_mult - no_mult,
+            "delta_total_mult": pre_total_mult - no_total_mult,
+            "delta_zg": pre_zg - no_zg,
+            "delta_rg": pre_rg - no_rg,
+            "delta_girth": pre_girth - no_girth,
+            "delta_maxkt": pre_maxkt - no_maxkt,
+            "delta_mean_tauf": pre_mean_tauf - no_mean_tauf,
+            "delta_mean_log10_tauf": pre_mean_log_tauf - no_mean_log_tauf,
+            "delta_hardest_log10_tauf": (
+                np.log10(pre_hardest_tauf) - np.log10(no_hardest_tauf)
+            ),
         }
+        observable_masks = {
+            observable: np.ones(len(event_indices), dtype=bool)
+            for observable in observable_values
+        }
+        observable_masks["delta_zg"] = both_sd_valid
+        observable_masks["delta_rg"] = both_sd_valid
+        observable_masks["delta_mean_tauf"] = both_mean_tauf_valid
+        observable_masks["delta_mean_log10_tauf"] = both_mean_tauf_valid
+        observable_masks["delta_hardest_log10_tauf"] = both_hardest_tauf_valid
         categories = category_masks(
             no_sd_valid,
             no_values["NormalEffectiveMultiplicity"].astype(float),
@@ -1049,7 +1380,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 estimates = {
                     observable: mean_estimate(
                         values,
-                        keep_category,
+                        keep_category & observable_masks[observable],
                         event_indices,
                         event_weights,
                         hydro_indices,
@@ -1082,6 +1413,56 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                     event_weights=event_weights,
                     event_hydro_indices=hydro_indices,
                 )
+                aggregate_relative_inputs = {
+                    "relative_mean_mult_shift": (
+                        pre_mult - no_mult,
+                        no_mult,
+                        np.ones(len(event_indices), dtype=bool),
+                    ),
+                    "relative_mean_total_mult_shift": (
+                        pre_total_mult - no_total_mult,
+                        no_total_mult,
+                        np.ones(len(event_indices), dtype=bool),
+                    ),
+                    "relative_mean_zg_shift": (
+                        pre_zg - no_zg,
+                        no_zg,
+                        both_sd_valid,
+                    ),
+                    "relative_mean_rg_shift": (
+                        pre_rg - no_rg,
+                        no_rg,
+                        both_sd_valid,
+                    ),
+                    "relative_mean_girth_shift": (
+                        pre_girth - no_girth,
+                        no_girth,
+                        np.ones(len(event_indices), dtype=bool),
+                    ),
+                    "relative_mean_maxkt_shift": (
+                        pre_maxkt - no_maxkt,
+                        no_maxkt,
+                        np.ones(len(event_indices), dtype=bool),
+                    ),
+                    "relative_mean_tauf_shift": (
+                        pre_mean_tauf - no_mean_tauf,
+                        no_mean_tauf,
+                        both_mean_tauf_valid,
+                    ),
+                }
+                for observable, (
+                    numerator,
+                    denominator,
+                    observable_mask,
+                ) in aggregate_relative_inputs.items():
+                    estimates[observable] = ratio_estimate(
+                        numerator=numerator,
+                        denominator=denominator,
+                        entry_mask=keep_category & observable_mask,
+                        event_indices=event_indices,
+                        event_weights=event_weights,
+                        event_hydro_indices=hydro_indices,
+                    )
                 flavor_observables[category] = estimates
                 flavor_observable_metadata[category] = {
                     observable: estimate_to_dict(estimate)
@@ -1294,6 +1675,11 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         fail_by_radius,
         observable_by_radius,
     )
+    matched_response_paths = plot_matched_observable_summary(
+        out_dir,
+        args.prefix,
+        observable_by_radius,
+    )
     metadata_path = out_dir / f"{args.prefix}_metadata.json"
     metadata["outputFiles"] = {
         "softDropTransitionsTsv": str(transition_path),
@@ -1301,6 +1687,9 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "pairedObservablesTsv": str(observable_path),
         "singleManyContrastsTsv": str(contrast_path),
         "summaryPlots": [str(path) for path in summary_paths],
+        "matchedObservableResponsePlots": [
+            str(path) for path in matched_response_paths
+        ],
         "metadataJson": str(metadata_path),
     }
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")

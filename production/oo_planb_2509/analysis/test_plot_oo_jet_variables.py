@@ -64,6 +64,40 @@ class JetWeightingTest(unittest.TestCase):
         np.testing.assert_allclose(ratio, [1.0, 1.0])
         self.assertTrue(np.all(np.isfinite(error)))
 
+    def test_shape_normalization_and_ratio_use_selected_jet_area(self) -> None:
+        edges = np.array([0.0, 1.0, 2.0])
+        no = plotter.differential_histogram(
+            ak.Array([[0.5], [0.5, 1.5], [1.5]]),
+            self.weights,
+            self.sigma_gen,
+            edges,
+        )
+        pre = plotter.differential_histogram(
+            ak.Array([[0.5], [1.5], [1.5, 1.5]]),
+            self.weights,
+            self.sigma_gen,
+            edges,
+        )
+        no_counts = np.array([1.0, 2.0, 1.0])
+        pre_counts = np.array([1.0, 1.0, 2.0])
+        plotter.normalize_histogram_to_selected_jets(
+            no, no_counts, self.weights, edges
+        )
+        plotter.normalize_histogram_to_selected_jets(
+            pre, pre_counts, self.weights, edges
+        )
+        self.assertAlmostEqual(float(np.sum(no.normalized_values)), 1.0)
+        self.assertAlmostEqual(float(np.sum(pre.normalized_values)), 1.0)
+        ratio, error = plotter.paired_normalized_ratio(
+            pre.weighted_matrix,
+            no.weighted_matrix,
+            pre_counts,
+            no_counts,
+            self.weights,
+        )
+        np.testing.assert_allclose(ratio, pre.normalized_values / no.normalized_values)
+        self.assertTrue(np.all(np.isfinite(error)))
+
     def test_pt_slices_partition_the_inclusive_selection(self) -> None:
         pt = np.array([30.0, 40.0, 50.0, 60.0, 80.0, 90.0, np.nan])
         low = plotter.jet_pt_selection(pt, 30.0, 50.0)
@@ -91,6 +125,14 @@ class JetWeightingTest(unittest.TestCase):
         self.assertAlmostEqual(float(specs["rg"].edges[-1]), 0.25)
         self.assertAlmostEqual(float(specs["girth"].edges[-1]), 0.16)
         self.assertEqual(plotter.RADIUS_DIGITS, (1, 2, 4, 8))
+
+    def test_signed_total_multiplicity_has_negative_bins(self) -> None:
+        for radius in plotter.RADIUS_DIGITS:
+            specs = {spec.key: spec for spec in plotter.variable_specs(radius, 20.0)}
+            self.assertIn("totalmult", specs)
+            self.assertEqual(specs["totalmult"].branch_suffix, "TotalMult")
+            self.assertLess(float(specs["totalmult"].edges[0]), 0.0)
+            self.assertGreater(float(specs["totalmult"].edges[-1]), 0.0)
 
     def test_soft_drop_specs_reserve_equal_width_failure_bin(self) -> None:
         specs = {spec.key: spec for spec in plotter.variable_specs(4, 30.0)}

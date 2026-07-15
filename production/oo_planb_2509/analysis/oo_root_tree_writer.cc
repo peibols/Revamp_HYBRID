@@ -29,7 +29,7 @@
 namespace {
 
 constexpr std::array<char, 8> kPairMagic{'O', 'O', 'P', 'A', 'I', 'R', '1', '\0'};
-constexpr const char *kSchemaVersion = "oo-paired-root-v5";
+constexpr const char *kSchemaVersion = "oo-paired-root-v6";
 constexpr double kHbarCGeVFm = 0.19732698;
 constexpr double kFormationTimeCorrectedPtMin = 30.0;
 
@@ -367,6 +367,7 @@ struct JetRecord {
   int soft_drop_valid = 0;
   int n_sd = 0;
   int mult = 0;
+  int total_mult = 0;
   double pt_d = std::numeric_limits<double>::quiet_NaN();
   double effective_multiplicity = std::numeric_limits<double>::quiet_NaN();
   double leading_fraction = std::numeric_limits<double>::quiet_NaN();
@@ -709,6 +710,8 @@ std::vector<JetRecord> make_jets(const std::vector<ParticleRecord> &particles, d
       negative_energy += negative_pseudojet.e();
       signed_girth_numerator -= negative_pt * negative_pseudojet.delta_R(raw_jet);
     }
+    record.total_mult =
+        record.n_normal + record.n_positive_wake - record.n_negative_wake;
     const double signed_scalar_pt = scalar_pt - record.negative_wake_pt;
     if (signed_scalar_pt != 0.0) {
       record.signed_girth = signed_girth_numerator / signed_scalar_pt;
@@ -889,6 +892,7 @@ class RadiusBranches {
     branch(tree, "SoftDropValid", soft_drop_valid_);
     branch(tree, "NSD", n_sd_);
     branch(tree, "Mult", mult_);
+    branch(tree, "TotalMult", total_mult_);
     branch(tree, "PtD", pt_d_);
     branch(tree, "EffectiveMultiplicity", effective_multiplicity_);
     branch(tree, "LeadingFraction", leading_fraction_);
@@ -966,6 +970,7 @@ class RadiusBranches {
       soft_drop_valid_.push_back(record.soft_drop_valid);
       n_sd_.push_back(record.n_sd);
       mult_.push_back(record.mult);
+      total_mult_.push_back(record.total_mult);
       push(pt_d_, record.pt_d);
       push(effective_multiplicity_, record.effective_multiplicity);
       push(leading_fraction_, record.leading_fraction);
@@ -1083,6 +1088,7 @@ class RadiusBranches {
 
   std::vector<std::vector<int> *> int_vectors() {
     return {&soft_drop_valid_, &n_sd_,              &mult_,
+            &total_mult_,
             &n_normal_,        &n_positive_wake_,   &n_negative_wake_,
             &n_negative_thermal_, &n_hadronized_holes_, &hard_parton_id_,
             &pair_match_index_, &pair_match_other_hard_parton_id_,
@@ -1100,7 +1106,7 @@ class RadiusBranches {
   std::vector<float> eta_, y_, phi_, pt_, mass_, energy_, px_, py_, pz_;
   std::vector<float> raw_eta_, raw_y_, raw_phi_, raw_pt_, raw_mass_;
   std::vector<float> zg_, rg_, sd_pt_, sd_mass_;
-  std::vector<int> soft_drop_valid_, n_sd_, mult_;
+  std::vector<int> soft_drop_valid_, n_sd_, mult_, total_mult_;
   std::vector<float> pt_d_, effective_multiplicity_, leading_fraction_;
   std::vector<float> normal_pt_d_, normal_effective_multiplicity_;
   std::vector<float> leading_normal_fraction_, girth_, signed_girth_;
@@ -1279,7 +1285,7 @@ void write_metadata(TFile &output, const Options &options, std::uint64_t pair_co
   jet_definition.Write();
   TNamed substructure_definition(
       "substructureDefinition",
-      "positive constituents only; Cambridge/Aachen reclustering; Soft Drop first passing hardest-branch split; MaxKt over full C/A tree; normal-only effective multiplicity excludes wake hadrons");
+      "positive constituents only; Cambridge/Aachen reclustering; Soft Drop first passing hardest-branch split; MaxKt over full C/A tree; Mult=Nnormal+Npositive; TotalMult=Nnormal+Npositive-Nnegative; normal-only effective multiplicity excludes wake hadrons");
   substructure_definition.Write();
   TNamed formation_time_definition(
       "formationTimeDefinition",

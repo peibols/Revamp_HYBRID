@@ -273,6 +273,9 @@ class ConverterTest(unittest.TestCase):
                         "jet2Pt",
                         "jet2RawPt",
                         "jet2NegativeWakePt",
+                        "jet2Mult",
+                        "jet2TotalMult",
+                        "jet2NNegativeWake",
                         "jet2NormalPtD",
                         "jet2NormalEffectiveMultiplicity",
                         "jet2LeadingNormalFraction",
@@ -306,6 +309,10 @@ class ConverterTest(unittest.TestCase):
                 self.assertLessEqual(float(jets.jet1Pt[0][0]), float(jets.jet1RawPt[0][0]))
                 self.assertGreater(float(jets.jet2NegativeWakePt[0][0]), 0.0)
                 self.assertLess(float(jets.jet2Pt[0][0]), float(jets.jet2RawPt[0][0]))
+                self.assertEqual(
+                    int(jets.jet2TotalMult[0][0]),
+                    int(jets.jet2Mult[0][0]) - int(jets.jet2NNegativeWake[0][0]),
+                )
                 self.assertAlmostEqual(float(jets.jet2NormalPtD[0][0]), 1.0)
                 self.assertAlmostEqual(
                     float(jets.jet2NormalEffectiveMultiplicity[0][0]), 1.0

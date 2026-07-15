@@ -37,6 +37,20 @@ class FormationTimePlotTest(unittest.TestCase):
         np.testing.assert_allclose(values, [3.0 / 6.0, 6.0 / 6.0 / 2.0])
         self.assertTrue(np.all(np.isfinite(errors)))
 
+    def test_selected_jet_normalization_closes_to_splits_per_jet(self) -> None:
+        matrix = np.array([[1.0, 0.0], [0.0, 2.0], [3.0, 0.0]])
+        weights = np.array([1.0, 2.0, 3.0])
+        selected_counts = np.array([1.0, 1.0, 2.0])
+        edges = np.array([0.0, 1.0, 2.0])
+        values, errors = plotter.selected_jet_normalized_yield(
+            matrix, selected_counts, weights, edges
+        )
+        expected_splits_per_jet = float(np.sum(matrix)) / float(
+            np.sum(weights * selected_counts)
+        )
+        self.assertAlmostEqual(float(np.sum(values * np.diff(edges))), expected_splits_per_jet)
+        self.assertTrue(np.all(np.isfinite(errors)))
+
     def test_corrected_pt_intervals_are_disjoint(self) -> None:
         arrays = ak.Array(
             {

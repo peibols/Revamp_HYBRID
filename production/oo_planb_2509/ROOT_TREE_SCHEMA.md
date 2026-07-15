@@ -108,6 +108,12 @@ Per-jet `NegativeWakePt`, `NNegativeWake`, `NNegativeThermal`,
 effect auditable. `SignedG` is also provided as a signed linear diagnostic;
 the requested `G` is the positive-constituent girth.
 
+Schema v6 adds `TotalMult`, the signed count
+`NNormal + NPositiveWake - NNegativeWake`. Here `NNegativeWake` includes both
+raw-label-2 negative thermal hadrons and raw-label-3 hadronized holes. This is
+a signed bookkeeping observable, not the multiplicity of a physical
+negative-subtracted constituent list.
+
 ## Jet branches
 
 Replace `X` by `1`, `2`, `4`, or `8` for R=0.1, R=0.2, R=0.4, or R=0.8:
@@ -117,6 +123,7 @@ Replace `X` by `1`, `2`, `4`, or `8` for R=0.1, R=0.2, R=0.4, or R=0.8:
 | `jetXEta`, `jetXPhi`, `jetXPt`, `jetXmass` | 4MomSub-corrected jet kinematics |
 | `jetXZg`, `jetXRg` | first Soft Drop passing split |
 | `jetXMult` | number of normal plus positive-wake constituents |
+| `jetXTotalMult` | signed count `NNormal + NPositiveWake - NNegativeWake` |
 | `jetXPtD` | `sqrt(sum_i pT_i^2) / sum_i pT_i` |
 | `jetXEffectiveMultiplicity` | `1/jetXPtD^2` for normal plus positive-wake constituents |
 | `jetXLeadingFraction` | leading positive-constituent pT divided by positive scalar pT |
@@ -163,7 +170,7 @@ audit, pT-slice closure, and inclusive jet-RAA workflow all include R=0.1,
 R=0.2, R=0.4, and R=0.8. The effective-charge response remains scoped to
 R=0.2, R=0.4, and R=0.8.
 
-## Formation-time estimator (schema v5)
+## Formation-time estimator (schema v5, retained in schema v6)
 
 Schema v5 stores the Cambridge--Aachen declustering tree needed for the
 final-state formation-time estimator for R=0.4 and R=0.8 jets with
@@ -194,7 +201,8 @@ the jet four-vector. They therefore affect the corrected-pT selection but are
 not inserted into the nonlinear C/A constituent tree. This is deliberate:
 4MomSub does not define a unique negative-subtracted nonlinear tree.
 
-For `jet4*` and `jet8*`, schema v5 adds:
+For `jet4*` and `jet8*`, schema v5 adds the following branches, retained
+unchanged in schema v6:
 
 | Branch suffix | Definition |
 | --- | --- |
@@ -284,7 +292,10 @@ python3 production/oo_planb_2509/analysis/test_plot_oo_jet_formation_time.py -v
 For the weighted no/with-prehydro jet-variable comparison, use
 `analysis/plot_oo_jet_variables.py`. It applies the one-event-run
 `PythiaParallel` normalization once, selects on the corrected jet pT, and uses
-a paired delete-one-run jackknife for distributions and ratios. Its weighting
+a paired delete-one-run jackknife for distributions and ratios. Absolute
+cross sections remain in the TSV audit, while plotted shapes use
+`(1/sigmaJetSelected) dSigma/dx` separately for each variant. Shape ratios
+include that selected-jet normalization in every jackknife replica. Its weighting
 regression test is `analysis/test_plot_oo_jet_variables.py`. An optional
 `--pt-max` is inclusive while `--pt-min` remains exclusive. Consequently the
 four nonoverlapping campaign intervals are generated with `(20,30]`,
@@ -321,7 +332,11 @@ eta acceptance are imposed only on the no-prehydro jet. Its one-to-one
 `PairMatchIndex` partner is retained even if Plan B moves it outside that pT
 interval. The output stores the four no-prehydro-to-Plan-B Soft Drop states,
 paired `PtD` and `NormalPtD` shifts (including common-sample ratios of means),
-and incremental fractional loss for all,
+positive and signed multiplicities, both-pass `Zg` and `Rg`, girth, maximum
+`kT`, and R=0.4/0.8 all-split and hardest-split formation-time summaries.
+Formation-time rows report the arithmetic per-jet mean, mean `log10(tau_f)`,
+and hardest-`kT` `log10(tau_f)` response. The output also retains incremental
+fractional loss for all,
 quark-tagged, gluon-tagged, Soft-Drop, and wake-excluded effective-multiplicity
 categories. Event-level jackknife errors are the nominal statistical errors.
 The delete-one-`hydroIndex` block error, effective number of weighted event

@@ -84,6 +84,13 @@ it `softdrop_failed`; metadata and summary tables store weighted pass and fail
 fractions. Physical `Zg`/`Rg` moments continue to use successful Soft Drop jets
 only.
 
+All jet-variable shape panels use the per-variant normalization
+`(1/sigmaJetSelected) dSigma/dx`. Their lower panels are ratios of those
+normalized shapes, not absolute-yield ratios; the selected-jet denominator is
+recomputed inside each paired delete-one-event jackknife replica. Absolute
+cross sections and integrated jet yields remain available in the TSV/JSON
+audit and are used for jet RAA.
+
 `analysis/plot_oo_jet_charge_response.py` tests whether the incremental
 prehydro shift depends on a single-core versus many-core fragmentation proxy.
 Its primary proxy is the wake-excluded effective multiplicity
@@ -98,7 +105,10 @@ follow-up for Soft Drop and momentum dispersion. It selects only the
 no-prehydro jet in pT and eta, follows its one-to-one pair-axis match without
 placing a second pT cut on the Plan-B jet, and reports the full fail/pass
 transition matrix. It also measures paired changes in `PtD`, normal-only
-`PtD`, their ratio-of-means shifts on the common matched set, and
+`PtD`, positive and signed multiplicity, both-pass `Zg` and `Rg`, girth,
+maximum `kT`, and the R=0.4/0.8 all-split and hardest-split formation-time
+estimators. Their ratio-of-means shifts use the common matched set. It also
+reports
 `1-pT(Plan B)/pT(no prehydro)` for all, quark-tagged, gluon-tagged,
 Soft-Drop, and normal-effective-multiplicity subsets. The biased-PYTHIA event
 weight is applied once. Delete-one-hard-event jackknife errors are nominal;
@@ -206,7 +216,9 @@ histograms from the two aligned ROOT pairs to agree exactly. The summary also
 requires the four disjoint intervals to close to the inclusive `pT > 20 GeV`
 cross section for every radius and all three variants.
 
-The schema-v5 formation-time analysis is run separately on each aligned ROOT
+The schema-v6 ROOT files retain the schema-v5 formation-time branches and add
+the signed `TotalMult = NNormal + NPositiveWake - NNegativeWake` jet branch.
+Run the formation-time analysis separately on each aligned ROOT
 pair:
 
 ```bash

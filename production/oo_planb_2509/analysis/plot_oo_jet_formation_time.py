@@ -26,7 +26,7 @@ import plot_oo_jet_variables as base
 VARIANTS = ("noPrehydro", "withPrehydro")
 VARIANT_LABELS = {
     "noPrehydro": "No pre-hydro",
-    "withPrehydro": "Plan B pre-hydro",
+    "withPrehydro": "Pre-hydro",
 }
 VARIANT_COLORS = {
     "noPrehydro": "#0072B2",
@@ -183,6 +183,27 @@ def weighted_yield_from_matrix(
     return values, base.jackknife_error(leave_values)
 
 
+def selected_jet_normalized_yield(
+    matrix: np.ndarray,
+    selected_jet_counts: np.ndarray,
+    weights: np.ndarray,
+    edges: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (1/sigma_jet) d sigma_split / dx with paired jackknife errors."""
+    widths = np.diff(edges)
+    totals = np.sum(matrix, axis=0)
+    weighted_jets_by_event = weights * selected_jet_counts
+    weighted_jets = float(np.sum(weighted_jets_by_event))
+    values = totals / weighted_jets / widths
+    leave_values = np.divide(
+        totals[np.newaxis, :] - matrix,
+        (weighted_jets - weighted_jets_by_event)[:, np.newaxis],
+        out=np.full_like(matrix, np.nan),
+        where=(weighted_jets - weighted_jets_by_event)[:, np.newaxis] != 0.0,
+    ) / widths[np.newaxis, :]
+    return values, base.jackknife_error(leave_values)
+
+
 def weighted_quantile(
     values: np.ndarray, sample_weights: np.ndarray, quantiles: list[float]
 ) -> list[float]:
@@ -231,8 +252,8 @@ def spectrum_plot(
             finite_errorbar(
                 axes[0, column],
                 centers,
-                item["values"],
-                item["errors"],
+                item["normalized_values"],
+                item["normalized_errors"],
                 color=VARIANT_COLORS[variant],
                 marker=VARIANT_MARKERS[variant],
                 markersize=3.2,
@@ -254,9 +275,9 @@ def spectrum_plot(
         )
         axes[0, column].set_yscale("log")
         axes[0, column].set_ylabel(
-            r"$dN_{w,\rm split}/(N_{w,\rm evt}\,d\log_{10}\tau_{\rm f})$"
+            r"$(1/\sigma_{\rm jet})\,d\sigma_{\rm split}/d\log_{10}\tau_{\rm f}$"
         )
-        axes[1, column].set_ylabel("Plan B / no pre-hydro")
+        axes[1, column].set_ylabel("Pre-hydro / no pre-hydro")
         axes[1, column].set_xlabel(r"$\log_{10}(\tau_{\rm f}/[\mathrm{fm}/c])$")
         axes[1, column].axhline(1.0, color="0.5", linewidth=0.9)
         axes[1, column].set_ylim(
@@ -327,7 +348,7 @@ def correlation_plot(
 ) -> None:
     specs = correlation_axes(radius)
     figure, axes = plt.subplots(3, 3, figsize=(13.6, 10.0), sharey=True)
-    column_titles = ("No pre-hydro", "Plan B pre-hydro", "Plan B / no pre-hydro")
+    column_titles = ("No pre-hydro", "Pre-hydro", "Pre-hydro / no pre-hydro")
     for column, title in enumerate(column_titles):
         axes[0, column].set_title(title)
     for row, (name, (_, _, x_label)) in enumerate(specs.items()):
@@ -358,7 +379,7 @@ def correlation_plot(
                 mesh,
                 ax=axes[row, column],
                 pad=0.01,
-                label="weighted density / event",
+                label=r"$(1/\sigma_{\rm jet})d^2\sigma_{\rm split}/dx\,d\log\tau_f$",
             )
         ratio = np.ma.masked_invalid(correlation_data[name]["ratio"].T)
         ratio = np.ma.masked_where(correlation_data[name]["no_raw"].T < 10, ratio)
@@ -515,9 +536,9 @@ def validate_root(
         branches.extend(f"jet{radius_digit}{suffix}" for suffix in jet_suffixes)
     with uproot.open(input_root) as root_file:
         schema = root_file["metadata/schemaVersion"].member("fTitle")
-        if schema != "oo-paired-root-v5":
+        if schema != "oo-paired-root-v6":
             raise ValueError(
-                f"formation-time analysis requires oo-paired-root-v5, found {schema}"
+                f"formation-time analysis requires oo-paired-root-v6, found {schema}"
             )
         events = root_file["Pairs"].arrays(
             ["pairId", "eventWeight", "sigmaGen", "seed", "hydroIndex"],
@@ -701,9 +722,10 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
             "corrected-pT selection but are excluded from the nonlinear C/A tree"
         ),
         "normalization": (
-            "plotted dNw/(Nw,event*dlog10(tau)) is the weighted split count divided "
-            "by sum(eventWeight) and bin width; dSigma/dlog10(tau) is also tabulated "
-            "using sum(w*sigmaGen)/sum(w)^2; the biased-PYTHIA weight is applied once"
+            "plotted (1/sigmaJetSelected)*dSigmaSplit/dlog10(tau) is the weighted "
+            "split count divided by the weighted selected-jet count and bin width; "
+            "event-normalized yield and absolute dSigma/dlog10(tau) remain tabulated; "
+            "the selected-jet denominator is recomputed in every jackknife replica"
         ),
         "uncertainty": "paired delete-one-run jackknife",
         "ratioPlotMinimumNoPrehydroEntriesPerBin": 20,
@@ -760,6 +782,9 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                 all_values, all_errors = weighted_yield_from_matrix(
                     all_matrix, weights, tau_edges
                 )
+                all_normalized, all_normalized_errors = selected_jet_normalized_yield(
+                    all_matrix, selected_jet_counts, weights, tau_edges
+                )
                 all_cross_section, all_cross_section_errors = differential_from_matrix(
                     all_matrix, weights, sigma_gen, tau_edges
                 )
@@ -786,6 +811,11 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                 hardest_values, hardest_errors = weighted_yield_from_matrix(
                     hardest_matrix, weights, tau_edges
                 )
+                hardest_normalized, hardest_normalized_errors = (
+                    selected_jet_normalized_yield(
+                        hardest_matrix, selected_jet_counts, weights, tau_edges
+                    )
+                )
                 hardest_cross_section, hardest_cross_section_errors = differential_from_matrix(
                     hardest_matrix, weights, sigma_gen, tau_edges
                 )
@@ -793,6 +823,8 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                     "matrix": all_matrix,
                     "values": all_values,
                     "errors": all_errors,
+                    "normalized_values": all_normalized,
+                    "normalized_errors": all_normalized_errors,
                     "cross_section": all_cross_section,
                     "cross_section_errors": all_cross_section_errors,
                     "raw": raw_all,
@@ -804,6 +836,8 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                     "matrix": hardest_matrix,
                     "values": hardest_values,
                     "errors": hardest_errors,
+                    "normalized_values": hardest_normalized,
+                    "normalized_errors": hardest_normalized_errors,
                     "cross_section": hardest_cross_section,
                     "cross_section_errors": hardest_cross_section_errors,
                     "raw": raw_hardest,
@@ -951,9 +985,16 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
             ] = split_rate_error
 
             for split_kind in ("all", "hardest_kt"):
-                ratio, ratio_error = base.paired_ratio(
+                absolute_ratio, absolute_ratio_error = base.paired_ratio(
                     result[split_kind]["withPrehydro"]["matrix"],
                     result[split_kind]["noPrehydro"]["matrix"],
+                )
+                ratio, ratio_error = base.paired_normalized_ratio(
+                    result[split_kind]["withPrehydro"]["matrix"],
+                    result[split_kind]["noPrehydro"]["matrix"],
+                    integrated_counts["withPrehydro"]["selected_jets"],
+                    integrated_counts["noPrehydro"]["selected_jets"],
+                    weights,
                 )
                 result[split_kind]["ratio"] = {
                     "values": ratio,
@@ -985,6 +1026,8 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                                 "log10_tau_center": f"{0.5 * (tau_edges[bin_index] + tau_edges[bin_index + 1]):.12e}",
                                 "weighted_yield_per_event": f"{item['values'][bin_index]:.12e}",
                                 "weighted_yield_stat_error": f"{item['errors'][bin_index]:.12e}",
+                                "selected_jet_normalized_density": f"{item['normalized_values'][bin_index]:.12e}",
+                                "selected_jet_normalized_density_stat_error": f"{item['normalized_errors'][bin_index]:.12e}",
                                 "differential_cross_section_mb": f"{item['cross_section'][bin_index]:.12e}",
                                 "cross_section_stat_error_mb": f"{item['cross_section_errors'][bin_index]:.12e}",
                                 "pre_over_no_ratio": (
@@ -996,6 +1039,16 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                                     "0.000000000000e+00"
                                     if variant == "noPrehydro"
                                     else f"{ratio_error[bin_index]:.12e}"
+                                ),
+                                "absolute_pre_over_no_ratio": (
+                                    "1.000000000000e+00"
+                                    if variant == "noPrehydro"
+                                    else f"{absolute_ratio[bin_index]:.12e}"
+                                ),
+                                "absolute_ratio_stat_error": (
+                                    "0.000000000000e+00"
+                                    if variant == "noPrehydro"
+                                    else f"{absolute_ratio_error[bin_index]:.12e}"
                                 ),
                                 "raw_entries_in_bin": int(item["raw_by_bin"][bin_index]),
                                 "raw_entries_total": item["raw"],
@@ -1019,6 +1072,7 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                 correlation_data[name] = {"x_edges": x_edges}
                 weighted_totals: dict[str, np.ndarray] = {}
                 raw_totals: dict[str, np.ndarray] = {}
+                selected_jet_weight_totals: dict[str, float] = {}
                 for variant in VARIANTS:
                     arrays = variants[variant]
                     selection = selections[variant]
@@ -1040,10 +1094,19 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                         weights=weights[x_event_indices[finite]],
                     )
                     area = np.diff(x_edges)[:, np.newaxis] * np.diff(tau_edges)[np.newaxis, :]
-                    density = weighted / weight_sum / area
+                    selected_event_indices = ak.to_numpy(
+                        arrays.eventIndex[selection]
+                    ).astype(np.int64)
+                    selected_counts = event_count(
+                        selected_event_indices, event_count_total
+                    )
+                    selected_jet_weight = float(np.sum(weights * selected_counts))
+                    density = weighted / selected_jet_weight / area
+                    event_normalized_density = weighted / weight_sum / area
                     cross_section_density = factor * weighted / area
                     raw_totals[variant] = raw
                     weighted_totals[variant] = weighted
+                    selected_jet_weight_totals[variant] = selected_jet_weight
                     correlation_data[name][variant] = {"density": density}
                     for x_index in range(len(x_edges) - 1):
                         for y_index in range(len(tau_edges) - 1):
@@ -1061,16 +1124,20 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                                     "log10_tau_low": f"{tau_edges[y_index]:.12e}",
                                     "log10_tau_high": f"{tau_edges[y_index + 1]:.12e}",
                                     "raw_entries": int(raw[x_index, y_index]),
-                                    "weighted_density_per_event": f"{density[x_index, y_index]:.12e}",
+                                    "selected_jet_normalized_density": f"{density[x_index, y_index]:.12e}",
+                                    "weighted_density_per_event": f"{event_normalized_density[x_index, y_index]:.12e}",
                                     "weighted_density_mb": f"{cross_section_density[x_index, y_index]:.12e}",
                                 }
                             )
                 correlation_data[name]["no_raw"] = raw_totals["noPrehydro"]
                 correlation_data[name]["ratio"] = np.divide(
-                    weighted_totals["withPrehydro"],
-                    weighted_totals["noPrehydro"],
+                    weighted_totals["withPrehydro"]
+                    * selected_jet_weight_totals["noPrehydro"],
+                    weighted_totals["noPrehydro"]
+                    * selected_jet_weight_totals["withPrehydro"],
                     out=np.full_like(weighted_totals["withPrehydro"], np.nan),
-                    where=weighted_totals["noPrehydro"] > 0.0,
+                    where=(weighted_totals["noPrehydro"] > 0.0)
+                    & (selected_jet_weight_totals["withPrehydro"] > 0.0),
                 )
             correlation_plot(
                 correlation_data,

@@ -27,7 +27,7 @@ PARTICLE_RECORD = struct.Struct("<ddddii")
 PAIR_MAGIC = b"OOPAIR1\0"
 CHUNK_PATTERN = re.compile(r"chunk_(\d+)\.(?:tar\.gz|txt)$")
 ALLOWED_LABELS = {-2, 0, 1, 2, 3}
-SCHEMA_VERSION = "oo-paired-root-v5"
+SCHEMA_VERSION = "oo-paired-root-v6"
 JET_RADIUS_DIGITS = (1, 2, 4, 8)
 
 
@@ -682,6 +682,7 @@ def validate_root(path: Path, expected_pairs: int) -> dict[str, int]:
                 "Zg",
                 "Rg",
                 "Mult",
+                "TotalMult",
                 "PtD",
                 "EffectiveMultiplicity",
                 "LeadingFraction",
@@ -1076,6 +1077,11 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
             "softDropBeta": args.beta,
             "pairMatchDRFraction": args.match_dr_fraction,
             "hardPartonMatchDRFraction": 1.0,
+            "totalMultiplicity": (
+                "NNormal + NPositiveWake - NNegativeWake, where negative wake "
+                "includes raw-label-2 negative thermal hadrons and raw-label-3 "
+                "hadronized holes"
+            ),
             "formationTime": {
                 "storedRadii": [0.4, 0.8],
                 "correctedJetPtMinExclusiveGeV": 30.0,

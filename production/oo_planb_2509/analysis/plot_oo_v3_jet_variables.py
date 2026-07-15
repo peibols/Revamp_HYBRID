@@ -25,18 +25,18 @@ RATIO_VARIANTS = ("prehydro_alpha037", "prehydro_alpha0335")
 STYLES = {
     "no_prehydro": {
         "label": "No pre-hydro",
+        "color": "#111111",
+        "marker": None,
+    },
+    "prehydro_alpha037": {
+        "label": r"Pre-hydro, $\alpha=0.37$",
         "color": "#0072B2",
         "marker": "o",
     },
-    "prehydro_alpha037": {
-        "label": r"Plan B, $\alpha=0.37$",
-        "color": "#D55E00",
-        "marker": "s",
-    },
     "prehydro_alpha0335": {
-        "label": r"Plan B, $\alpha=0.335$",
-        "color": "#009E73",
-        "marker": "^",
+        "label": r"Pre-hydro, $\alpha=0.335$",
+        "color": "#D62728",
+        "marker": "o",
     },
 }
 STRUCTURAL_FIELDS = (
@@ -53,6 +53,8 @@ NO_SPECTRUM_FIELDS = (
     *STRUCTURAL_FIELDS,
     "differential_cross_section_mb",
     "stat_error_mb",
+    "normalized_density",
+    "normalized_density_stat_error",
     "raw_variable_entries",
     "weighted_variable_entries",
     "nonfinite_entries",
@@ -129,6 +131,8 @@ def values_match(field: str, first: str, second: str) -> bool:
         "bin_center",
         "differential_cross_section_mb",
         "stat_error_mb",
+        "normalized_density",
+        "normalized_density_stat_error",
         "weighted_variable_entries",
         "integrated_jet_cross_section_mb",
         "integrated_jet_cross_section_stat_error_mb",
@@ -304,32 +308,37 @@ def draw_panel(
     for variant in VARIANTS:
         selected[variant] = rows_for_spec(rows, radius, spec, variant)
         values = np.array(
-            [float(row["differential_cross_section_mb"]) for row in selected[variant]]
+            [float(row["normalized_density"]) for row in selected[variant]]
         )
-        errors = np.array([float(row["stat_error_mb"]) for row in selected[variant]])
+        errors = np.array(
+            [float(row["normalized_density_stat_error"]) for row in selected[variant]]
+        )
         finite = np.isfinite(values) & np.isfinite(errors)
         if spec.yscale == "log":
             finite &= values > 0.0
             positive.append(values[np.isfinite(values) & (values > 0.0)])
         style = STYLES[variant]
-        upper.stairs(
-            values,
-            spec.edges,
-            color=style["color"],
-            linewidth=1.45,
-            label=style["label"],
-        )
-        upper.errorbar(
-            centers[finite],
-            values[finite],
-            yerr=errors[finite],
-            color=style["color"],
-            marker=style["marker"],
-            markersize=2.6,
-            linestyle="none",
-            linewidth=0.75,
-            capsize=1.3,
-        )
+        if variant == "no_prehydro":
+            upper.stairs(
+                values,
+                spec.edges,
+                color=style["color"],
+                linewidth=1.6,
+                label=style["label"],
+            )
+        else:
+            upper.errorbar(
+                centers[finite],
+                values[finite],
+                yerr=errors[finite],
+                color=style["color"],
+                marker=style["marker"],
+                markersize=2.8,
+                linestyle="none",
+                linewidth=0.8,
+                capsize=1.3,
+                label=style["label"],
+            )
 
     if spec.yscale == "log":
         upper.set_yscale("log")
@@ -344,16 +353,16 @@ def draw_panel(
         for variant in VARIANTS:
             values = np.array(
                 [
-                    float(row["differential_cross_section_mb"])
+                    float(row["normalized_density"])
                     for row in selected[variant]
                 ]
             )
             errors = np.array(
-                [float(row["stat_error_mb"]) for row in selected[variant]]
+                [float(row["normalized_density_stat_error"]) for row in selected[variant]]
             )
             maximum = max(maximum, float(np.nanmax(values + np.nan_to_num(errors))))
         upper.set_ylim(0.0, maximum * 1.28 if maximum > 0.0 else 1.0)
-    upper.set_ylabel(spec.ylabel, fontsize=8.2)
+    upper.set_ylabel(r"$(1/\sigma_{\rm jet})\,d\sigma/dx$", fontsize=8.2)
     upper.tick_params(labelbottom=False, labelsize=7.7)
     upper.grid(alpha=0.22)
     if show_legend:
@@ -410,7 +419,7 @@ def plot_groups(
             if group == "kinematics":
                 rows_count, columns, size = 2, 2, (10.8, 8.0)
             else:
-                rows_count, columns, size = 2, 3, (15.2, 8.0)
+                rows_count, columns, size = 2, 4, (18.0, 8.0)
             figure = plt.figure(figsize=size)
             grid = figure.add_gridspec(
                 rows_count, columns, wspace=0.33, hspace=0.33
@@ -433,7 +442,7 @@ def plot_groups(
             figure.text(
                 0.5,
                 0.012,
-                "PythiaParallel weighted spectra; paired delete-one-event jackknife. "
+                r"Per-variant $(1/\sigma_{\rm jet})d\sigma/dx$; paired delete-one-event jackknife. "
                 "No additional jet-eta cut. First Zg/Rg bin is SoftDropValid=0.",
                 ha="center",
                 fontsize=8.3,

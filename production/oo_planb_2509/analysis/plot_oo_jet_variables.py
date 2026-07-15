@@ -19,7 +19,7 @@ VARIANTS = ("noPrehydro", "withPrehydro")
 RADIUS_DIGITS = (1, 2, 4, 8)
 VARIANT_LABELS = {
     "noPrehydro": "No pre-hydro",
-    "withPrehydro": "Plan B pre-hydro",
+    "withPrehydro": "Pre-hydro",
 }
 VARIANT_COLORS = {
     "noPrehydro": "#0072B2",
@@ -49,6 +49,8 @@ class VariableSpec:
 class HistogramResult:
     values: np.ndarray
     errors: np.ndarray
+    normalized_values: np.ndarray
+    normalized_errors: np.ndarray
     weighted_matrix: np.ndarray
     raw_entries: int
     weighted_entries: float
@@ -83,6 +85,7 @@ def variable_specs(
             dtype=float,
         )
         multiplicity_edges = np.arange(0.5, 41.5, 1.0)
+        total_multiplicity_edges = np.arange(-5.5, 41.5, 1.0)
         rg_edges = np.linspace(0.0, 0.125, 21)
         girth_edges = np.linspace(0.0, 0.08, 21)
         max_kt_edges = np.geomspace(0.0005, 50.0, 20)
@@ -92,6 +95,7 @@ def variable_specs(
             dtype=float,
         )
         multiplicity_edges = np.arange(0.5, 61.5, 2.0)
+        total_multiplicity_edges = np.arange(-9.5, 62.5, 2.0)
         rg_edges = np.linspace(0.0, 0.25, 21)
         girth_edges = np.linspace(0.0, 0.16, 21)
         max_kt_edges = np.geomspace(0.0025, 100.0, 20)
@@ -101,6 +105,7 @@ def variable_specs(
             dtype=float,
         )
         multiplicity_edges = np.arange(0.5, 91.5, 3.0)
+        total_multiplicity_edges = np.arange(-14.5, 93.5, 3.0)
         rg_edges = np.linspace(0.0, 0.5, 21)
         girth_edges = np.linspace(0.0, 0.30, 21)
         max_kt_edges = np.geomspace(0.005, 200.0, 20)
@@ -110,6 +115,7 @@ def variable_specs(
             dtype=float,
         )
         multiplicity_edges = np.arange(0.5, 137.5, 4.0)
+        total_multiplicity_edges = np.arange(-23.5, 140.5, 4.0)
         rg_edges = np.linspace(0.0, 1.0, 21)
         girth_edges = np.linspace(0.0, 0.55, 23)
         max_kt_edges = np.geomspace(0.01, 400.0, 20)
@@ -189,9 +195,18 @@ def variable_specs(
         VariableSpec(
             "mult",
             "Mult",
-            r"constituent multiplicity",
+            r"positive constituent multiplicity",
             r"$d\sigma_{\mathrm{jet}}/dN$ [mb]",
             multiplicity_edges,
+            "substructure",
+            yscale="log",
+        ),
+        VariableSpec(
+            "totalmult",
+            "TotalMult",
+            r"signed total multiplicity",
+            r"$d\sigma_{\mathrm{jet}}/dN_{\mathrm{signed}}$ [mb]",
+            total_multiplicity_edges,
             "substructure",
             yscale="log",
         ),
@@ -324,6 +339,8 @@ def differential_histogram(
     return HistogramResult(
         values=values,
         errors=errors,
+        normalized_values=np.full(len(edges) - 1, np.nan),
+        normalized_errors=np.full(len(edges) - 1, np.nan),
         weighted_matrix=matrix,
         raw_entries=int(np.sum(lengths)),
         weighted_entries=float(np.sum(weights * lengths)),
@@ -331,6 +348,63 @@ def differential_histogram(
         underflow_entries=underflow,
         overflow_entries=overflow,
     )
+
+
+def normalize_histogram_to_selected_jets(
+    result: HistogramResult,
+    selected_counts: np.ndarray,
+    weights: np.ndarray,
+    edges: np.ndarray,
+) -> None:
+    weighted_selected_by_event = weights * selected_counts
+    selected_total = float(np.sum(weighted_selected_by_event))
+    if selected_total <= 0.0:
+        raise ValueError("cannot normalize a histogram with zero selected-jet weight")
+    widths = np.diff(edges)
+    bin_totals = np.sum(result.weighted_matrix, axis=0)
+    result.normalized_values = bin_totals / selected_total / widths
+    leave_selected = selected_total - weighted_selected_by_event
+    leave_bins = bin_totals[np.newaxis, :] - result.weighted_matrix
+    leave_values = np.divide(
+        leave_bins,
+        leave_selected[:, np.newaxis],
+        out=np.full_like(leave_bins, np.nan),
+        where=leave_selected[:, np.newaxis] != 0.0,
+    ) / widths[np.newaxis, :]
+    result.normalized_errors = jackknife_error(leave_values)
+
+
+def paired_normalized_ratio(
+    numerator_matrix: np.ndarray,
+    denominator_matrix: np.ndarray,
+    numerator_counts: np.ndarray,
+    denominator_counts: np.ndarray,
+    weights: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    numerator = np.sum(numerator_matrix, axis=0)
+    denominator = np.sum(denominator_matrix, axis=0)
+    numerator_norm_by_event = weights * numerator_counts
+    denominator_norm_by_event = weights * denominator_counts
+    numerator_norm = float(np.sum(numerator_norm_by_event))
+    denominator_norm = float(np.sum(denominator_norm_by_event))
+    ratio = np.divide(
+        numerator * denominator_norm,
+        denominator * numerator_norm,
+        out=np.full_like(numerator, np.nan),
+        where=(denominator != 0.0) & (numerator_norm != 0.0),
+    )
+    leave_numerator = numerator[np.newaxis, :] - numerator_matrix
+    leave_denominator = denominator[np.newaxis, :] - denominator_matrix
+    leave_numerator_norm = numerator_norm - numerator_norm_by_event
+    leave_denominator_norm = denominator_norm - denominator_norm_by_event
+    leave_ratio = np.divide(
+        leave_numerator * leave_denominator_norm[:, np.newaxis],
+        leave_denominator * leave_numerator_norm[:, np.newaxis],
+        out=np.full_like(leave_numerator, np.nan),
+        where=(leave_denominator != 0.0)
+        & (leave_numerator_norm[:, np.newaxis] != 0.0),
+    )
+    return ratio, jackknife_error(leave_ratio)
 
 
 def integrated_cross_section(
@@ -466,11 +540,13 @@ def draw_panel(
 
     for variant in VARIANTS:
         result = results[variant]
-        finite = np.isfinite(result.values) & np.isfinite(result.errors)
+        finite = np.isfinite(result.normalized_values) & np.isfinite(
+            result.normalized_errors
+        )
         if spec.yscale == "log":
-            finite &= result.values > 0.0
+            finite &= result.normalized_values > 0.0
         upper.stairs(
-            result.values,
+            result.normalized_values,
             spec.edges,
             color=VARIANT_COLORS[variant],
             linewidth=1.5,
@@ -478,8 +554,8 @@ def draw_panel(
         )
         upper.errorbar(
             centers[finite],
-            result.values[finite],
-            yerr=result.errors[finite],
+            result.normalized_values[finite],
+            yerr=result.normalized_errors[finite],
             color=VARIANT_COLORS[variant],
             marker=VARIANT_MARKERS[variant],
             markersize=2.8,
@@ -491,7 +567,10 @@ def draw_panel(
         upper.set_yscale("log")
         positive = np.concatenate(
             [
-                result.values[np.isfinite(result.values) & (result.values > 0.0)]
+                result.normalized_values[
+                    np.isfinite(result.normalized_values)
+                    & (result.normalized_values > 0.0)
+                ]
                 for result in results.values()
             ]
         )
@@ -499,11 +578,19 @@ def draw_panel(
             upper.set_ylim(max(float(np.min(positive)) * 0.35, 1e-12), float(np.max(positive)) * 3.0)
     else:
         maximum = max(
-            float(np.nanmax(result.values + np.nan_to_num(result.errors, nan=0.0)))
+            float(
+                np.nanmax(
+                    result.normalized_values
+                    + np.nan_to_num(result.normalized_errors, nan=0.0)
+                )
+            )
             for result in results.values()
         )
         upper.set_ylim(0.0, maximum * 1.28 if maximum > 0.0 else 1.0)
-    upper.set_ylabel(spec.ylabel, fontsize=8.5)
+    upper.set_ylabel(
+        r"$(1/\sigma_{\rm jet})\,d\sigma/dx$",
+        fontsize=8.5,
+    )
     upper.tick_params(labelbottom=False, labelsize=8)
     upper.grid(alpha=0.22)
     if show_legend:
@@ -550,7 +637,7 @@ def plot_group(
     if group == "kinematics":
         rows, columns, size = 2, 2, (10.8, 8.0)
     else:
-        rows, columns, size = 2, 3, (15.2, 8.0)
+        rows, columns, size = 2, 4, (18.0, 8.0)
     figure = plt.figure(figsize=size)
     grid = figure.add_gridspec(rows, columns, wspace=0.33, hspace=0.33)
     for index, spec in enumerate(specs):
@@ -573,7 +660,7 @@ def plot_group(
     figure.text(
         0.5,
         0.012,
-        "PythiaParallel weighted cross sections; paired delete-one-run jackknife. "
+        r"Per-variant $(1/\sigma_{\rm jet})d\sigma/dx$; paired delete-one-run jackknife. "
         "No additional jet-eta cut. First Zg/Rg bin is SoftDropValid=0; physical bins are valid jets.",
         ha="center",
         fontsize=8.5,
@@ -671,7 +758,14 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "sigmaMergedMb": sigma_merged,
         "crossSectionFactor": factor,
         "effectiveEventCountFromWeights": effective_events,
-        "normalization": "dSigma/dx = sum(w*sigmaGen)/sum(w)^2 * sum(w*n_bin)/bin_width",
+        "normalization": (
+            "absolute dSigma/dx is retained in TSV; plotted shapes use "
+            "(1/sigmaJetSelected)*dSigma/dx separately for each variant"
+        ),
+        "shapeRatio": (
+            "[(1/sigmaJetPre)dSigmaPre/dx]/[(1/sigmaJetNo)dSigmaNo/dx]; "
+            "selected-jet normalization is recomputed in every paired delete-one-run replica"
+        ),
         "uncertainty": "paired delete-one-run jackknife",
         "softDropHistogramConvention": (
             "Zg and Rg bin 0 contains every selected SoftDropValid=0 jet at a finite "
@@ -680,6 +774,10 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         ),
         "softDropSelection": "all selected jets; bin 0 is SoftDropValid=0",
         "softDropMoments": "weighted Zg and Rg means use SoftDropValid=1 jets only",
+        "multiplicityDefinitions": {
+            "Mult": "NNormal + NPositiveWake",
+            "TotalMult": "NNormal + NPositiveWake - NNegativeWake",
+        },
         "radii": {},
     }
 
@@ -762,6 +860,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
         histograms: dict[str, dict[str, HistogramResult]] = {}
         ratios: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        absolute_ratios: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         for spec in specs:
             histograms[spec.key] = {}
             jagged_by_variant: dict[str, ak.Array] = {}
@@ -801,9 +900,22 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                             "closure does not reproduce every selected jet"
                         )
                 histograms[spec.key][variant] = result
-            ratios[spec.key] = paired_ratio(
+                normalize_histogram_to_selected_jets(
+                    result,
+                    selected_counts[variant],
+                    weights,
+                    spec.edges,
+                )
+            absolute_ratios[spec.key] = paired_ratio(
                 histograms[spec.key]["withPrehydro"].weighted_matrix,
                 histograms[spec.key]["noPrehydro"].weighted_matrix,
+            )
+            ratios[spec.key] = paired_normalized_ratio(
+                histograms[spec.key]["withPrehydro"].weighted_matrix,
+                histograms[spec.key]["noPrehydro"].weighted_matrix,
+                selected_counts["withPrehydro"],
+                selected_counts["noPrehydro"],
+                weights,
             )
 
             centers = (
@@ -812,10 +924,27 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 else 0.5 * (spec.edges[:-1] + spec.edges[1:])
             )
             ratio, ratio_error = ratios[spec.key]
+            absolute_ratio, absolute_ratio_error = absolute_ratios[spec.key]
             for variant in VARIANTS:
                 result = histograms[spec.key][variant]
-                for bin_index, (low, high, center, value, error) in enumerate(
-                    zip(spec.edges[:-1], spec.edges[1:], centers, result.values, result.errors)
+                for bin_index, (
+                    low,
+                    high,
+                    center,
+                    value,
+                    error,
+                    normalized_value,
+                    normalized_error,
+                ) in enumerate(
+                    zip(
+                        spec.edges[:-1],
+                        spec.edges[1:],
+                        centers,
+                        result.values,
+                        result.errors,
+                        result.normalized_values,
+                        result.normalized_errors,
+                    )
                 ):
                     histogram_rows.append(
                         [
@@ -834,8 +963,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                             format_float(float(center)),
                             format_float(float(value)),
                             format_float(float(error)),
+                            format_float(float(normalized_value)),
+                            format_float(float(normalized_error)),
                             format_float(float(ratio[bin_index])),
                             format_float(float(ratio_error[bin_index])),
+                            format_float(float(absolute_ratio[bin_index])),
+                            format_float(float(absolute_ratio_error[bin_index])),
                             result.raw_entries,
                             format_float(result.weighted_entries),
                             result.nonfinite_entries,
@@ -913,8 +1046,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 "bin_center",
                 "differential_cross_section_mb",
                 "stat_error_mb",
+                "normalized_density",
+                "normalized_density_stat_error",
                 "pre_over_no_ratio",
                 "ratio_stat_error",
+                "absolute_pre_over_no_ratio",
+                "absolute_ratio_stat_error",
                 "raw_variable_entries",
                 "weighted_variable_entries",
                 "nonfinite_entries",
