@@ -244,7 +244,7 @@ def sync_eos(args: argparse.Namespace, local_eos: Path) -> None:
     for member in ("status", "outputs"):
         destination = local_eos / member
         destination.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
+        result = subprocess.run(
             [
                 "rsync",
                 "-a",
@@ -252,8 +252,15 @@ def sync_eos(args: argparse.Namespace, local_eos: Path) -> None:
                 f"{args.cern_remote}:{eos_base}/{member}/",
                 f"{destination}/",
             ],
-            check=True,
+            check=False,
         )
+        if result.returncode == 24:
+            log(
+                f"rsync {member}: ignored exit 24 from source files "
+                "vanishing during EOS atomic writes"
+            )
+            continue
+        result.check_returncode()
 
 
 def completed_milestones(path: Path) -> set[int]:

@@ -145,6 +145,36 @@ queue chunk_id from aa_chunk_ids.txt
         self.assertEqual(command[:3], ["cernctl", "run", "bash"])
         self.assertIn("condor_rm", command[-1])
 
+    def test_sync_eos_accepts_rsync_vanished_source_exit(self) -> None:
+        args = type(
+            "Args",
+            (),
+            {"campaign": "campaign", "cern_remote": "lxplus"},
+        )()
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(MODULE.subprocess, "run") as run:
+                run.side_effect = [
+                    MODULE.subprocess.CompletedProcess(["rsync"], 24),
+                    MODULE.subprocess.CompletedProcess(["rsync"], 0),
+                ]
+                MODULE.sync_eos(args, Path(tmp))
+        self.assertEqual(run.call_count, 2)
+
+    def test_sync_eos_rejects_other_rsync_failures(self) -> None:
+        args = type(
+            "Args",
+            (),
+            {"campaign": "campaign", "cern_remote": "lxplus"},
+        )()
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(MODULE.subprocess, "run") as run:
+                run.return_value = MODULE.subprocess.CompletedProcess(
+                    ["rsync"], 23
+                )
+                with self.assertRaises(MODULE.subprocess.CalledProcessError):
+                    MODULE.sync_eos(args, Path(tmp))
+        run.assert_called_once()
+
     def test_shifted_analysis_passes_global_task_range(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
