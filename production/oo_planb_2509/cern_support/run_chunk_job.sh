@@ -33,6 +33,10 @@ PREHYDRO_VISCOUS_ANCHOR="${PREHYDRO_VISCOUS_ANCHOR:-true}"
 TOLERATE_CHUNK_FAILURE="${TOLERATE_CHUNK_FAILURE:-false}"
 AA_TASK_MANIFEST="${AA_TASK_MANIFEST:-}"
 STORE_PREHYDRO_TABLE="${STORE_PREHYDRO_TABLE:-true}"
+DO_MOLIERE="${DO_MOLIERE:-false}"
+MOLIERE_TABLES_EOS_BASE="${MOLIERE_TABLES_EOS_BASE:-}"
+MOLIERE_TABLES_KEY="${MOLIERE_TABLES_KEY:-}"
+MOLIERE_TABLES_SHA256="${MOLIERE_TABLES_SHA256:-}"
 TASK_ID="${1:-${_CONDOR_PROCNO:-0}}"
 HYDRO_SLOT=""
 HYDRO_EVENT_ID=""
@@ -55,9 +59,24 @@ case "${RUN_PREHYDRO_ONLY}" in
   0|false|FALSE) RUN_PREHYDRO_ONLY=false ;;
   *) echo "RUN_PREHYDRO_ONLY must be true or false" >&2; exit 1 ;;
 esac
+case "${DO_MOLIERE}" in
+  1|true|TRUE) DO_MOLIERE=true ;;
+  0|false|FALSE) DO_MOLIERE=false ;;
+  *) echo "DO_MOLIERE must be true or false" >&2; exit 1 ;;
+esac
 if [[ "${RUN_PREHYDRO_PAIR}" == "true" && "${RUN_PREHYDRO_ONLY}" == "true" ]]; then
   echo "RUN_PREHYDRO_PAIR and RUN_PREHYDRO_ONLY are mutually exclusive" >&2
   exit 1
+fi
+if [[ "${DO_MOLIERE}" == "true" ]]; then
+  if [[ "${KIND}" != "aa" ]]; then
+    echo "Moliere scattering is only supported for AA jobs" >&2
+    exit 1
+  fi
+  if [[ -z "${MOLIERE_TABLES_EOS_BASE}" || -z "${MOLIERE_TABLES_KEY}" || ! "${MOLIERE_TABLES_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "MOLIERE_TABLES_EOS_BASE, MOLIERE_TABLES_KEY, and a lowercase SHA256 are required" >&2
+    exit 1
+  fi
 fi
 if [[ "${RUN_PREHYDRO_PAIR}" == "true" || "${RUN_PREHYDRO_ONLY}" == "true" ]]; then
   if [[ -z "${PREHYDRO_ATTRACTOR_TABLE}" ]]; then
@@ -86,6 +105,9 @@ finalize() {
   echo "no_prehydro_alpha=${NO_PREHYDRO_ALPHA}" >> "$INITIAL_DIR/chunk_status.txt"
   echo "prehydro_alpha=${PREHYDRO_ALPHA}" >> "$INITIAL_DIR/chunk_status.txt"
   echo "broadening_k=${BROADENING_K}" >> "$INITIAL_DIR/chunk_status.txt"
+  echo "do_moliere=${DO_MOLIERE}" >> "$INITIAL_DIR/chunk_status.txt"
+  echo "moliere_mode=$([[ "${DO_MOLIERE}" == "true" ]] && echo legacy_resolved || echo disabled)" >> "$INITIAL_DIR/chunk_status.txt"
+  echo "moliere_tables_sha256=${MOLIERE_TABLES_SHA256}" >> "$INITIAL_DIR/chunk_status.txt"
   if [[ -n "${HYDRO_EVENT_ID}" ]]; then
     echo "hydro_slot=${HYDRO_SLOT}" >> "$INITIAL_DIR/chunk_status.txt"
     echo "hydro_event_id=${HYDRO_EVENT_ID}" >> "$INITIAL_DIR/chunk_status.txt"
@@ -133,6 +155,45 @@ fetch_from "$RUNTIME_PAYLOAD_EOS_BASE" \
   mmli_runtime_alma9.tar.gz
 tar -xzf pythia8315_alma9_install.tar.gz
 tar -xzf mmli_runtime_alma9.tar.gz
+MOLIERE_TABLES_PATH=""
+if [[ "${DO_MOLIERE}" == "true" ]]; then
+  fetch_from "${MOLIERE_TABLES_EOS_BASE}" "${MOLIERE_TABLES_KEY}" moliere_a10_tables.zip
+  echo "${MOLIERE_TABLES_SHA256}  moliere_a10_tables.zip" | sha256sum -c -
+  mkdir -p runtime/moliere_tables
+  python3 - moliere_a10_tables.zip runtime/moliere_tables <<'PY'
+from pathlib import Path, PurePosixPath
+import stat
+import sys
+import zipfile
+
+archive_path, destination = map(Path, sys.argv[1:])
+with zipfile.ZipFile(archive_path) as archive:
+    members = archive.infolist()
+    if not members:
+        raise SystemExit("Moliere table archive is empty")
+    for member in members:
+        path = PurePosixPath(member.filename)
+        mode = member.external_attr >> 16
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or not path.parts
+            or path.parts[0] != "a10_tables"
+            or stat.S_ISLNK(mode)
+        ):
+            raise SystemExit(f"unsafe Moliere archive member: {member.filename}")
+    archive.extractall(destination)
+
+root = destination / "a10_tables"
+for species in ("quark_tables", "gluon_tables"):
+    tables = list((root / species).glob("m*x_g_*_d_*_n_*.dat"))
+    if len(tables) != 476 or any(path.stat().st_size <= 0 for path in tables):
+        raise SystemExit(
+            f"{species}: expected 476 nonempty Moliere tables, found {len(tables)}"
+        )
+PY
+  MOLIERE_TABLES_PATH="$WORK/runtime/moliere_tables/a10_tables"
+fi
 if [[ "${KIND}" == "aa" && -n "${AA_TASK_MANIFEST}" ]]; then
   if [[ ! -f "${AA_TASK_MANIFEST}" ]]; then
     echo "AA task manifest not found in runtime: ${AA_TASK_MANIFEST}" >&2
@@ -250,6 +311,13 @@ if [[ "$RUN_PREHYDRO_PAIR" == "true" ]]; then
 fi
 if [[ "$RUN_PREHYDRO_ONLY" == "true" ]]; then
   args+=(--run-prehydro-only)
+fi
+if [[ "$DO_MOLIERE" == "true" ]]; then
+  args+=(
+    --do-moliere
+    --moliere-tables-path "$MOLIERE_TABLES_PATH"
+    --moliere-tables-sha256 "$MOLIERE_TABLES_SHA256"
+  )
 fi
 args+=(
   --prehydro-tau-min "$PREHYDRO_TAU_MIN"

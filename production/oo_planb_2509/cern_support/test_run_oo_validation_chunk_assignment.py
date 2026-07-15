@@ -98,6 +98,49 @@ class V2AssignmentTest(unittest.TestCase):
             self.assertEqual(values["kappa"], "15.0")
             self.assertEqual(values["use_prehydro"], "true")
 
+    def test_write_input_records_legacy_resolved_moliere_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tables = root / "a10_tables"
+            for species in ("quark_tables", "gluon_tables"):
+                table_dir = tables / species
+                table_dir.mkdir(parents=True)
+                for index in range(476):
+                    (table_dir / f"m{index}x_g_1_d_1_n_1.dat").write_text("1\n")
+
+            validated = MODULE.validate_moliere_tables(tables)
+            path = root / "hybrid_input.dat"
+            MODULE.write_input(
+                path,
+                seed=900007,
+                events=1,
+                aa=True,
+                energy_loss_alpha=0.335,
+                broadening_k=15.0,
+                do_moliere=True,
+                moliere_tables_path=str(validated) + "/",
+            )
+            values = {
+                key.strip(): value.strip()
+                for key, value in (
+                    line.split("=", 1)
+                    for line in path.read_text().splitlines()
+                    if "=" in line
+                )
+            }
+            self.assertEqual(values["do_elastic"], "true")
+            self.assertEqual(values["do_lres"], "false")
+            self.assertEqual(values["do_Moliere_on_unresolved_partons"], "false")
+            self.assertEqual(values["do_Moliere_dynamic_unresolved_resolution"], "false")
+            self.assertEqual(
+                values["do_Moliere_dynamic_daughter_unresolved_resolution"],
+                "false",
+            )
+            self.assertEqual(values["do_Moliere_recursive_unresolved_resolution"], "false")
+            self.assertEqual(values["hadro_type"], "1")
+            self.assertEqual(values["compat_moliere_legacy_hydro"], "true")
+            self.assertEqual(values["tables_path"], str(validated) + "/")
+
     def test_build_aa_variants_shares_one_no_prehydro_baseline(self) -> None:
         base = Path("runs/check/aa/hydro/task_00007")
         variants = MODULE.build_aa_variants(

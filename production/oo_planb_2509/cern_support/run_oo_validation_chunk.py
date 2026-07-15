@@ -101,7 +101,12 @@ def write_input(
     broadening_k: float = DEFAULT_BROADENING_K,
     use_prehydro: bool = False,
     prehydro_file: str = "prehydro_table.tsv",
+    do_moliere: bool = False,
+    moliere_tables_path: str = "",
 ) -> None:
+    moliere_enabled = aa and do_moliere
+    if moliere_enabled and not moliere_tables_path:
+        raise ValueError("moliere_tables_path is required when Moliere is enabled")
     lines = [
         f"njob = {seed}",
         f"seed_base = {seed}",
@@ -114,19 +119,36 @@ def write_input(
         f"do_quench = {b(aa)}",
         f"do_wake = {b(aa)}",
         "do_source = false",
-        "do_elastic = false",
+        f"do_elastic = {b(moliere_enabled)}",
         "do_lres = false",
         "do_Moliere_on_unresolved_partons = false",
         "do_Moliere_dynamic_unresolved_resolution = false",
         "do_Moliere_dynamic_daughter_unresolved_resolution = false",
+        "do_Moliere_recursive_unresolved_resolution = false",
         f"ebe_hydro = {1 if aa else 0}",
-        "hadro_type = 0",
-        "compat_moliere_legacy_hydro = false",
+        f"hadro_type = {1 if moliere_enabled else 0}",
+        f"compat_moliere_legacy_hydro = {b(moliere_enabled)}",
         f"use_prehydro = {b(use_prehydro)}",
         f"prehydro_file = {prehydro_file}",
         "output_base = HYBRID",
     ]
+    if moliere_enabled:
+        lines.append(f"tables_path = {moliere_tables_path}")
     path.write_text("\n".join(lines) + "\n")
+
+
+def validate_moliere_tables(path: Path) -> Path:
+    resolved = path.resolve()
+    for species in ("quark_tables", "gluon_tables"):
+        table_dir = resolved / species
+        if not table_dir.is_dir():
+            raise ValueError(f"missing Moliere table directory: {table_dir}")
+        tables = list(table_dir.glob("m*x_g_*_d_*_n_*.dat"))
+        if len(tables) != 476 or any(table.stat().st_size <= 0 for table in tables):
+            raise ValueError(
+                f"{table_dir}: expected 476 nonempty Moliere tables, found {len(tables)}"
+            )
+    return resolved
 
 
 def run_main(run_dir: Path, main_bin: Path, timeout: int) -> int:
@@ -602,6 +624,9 @@ def run_variant(
     timeout_s: int,
     energy_loss_alpha: float,
     broadening_k: float,
+    do_moliere: bool,
+    moliere_tables_path: str,
+    moliere_tables_sha256: str,
     use_prehydro: bool,
     prehydro_tau_grid: list[float],
     prehydro_tau_min: float,
@@ -647,6 +672,8 @@ def run_variant(
         broadening_k=broadening_k,
         use_prehydro=use_prehydro,
         prehydro_file=prehydro_file or "prehydro_table.tsv",
+        do_moliere=do_moliere,
+        moliere_tables_path=moliere_tables_path,
     )
 
     start = time.time()
@@ -668,6 +695,9 @@ def run_variant(
         "use_prehydro": int(use_prehydro),
         "energy_loss_alpha": energy_loss_alpha,
         "broadening_k": broadening_k,
+        "do_moliere": int(do_moliere),
+        "hadro_type": 1 if do_moliere else 0,
+        "moliere_tables_sha256": moliere_tables_sha256,
         "prehydro_file": prehydro_file,
         "returncode": rc,
         "timeout": timed_out,
@@ -675,12 +705,14 @@ def run_variant(
         "dir": str(run_dir),
     }
     row = (
-        "variant\tuse_prehydro\tenergy_loss_alpha\tbroadening_k\tprehydro_file\t"
+        "variant\tuse_prehydro\tenergy_loss_alpha\tbroadening_k\tdo_moliere\t"
+        "hadro_type\tmoliere_tables_sha256\tprehydro_file\t"
         "returncode\ttimeout\tseconds\tdir\t"
         "task_id\tseed\tcentrality\thydro_slot\thydro_event_id\thydro_ncoll\t"
         "hydro_payload_sha256\n"
         f"{variant}\t{int(use_prehydro)}\t{energy_loss_alpha}\t"
-        f"{broadening_k}\t{prehydro_file}\t{rc}\t{timed_out}\t"
+        f"{broadening_k}\t{int(do_moliere)}\t{1 if do_moliere else 0}\t"
+        f"{moliere_tables_sha256}\t{prehydro_file}\t{rc}\t{timed_out}\t"
         f"{elapsed:.3f}\t{run_dir}\t{task_id}\t{seed}\t{centrality}\t{hydro_slot}\t"
         f"{event_id}\t{hydro_ncoll}\t{hydro_payload_sha256}\n"
     )
@@ -745,6 +777,24 @@ def main() -> int:
         default=DEFAULT_BROADENING_K,
         help="HYBRID transverse-broadening kappa shared by both paired legs",
     )
+    ap.add_argument(
+        "--do-moliere",
+        action="store_true",
+        help=(
+            "enable ordinary resolved-parton Moliere scattering with finite LRES "
+            "and all unresolved-Moliere modes disabled"
+        ),
+    )
+    ap.add_argument(
+        "--moliere-tables-path",
+        type=Path,
+        help="directory containing quark_tables/ and gluon_tables/",
+    )
+    ap.add_argument(
+        "--moliere-tables-sha256",
+        default="",
+        help="checksum of the staged Moliere table archive for provenance",
+    )
     ap.add_argument("--prehydro-tau-min", type=float, default=0.24)
     ap.add_argument("--prehydro-tau-grid", default=DEFAULT_PREHYDRO_TAU_GRID)
     ap.add_argument(
@@ -788,6 +838,18 @@ def main() -> int:
     prehydro_enabled = args.run_prehydro_pair or args.run_prehydro_only
     if args.kind != "aa" and prehydro_enabled:
         ap.error("prehydro modes are only valid for AA tasks")
+    if args.do_moliere:
+        if args.kind != "aa":
+            ap.error("--do-moliere is only valid for AA tasks")
+        if args.moliere_tables_path is None:
+            ap.error("--moliere-tables-path is required with --do-moliere")
+        if not re.fullmatch(r"[0-9a-f]{64}", args.moliere_tables_sha256):
+            ap.error("--moliere-tables-sha256 must be a lowercase SHA256")
+        moliere_tables_path = str(validate_moliere_tables(args.moliere_tables_path)) + "/"
+    else:
+        if args.moliere_tables_sha256:
+            ap.error("--moliere-tables-sha256 requires --do-moliere")
+        moliere_tables_path = ""
     if args.kind == "aa" and prehydro_enabled:
         if not math.isclose(
             args.prehydro_eta_over_s,
@@ -907,6 +969,9 @@ def main() -> int:
                 timeout_s=args.timeout_s,
                 energy_loss_alpha=energy_loss_alpha,
                 broadening_k=args.broadening_k,
+                do_moliere=args.do_moliere,
+                moliere_tables_path=moliere_tables_path,
+                moliere_tables_sha256=args.moliere_tables_sha256,
                 use_prehydro=use_prehydro,
                 prehydro_tau_grid=prehydro_tau_grid,
                 prehydro_tau_min=args.prehydro_tau_min,
@@ -927,7 +992,8 @@ def main() -> int:
     header = (
         "kind\ttask_id\tseed\tevents\tcentrality\thydro_index\thydro_event_id\t"
         "hydro_ncoll\thydro_payload_sha256\tvariant\tuse_prehydro\t"
-        "energy_loss_alpha\tbroadening_k\tprehydro_file\treturncode\ttimeout\t"
+        "energy_loss_alpha\tbroadening_k\tdo_moliere\thadro_type\t"
+        "moliere_tables_sha256\tprehydro_file\treturncode\ttimeout\t"
         "seconds\tdir\n"
     )
     rows = []
@@ -937,7 +1003,8 @@ def main() -> int:
             f"{event_id}\t{hydro_ncoll}\t{hydro_payload_sha256}\t"
             f"{result['variant']}\t{result['use_prehydro']}\t"
             f"{result['energy_loss_alpha']}\t{result['broadening_k']}\t"
-            f"{result['prehydro_file']}\t"
+            f"{result['do_moliere']}\t{result['hadro_type']}\t"
+            f"{result['moliere_tables_sha256']}\t{result['prehydro_file']}\t"
             f"{result['returncode']}\t{result['timeout']}\t{float(result['seconds']):.3f}\t{result['dir']}"
         )
     text = header + "\n".join(rows) + "\n"

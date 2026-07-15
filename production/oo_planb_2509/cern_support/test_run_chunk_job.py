@@ -10,6 +10,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+import zipfile
 
 
 RUNNER = Path(__file__).with_name("run_chunk_job.sh")
@@ -71,14 +72,17 @@ class ChunkFailureToleranceTest(unittest.TestCase):
         valid_checksum: bool,
         *,
         prehydro_only: bool = False,
+        do_moliere: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             eos = root / "mock_eos/eos/test/campaign"
             payloads = root / "mock_eos/eos/test/shared/payloads"
             runtime_payloads = root / "mock_eos/eos/test/runtime/payloads"
+            moliere_payloads = root / "mock_eos/eos/test/moliere/payloads"
             (payloads / "hydro/C0-5").mkdir(parents=True)
             runtime_payloads.mkdir(parents=True)
+            moliere_payloads.mkdir(parents=True)
             fake_bin = root / "fake_bin"
             fake_bin.mkdir()
             xrdcp = fake_bin / "xrdcp"
@@ -126,19 +130,28 @@ p.add_argument('--no-prehydro-alpha')
 p.add_argument('--prehydro-alpha')
 p.add_argument('--broadening-k')
 p.add_argument('--run-prehydro-only', action='store_true')
+p.add_argument('--do-moliere', action='store_true')
+p.add_argument('--moliere-tables-path')
+p.add_argument('--moliere-tables-sha256')
 args, _ = p.parse_known_args()
 assert Path(args.aa_task_manifest).is_file()
 assert args.no_prehydro_alpha == '0.37'
 assert args.prehydro_alpha == '0.355'
 assert args.broadening_k == '15.0'
 assert args.run_prehydro_only == PREHYDRO_ONLY
+assert args.do_moliere == DO_MOLIERE
+if args.do_moliere:
+    table_root = Path(args.moliere_tables_path)
+    assert len(list((table_root / 'quark_tables').glob('*.dat'))) == 476
+    assert len(list((table_root / 'gluon_tables').glob('*.dat'))) == 476
+    assert len(args.moliere_tables_sha256) == 64
 hydro = Path('runtime/staged_hydro/C0-5_event_00345')
 assert (hydro / 'evolution_all_xyeta.dat').is_file()
 out = Path(args.run_name) / 'aa/fake/task_00007'
 out.mkdir(parents=True)
 (out / 'HYBRID_Hadrons.out').write_text('# event 0\\nweight 1 cross 1\\nend\\n')
 (out / 'summary.tsv').write_text('variant\\nno_prehydro\\n')
-""".replace("PREHYDRO_ONLY", repr(prehydro_only))
+""".replace("PREHYDRO_ONLY", repr(prehydro_only)).replace("DO_MOLIERE", repr(do_moliere))
             )
             hydro_archive = payloads / "hydro/C0-5/event_00345.tar.gz"
             with tarfile.open(hydro_archive, "w:gz") as archive:
@@ -153,6 +166,15 @@ out.mkdir(parents=True)
             digest = hashlib.sha256(hydro_archive.read_bytes()).hexdigest()
             if not valid_checksum:
                 digest = "0" * 64
+            moliere_archive = moliere_payloads / "a10_tables.zip"
+            with zipfile.ZipFile(moliere_archive, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for species in ("quark_tables", "gluon_tables"):
+                    for index in range(476):
+                        archive.writestr(
+                            f"a10_tables/{species}/m{index}x_g_1_d_1_n_1.dat",
+                            "1\n",
+                        )
+            moliere_digest = hashlib.sha256(moliere_archive.read_bytes()).hexdigest()
             manifest = runtime_root / "runtime/aa_task_manifest.tsv"
             manifest.write_text(
                 "task_id\thard_seed\tmilestone_block\thydro_slot\thydro_event_id\t"
@@ -185,6 +207,10 @@ out.mkdir(parents=True)
                     "NO_PREHYDRO_ALPHA": "0.37",
                     "PREHYDRO_ALPHA": "0.355",
                     "BROADENING_K": "15.0",
+                    "DO_MOLIERE": str(do_moliere).lower(),
+                    "MOLIERE_TABLES_EOS_BASE": "/eos/test/moliere",
+                    "MOLIERE_TABLES_KEY": "payloads/a10_tables.zip",
+                    "MOLIERE_TABLES_SHA256": moliere_digest,
                     "AA_TASK_MANIFEST": "runtime/aa_task_manifest.tsv",
                     "TOLERATE_CHUNK_FAILURE": "false",
                 }
@@ -218,6 +244,12 @@ out.mkdir(parents=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("run_prehydro_pair=false", result.status_text)  # type: ignore[attr-defined]
         self.assertIn("run_prehydro_only=true", result.status_text)  # type: ignore[attr-defined]
+
+    def test_v2_stages_and_records_moliere_tables(self) -> None:
+        result = self.run_v2_wrapper(valid_checksum=True, do_moliere=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("do_moliere=true", result.status_text)  # type: ignore[attr-defined]
+        self.assertIn("moliere_mode=legacy_resolved", result.status_text)  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":
