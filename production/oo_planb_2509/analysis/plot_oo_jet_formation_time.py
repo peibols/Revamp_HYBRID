@@ -36,6 +36,24 @@ VARIANT_MARKERS = {"noPrehydro": "o", "withPrehydro": "s"}
 RADII = (0.4, 0.8)
 PT_INTERVALS = ((30.0, 50.0), (50.0, 80.0), (80.0, None))
 HBARC_GEV_FM = 0.19732698
+CURRENT_ROOT_SCHEMA = "oo-paired-root-v7"
+LEGACY_ROOT_SCHEMAS = ("oo-paired-root-v5", "oo-paired-root-v6")
+
+
+def stored_tau_f_scale(schema: str) -> float:
+    """Return the scale needed to express stored times in the 2E/Q^2 convention."""
+    if schema == CURRENT_ROOT_SCHEMA:
+        return 1.0
+    if schema in LEGACY_ROOT_SCHEMAS:
+        return 2.0
+    raise ValueError(f"unsupported ROOT schema {schema}")
+
+
+def root_string(root_object: Any) -> str:
+    """Read a string stored as either a ROOT TNamed or TObjString."""
+    if root_object.has_member("fTitle"):
+        return str(root_object.member("fTitle"))
+    return str(root_object)
 
 
 def sha256(path: Path) -> str:
@@ -296,7 +314,8 @@ def spectrum_plot(
     axes[0, 0].legend(frameon=False, fontsize=9)
     figure.suptitle(
         rf"O+O 5.36 TeV, 0--5%, anti-$k_T$ R={radius:g}, {pt_label(pt_low, pt_high)}"
-        + f"\n{sample_label}; corrected-jet selection, positive-constituent C/A tree",
+        + f"\n{sample_label}; positive-constituent C/A tree; "
+        + r"$\tau_{\rm f}=2\hbar cE/Q^2$",
         fontsize=11,
     )
     figure.text(
@@ -426,7 +445,10 @@ def write_tsv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def radius_piece(
-    events: dict[str, np.ndarray], arrays: ak.Array, radius_digit: int
+    events: dict[str, np.ndarray],
+    arrays: ak.Array,
+    radius_digit: int,
+    tau_f_scale: float,
 ) -> ak.Array:
     prefix = f"jet{radius_digit}"
     pt = arrays[f"{prefix}Pt"]
@@ -477,16 +499,18 @@ def radius_piece(
             "positiveWakePt": flat("PositiveWakePt"),
             "negativeWakePt": flat("NegativeWakePt"),
             "nInvalidSplittings": flat("FormationInvalidSplits"),
-            "tauF": split_flat("FormationTauF"),
-            "tauFSmallAngle": split_flat("FormationTauFSmallAngle"),
+            "tauF": tau_f_scale * split_flat("FormationTauF"),
+            "tauFSmallAngle": tau_f_scale * split_flat("FormationTauFSmallAngle"),
             "z": split_flat("FormationZ"),
             "theta": split_flat("FormationTheta"),
             "deltaR": split_flat("FormationDeltaR"),
             "kt": split_flat("FormationKt"),
             "parentEnergy": split_flat("FormationParentE"),
             "hardestValid": flat("FormationHardestValid"),
-            "hardestTauF": flat("FormationHardestTauF"),
-            "hardestTauFSmallAngle": flat("FormationHardestTauFSmallAngle"),
+            "hardestTauF": tau_f_scale * flat("FormationHardestTauF"),
+            "hardestTauFSmallAngle": (
+                tau_f_scale * flat("FormationHardestTauFSmallAngle")
+            ),
             "hardestZ": flat("FormationHardestZ"),
             "hardestTheta": flat("FormationHardestTheta"),
             "hardestDeltaR": flat("FormationHardestDeltaR"),
@@ -499,7 +523,7 @@ def radius_piece(
 
 def validate_root(
     input_root: Path,
-) -> tuple[dict[str, np.ndarray], dict[str, ak.Array]]:
+) -> tuple[dict[str, np.ndarray], dict[str, ak.Array], str, float]:
     jet_suffixes = (
         "Pt",
         "Eta",
@@ -535,11 +559,13 @@ def validate_root(
     for radius_digit in (4, 8):
         branches.extend(f"jet{radius_digit}{suffix}" for suffix in jet_suffixes)
     with uproot.open(input_root) as root_file:
-        schema = root_file["metadata/schemaVersion"].member("fTitle")
-        if schema != "oo-paired-root-v6":
+        schema = root_string(root_file["metadata/schemaVersion"])
+        if schema not in (*LEGACY_ROOT_SCHEMAS, CURRENT_ROOT_SCHEMA):
             raise ValueError(
-                f"formation-time analysis requires oo-paired-root-v6, found {schema}"
+                "formation-time analysis requires oo-paired-root-v5, v6, or v7; "
+                f"found {schema}"
             )
+        tau_f_scale = stored_tau_f_scale(schema)
         events = root_file["Pairs"].arrays(
             ["pairId", "eventWeight", "sigmaGen", "seed", "hydroIndex"],
             library="np",
@@ -556,7 +582,10 @@ def validate_root(
             ):
                 raise ValueError(f"{variant} event normalization disagrees with Pairs")
             variants[variant] = ak.concatenate(
-                [radius_piece(events, arrays, 4), radius_piece(events, arrays, 8)],
+                [
+                    radius_piece(events, arrays, 4, tau_f_scale),
+                    radius_piece(events, arrays, 8, tau_f_scale),
+                ],
                 axis=0,
             )
     event_count_total = len(events["pairId"])
@@ -659,14 +688,16 @@ def validate_root(
             )
         ):
             raise ValueError(f"{variant} hardest-kT audit failed")
-    return events, variants
+    return events, variants, schema, tau_f_scale
 
 
 def analyze(args: argparse.Namespace) -> dict[str, Any]:
     input_root = args.input_root.expanduser().resolve()
     out_dir = args.out_dir.expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    events, variants = validate_root(input_root)
+    events, variants, input_root_schema, input_tau_f_scale = validate_root(
+        input_root
+    )
     weights = events["eventWeight"].astype(np.float64)
     sigma_gen = events["sigmaGen"].astype(np.float64)
     event_count_total = len(weights)
@@ -680,7 +711,10 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
     summary_rows: list[dict[str, Any]] = []
     correlation_rows: list[dict[str, Any]] = []
     metadata: dict[str, Any] = {
+        "schemaVersion": "oo-jet-formation-time-v2",
         "inputRoot": str(input_root),
+        "inputRootSchema": input_root_schema,
+        "storedTauFScaleApplied": input_tau_f_scale,
         "inputRootBytes": input_root.stat().st_size,
         "inputRootSha256": sha256(input_root),
         "pairCount": event_count_total,
@@ -695,11 +729,15 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
         "log10TauEdges": tau_edges.tolist(),
         "hbarCGeVFm": HBARC_GEV_FM,
         "formationTime": (
-            "hbarc/[2*Eparent*z1*z2*(1-cos(theta12))], zi=Ei/Eparent; "
-            "exact three-dimensional opening angle"
+            "2*hbarc*Eparent/Qparent^2 = "
+            "hbarc/[Eparent*z1*z2*(1-cos(theta12))], zi=Ei/Eparent; "
+            "massless daughters and exact three-dimensional opening angle"
+        ),
+        "coefficientConvention": (
+            "factor-two-larger than the E/Q^2 convention in arXiv:2012.02199"
         ),
         "smallAngleValidation": (
-            "replace 1-cos(theta12) by DeltaR12^2/2; retained only as a validation"
+            "2*hbarc/[Eparent*z1*z2*DeltaR12^2]; retained only as a validation"
         ),
         "allSplittings": "every valid internal node in the full recursive C/A tree",
         "singleSplitting": (
@@ -714,7 +752,8 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "constituentTree": (
             "normal raw-label-0 plus positive-wake raw-label-1 hadrons at physical "
-            "four-momentum, C/A E-scheme"
+            "four-momentum, C/A E-scheme with R_CA=2*R_antiKt+1e-6 and "
+            "FastJet Best strategy"
         ),
         "negativeTreatment": (
             "negative-wake raw-label-2 particles and raw-label-3 hadronized holes are "

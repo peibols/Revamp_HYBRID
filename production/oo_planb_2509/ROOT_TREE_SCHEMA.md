@@ -135,8 +135,12 @@ Replace `X` by `1`, `2`, `4`, or `8` for R=0.1, R=0.2, R=0.4, or R=0.8:
 | `jetXHardPartonId`, `jetXHardPartonPt`, `jetXHardPartonDR` | one-to-one matched outgoing hard-parton marker truth tag |
 
 Soft Drop reclusters the positive constituents with Cambridge/Aachen and
-follows the harder-pT branch. The parameters are `z_cut=0.1`, `beta=0`, and
-`R0=R`. The stored quantities are
+follows the harder-pT branch. FastJet uses `cambridge_algorithm` (generalized-
+`kT` exponent `p=0`), E-scheme recombination, `Best` strategy, and
+`R_CA=2*R+1e-6` so every constituent of the original anti-kT jet belongs to one
+complete C/A root. The Soft Drop parameters are `z_cut=0.1`, `beta=0`, and
+`R0=R`; they do not select the all-tree or hardest-`kT` formation-time nodes.
+The stored quantities are
 
 ```text
 zg = min(pT1,pT2)/(pT1+pT2),  Rg = DeltaR12.
@@ -170,7 +174,7 @@ audit, pT-slice closure, and inclusive jet-RAA workflow all include R=0.1,
 R=0.2, R=0.4, and R=0.8. The effective-charge response remains scoped to
 R=0.2, R=0.4, and R=0.8.
 
-## Formation-time estimator (schema v5, retained in schema v6)
+## Formation-time estimator (schema v5--v7)
 
 Schema v5 stores the Cambridge--Aachen declustering tree needed for the
 final-state formation-time estimator for R=0.4 and R=0.8 jets with
@@ -179,11 +183,17 @@ writer from the original double-precision hadron four-vectors and FastJet
 history. Reconstructing the tree later from the rounded float hadron branches
 is not equivalent and is not supported for this observable.
 
+The C/A configuration is `cambridge_algorithm` (`p=0`), E-scheme, FastJet
+`Best`, with `R_CA=2*R_antiKt+1e-6`: 0.800001 for R=0.4 and 1.600001 for R=0.8.
+The enlarged radius guarantees one full C/A root for constituents that can be
+separated by nearly twice the original anti-kT radius.
+
 For every valid internal node,
 
 ```text
 tau_f [fm/c] = 0.19732698
-               / (2 E_parent z1 z2 [1-cos(theta12)])
+               / (E_parent z1 z2 [1-cos(theta12)])
+             = 2 hbar c E_parent / Q_parent^2
 zi           = Ei / E_parent
 z            = min(z1,z2)
 kT           = min(pT1,pT2) DeltaR12.
@@ -194,6 +204,13 @@ two child momentum vectors, and `E_parent` is the C/A parent energy. The
 stored small-angle audit replaces `1-cos(theta12)` by `DeltaR12^2/2`; it is a
 validation quantity, not the nominal estimator.
 
+Schema v7 stores this `2 E_parent / Q_parent^2` coefficient natively. Schema
+v5 and v6 stored the factor-two-smaller `E_parent / Q_parent^2` value. The
+current analysis readers multiply all exact, small-angle, and hardest-split
+formation-time branches from v5/v6 files by two, and record that scale in
+their metadata. This coefficient choice is deliberately a factor of two
+larger than the convention used in arXiv:2012.02199.
+
 The C/A tree contains normal and positive-wake hadrons at physical
 four-momentum. Raw-label-2 negative wake particles and raw-label-3 hadronized
 holes are ghost-associated during anti-kT reconstruction and subtracted from
@@ -201,8 +218,9 @@ the jet four-vector. They therefore affect the corrected-pT selection but are
 not inserted into the nonlinear C/A constituent tree. This is deliberate:
 4MomSub does not define a unique negative-subtracted nonlinear tree.
 
-For `jet4*` and `jet8*`, schema v5 adds the following branches, retained
-unchanged in schema v6:
+For `jet4*` and `jet8*`, schema v5 adds the following branches. Their layout is
+unchanged through schema v7; only the stored formation-time coefficient changes
+in schema v7 as documented above:
 
 | Branch suffix | Definition |
 | --- | --- |

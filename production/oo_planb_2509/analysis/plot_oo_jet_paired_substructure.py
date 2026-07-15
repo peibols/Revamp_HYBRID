@@ -9,6 +9,7 @@ import dataclasses
 import json
 import math
 from pathlib import Path
+from typing import Any
 
 import awkward as ak
 import numpy as np
@@ -16,6 +17,8 @@ import uproot
 
 
 RADIUS_DIGITS = (1, 2, 4, 8)
+CURRENT_ROOT_SCHEMA = "oo-paired-root-v7"
+LEGACY_FORMATION_ROOT_SCHEMAS = ("oo-paired-root-v6",)
 FLAVORS = ("all", "quark", "gluon")
 FLAVOR_LABELS = {
     "all": "All jets",
@@ -33,6 +36,24 @@ TRANSITIONS = (
     ("pass_to_fail", True, False),
     ("pass_to_pass", True, True),
 )
+
+
+def root_string(root_object: Any) -> str:
+    """Read a string stored as either a ROOT TNamed or TObjString."""
+    if root_object.has_member("fTitle"):
+        return str(root_object.member("fTitle"))
+    return str(root_object)
+
+
+def stored_formation_tau_f_scale(schema: str) -> float:
+    """Return the scale needed to express stored times in the 2E/Q^2 convention."""
+    if schema == CURRENT_ROOT_SCHEMA:
+        return 1.0
+    if schema in LEGACY_FORMATION_ROOT_SCHEMAS:
+        return 2.0
+    raise ValueError(f"unsupported ROOT schema {schema}")
+
+
 CATEGORY_LABELS = {
     "all": "All",
     "no_sd_fail": "SD fail",
@@ -936,6 +957,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "FormationHardestTauF",
     )
     with uproot.open(input_root) as root_file:
+        input_root_schema = root_string(root_file["metadata/schemaVersion"])
+        formation_tau_f_scale = stored_formation_tau_f_scale(input_root_schema)
         pairs = root_file["Pairs"].arrays(
             ["pairId", "eventWeight", "seed", "hydroIndex"], library="np"
         )
@@ -990,6 +1013,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     observable_by_radius = {}
     metadata: dict[str, object] = {
         "inputRoot": str(input_root),
+        "inputRootSchema": input_root_schema,
+        "formationStoredTauFScaleApplied": formation_tau_f_scale,
+        "formationTimeConvention": (
+            "2*hbarc*Eparent/Qparent^2 = "
+            "hbarc/[Eparent*z1*z2*(1-cos(theta12))]"
+        ),
         "inputBytes": input_root.stat().st_size,
         "pairCount": len(pair_ids),
         "uniqueSeedCount": len(np.unique(pairs["seed"])),
@@ -1099,11 +1128,13 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         }
         if radius_digit in (4, 8):
             no_mean_tau, no_mean_log_tau = formation_jet_summaries(
-                no_arrays[f"{prefix}FormationTauF"],
+                formation_tau_f_scale
+                * no_arrays[f"{prefix}FormationTauF"],
                 no_arrays[f"{prefix}FormationOffset"],
             )
             pre_mean_tau, pre_mean_log_tau = formation_jet_summaries(
-                pre_arrays[f"{prefix}FormationTauF"],
+                formation_tau_f_scale
+                * pre_arrays[f"{prefix}FormationTauF"],
                 pre_arrays[f"{prefix}FormationOffset"],
             )
             no_values["MeanTauF"] = selected_flat(no_mean_tau, selection)
@@ -1121,7 +1152,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             )
             no_values["FormationHardestTauF"] = selected_flat(
                 no_arrays[f"{prefix}FormationHardestTauF"], selection
-            )
+            ) * formation_tau_f_scale
             pre_values["FormationHardestValid"] = matched_flat(
                 pre_arrays[f"{prefix}FormationHardestValid"],
                 safe_match_index,
@@ -1131,7 +1162,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 pre_arrays[f"{prefix}FormationHardestTauF"],
                 safe_match_index,
                 selection,
-            )
+            ) * formation_tau_f_scale
         else:
             empty = np.full(len(event_indices), math.nan)
             no_values["MeanTauF"] = empty.copy()

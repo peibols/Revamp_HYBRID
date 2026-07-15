@@ -287,7 +287,8 @@ def plot_spectra(
     axes[1, 0].legend(frameon=False, fontsize=8)
     figure.suptitle(
         rf"O+O 5.36 TeV, 0--5%, anti-$k_T$ R={radius:g}, {pair.pt_label(pt_low, pt_high)}"
-        + f"\n{sample_label}; exact 3D opening-angle formation-time estimator",
+        + f"\n{sample_label}; exact 3D opening angle; "
+        + r"$\tau_{\rm f}=2\hbar cE/Q^2$",
         fontsize=11,
     )
     figure.text(
@@ -408,7 +409,9 @@ def plot_correlations(
             )
     figure.suptitle(
         rf"All C/A declusterings: anti-$k_T$ R={radius:g}, {pair.pt_label(pt_low, pt_high)}"
-        + f"\n{sample_label}; ratio cells require at least 10 no-prehydro entries",
+        + f"\n{sample_label}; "
+        + r"$\tau_{\rm f}=2\hbar cE/Q^2$; "
+        + "ratio cells require at least 10 no-prehydro entries",
         fontsize=11,
     )
     figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.94))
@@ -490,7 +493,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     write_tsv(out_dir / f"{args.prefix}_summary.tsv", summary_rows)
     write_tsv(out_dir / f"{args.prefix}_correlations.tsv", correlation_rows)
     metadata = {
-        "schemaVersion": "oo-v3-jet-formation-time-v1",
+        "schemaVersion": "oo-v3-jet-formation-time-v2",
         "pairCount": args.expected_events,
         "strictNoPrehydroSpectrumAudit": "PASS",
         "strictNoPrehydroSummaryAudit": "PASS",
@@ -499,6 +502,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "alpha0335Metadata": str(args.metadata_alpha0335.resolve()),
         "sampleLabel": args.sample_label,
         "formationTime": first_metadata["formationTime"],
+        "caReclustering": (
+            "FastJet cambridge_algorithm (p=0), E-scheme, Best strategy, "
+            "R_CA=2*R_antiKt+1e-6"
+        ),
         "singleSplitting": first_metadata["singleSplitting"],
         "negativeTreatment": first_metadata["negativeTreatment"],
         "interpretation": first_metadata["interpretation"],

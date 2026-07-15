@@ -26,6 +26,16 @@ SPEC.loader.exec_module(analysis)
 
 
 class PairedSubstructureTest(unittest.TestCase):
+    def test_legacy_root_times_are_scaled_to_2e_over_q2(self) -> None:
+        self.assertEqual(
+            analysis.stored_formation_tau_f_scale("oo-paired-root-v6"), 2.0
+        )
+        self.assertEqual(
+            analysis.stored_formation_tau_f_scale("oo-paired-root-v7"), 1.0
+        )
+        with self.assertRaises(ValueError):
+            analysis.stored_formation_tau_f_scale("oo-paired-root-v5")
+
     def test_matched_flat_does_not_index_unselected_empty_event(self) -> None:
         values = ak.Array([[10.0], []])
         indices = ak.Array([[0], [0]])
@@ -158,6 +168,7 @@ class PairedSubstructureTest(unittest.TestCase):
                     )
 
             with uproot.recreate(root_path) as root_file:
+                root_file["metadata/schemaVersion"] = "oo-paired-root-v7"
                 root_file["Pairs"] = {
                     "pairId": pair_ids,
                     "eventWeight": weights,

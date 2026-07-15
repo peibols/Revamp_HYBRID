@@ -216,8 +216,11 @@ histograms from the two aligned ROOT pairs to agree exactly. The summary also
 requires the four disjoint intervals to close to the inclusive `pT > 20 GeV`
 cross section for every radius and all three variants.
 
-The schema-v6 ROOT files retain the schema-v5 formation-time branches and add
-the signed `TotalMult = NNormal + NPositiveWake - NNegativeWake` jet branch.
+Schema-v6 ROOT files retain the schema-v5 formation-time branches and add the
+signed `TotalMult = NNormal + NPositiveWake - NNegativeWake` jet branch.
+Schema v7 changes the formation-time coefficient to
+`tau_f = 2 hbar c E_parent / Q_parent^2`; the analysis readers multiply all
+v5/v6 formation-time values by two so existing converted samples remain usable.
 Run the formation-time analysis separately on each aligned ROOT
 pair:
 
@@ -242,6 +245,9 @@ holes affect the corrected jet selection through jet-level 4MomSub but do not
 define a negative-subtracted nonlinear tree. Both all-tree and global
 hardest-`kT` estimators use paired delete-one-run jackknife errors. This is a
 final-constituent formation-time estimator, not generator shower history.
+The C/A reclustering uses FastJet `cambridge_algorithm` (`p=0`), E-scheme,
+`Best`, and `R_CA=2*R_antiKt+1e-6`; Soft Drop's `z_cut=0.1`, `beta=0` does not
+enter either formation-time node selection.
 
 For a clearly labeled completion-order provisional snapshot before exact
 closure, pass each disjoint local EOS mirror as a repeated `--source` to

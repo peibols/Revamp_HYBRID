@@ -29,7 +29,7 @@
 namespace {
 
 constexpr std::array<char, 8> kPairMagic{'O', 'O', 'P', 'A', 'I', 'R', '1', '\0'};
-constexpr const char *kSchemaVersion = "oo-paired-root-v6";
+constexpr const char *kSchemaVersion = "oo-paired-root-v7";
 constexpr double kHbarCGeVFm = 0.19732698;
 constexpr double kFormationTimeCorrectedPtMin = 30.0;
 
@@ -472,9 +472,9 @@ bool calculate_formation_time(const fastjet::PseudoJet &parent,
   const double one_minus_cosine = 1.0 - cosine;
   const double delta_r = first.delta_R(second);
   const double exact_denominator =
-      2.0 * parent_energy * z_first * z_second * one_minus_cosine;
+      parent_energy * z_first * z_second * one_minus_cosine;
   const double small_angle_denominator =
-      parent_energy * z_first * z_second * delta_r * delta_r;
+      0.5 * parent_energy * z_first * z_second * delta_r * delta_r;
   if (!(exact_denominator > 0.0 && small_angle_denominator > 0.0)) {
     return false;
   }
@@ -1285,11 +1285,11 @@ void write_metadata(TFile &output, const Options &options, std::uint64_t pair_co
   jet_definition.Write();
   TNamed substructure_definition(
       "substructureDefinition",
-      "positive constituents only; Cambridge/Aachen reclustering; Soft Drop first passing hardest-branch split; MaxKt over full C/A tree; Mult=Nnormal+Npositive; TotalMult=Nnormal+Npositive-Nnegative; normal-only effective multiplicity excludes wake hadrons");
+      "positive constituents only; Cambridge/Aachen reclustering with R_CA=2*R_antiKt+1e-6, E-scheme, Best strategy; Soft Drop first passing hardest-branch split with R0=R_antiKt; MaxKt over full C/A tree; Mult=Nnormal+Npositive; TotalMult=Nnormal+Npositive-Nnegative; normal-only effective multiplicity excludes wake hadrons");
   substructure_definition.Write();
   TNamed formation_time_definition(
       "formationTimeDefinition",
-      "R=0.4,0.8 full C/A trees; tau_f=hbarc/[2 Eparent z1 z2 (1-cos(theta12))], hbarc=0.19732698 GeV fm, zi=Ei/Eparent, exact three-dimensional theta12; small-angle audit replaces 1-cos(theta12) by DeltaR12^2/2; hardest split maximizes min(pT1,pT2)*DeltaR12 over the full tree");
+      "R=0.4,0.8 full C/A trees with R_CA=2*R_antiKt+1e-6, E-scheme, Best strategy; tau_f=2 hbarc Eparent/Qparent^2=hbarc/[Eparent z1 z2 (1-cos(theta12))], hbarc=0.19732698 GeV fm, zi=Ei/Eparent, exact three-dimensional theta12; small-angle audit replaces 1-cos(theta12) by DeltaR12^2/2; hardest split maximizes min(pT1,pT2)*DeltaR12 over the full tree");
   formation_time_definition.Write();
   TNamed formation_time_interpretation(
       "formationTimeInterpretation",

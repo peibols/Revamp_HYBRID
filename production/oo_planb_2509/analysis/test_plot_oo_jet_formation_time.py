@@ -28,6 +28,13 @@ plotter = load("plot_oo_jet_formation_time", "plot_oo_jet_formation_time.py")
 
 
 class FormationTimePlotTest(unittest.TestCase):
+    def test_legacy_root_times_are_scaled_to_2e_over_q2(self) -> None:
+        self.assertEqual(plotter.stored_tau_f_scale("oo-paired-root-v5"), 2.0)
+        self.assertEqual(plotter.stored_tau_f_scale("oo-paired-root-v6"), 2.0)
+        self.assertEqual(plotter.stored_tau_f_scale("oo-paired-root-v7"), 1.0)
+        with self.assertRaises(ValueError):
+            plotter.stored_tau_f_scale("oo-paired-root-v4")
+
     def test_weighted_yield_applies_event_weight_once(self) -> None:
         weights = np.array([1.0, 2.0, 3.0])
         matrix = np.array([[1.0, 0.0], [2.0, 0.0], [0.0, 6.0]])

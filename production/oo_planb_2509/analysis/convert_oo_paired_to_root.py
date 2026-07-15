@@ -27,7 +27,7 @@ PARTICLE_RECORD = struct.Struct("<ddddii")
 PAIR_MAGIC = b"OOPAIR1\0"
 CHUNK_PATTERN = re.compile(r"chunk_(\d+)\.(?:tar\.gz|txt)$")
 ALLOWED_LABELS = {-2, 0, 1, 2, 3}
-SCHEMA_VERSION = "oo-paired-root-v6"
+SCHEMA_VERSION = "oo-paired-root-v7"
 JET_RADIUS_DIGITS = (1, 2, 4, 8)
 
 
@@ -1086,9 +1086,19 @@ def convert(args: argparse.Namespace) -> dict[str, object]:
                 "storedRadii": [0.4, 0.8],
                 "correctedJetPtMinExclusiveGeV": 30.0,
                 "reclustering": "Cambridge-Aachen E-scheme",
+                "reclusteringRadius": "2*antiKtRadius + 1e-6",
+                "clusteringStrategy": "FastJet Best",
                 "constituents": "normal plus positive wake",
                 "negativeCorrection": "ghost association and jet-level 4MomSub only",
                 "hbarCGeVFm": 0.19732698,
+                "definition": (
+                    "2*hbarc*Eparent/Qparent^2 = "
+                    "hbarc/[Eparent*z1*z2*(1-cos(theta12))]"
+                ),
+                "coefficientConvention": (
+                    "factor-two-larger than the E/Q^2 convention in "
+                    "arXiv:2012.02199"
+                ),
                 "singleSplitting": "global maximum kT over the full C/A tree",
             },
         },
