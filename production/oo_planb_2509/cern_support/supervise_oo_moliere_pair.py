@@ -109,7 +109,6 @@ def row_matches(
         "task_id": assignment["task_id"],
         "seed": assignment["hard_seed"],
         "centrality": "C0-5",
-        "hydro_slot": assignment["hydro_slot"],
         "hydro_event_id": assignment["hydro_event_id"],
         "hydro_ncoll": assignment["hydro_ncoll"],
         "hydro_payload_sha256": assignment["hydro_payload_sha256"],
@@ -121,8 +120,14 @@ def row_matches(
         "returncode": "0",
         "timeout": "0",
     }
+    hydro_slot = (
+        row.get("hydro_slot")
+        if "hydro_slot" in row
+        else row.get("hydro_index")
+    )
     return (
         all(row.get(key) == value for key, value in expected.items())
+        and hydro_slot == assignment["hydro_slot"]
         and float_matches(row.get("energy_loss_alpha"), alpha)
         and float_matches(row.get("broadening_k"), broadening_k)
     )

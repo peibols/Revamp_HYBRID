@@ -32,12 +32,14 @@ class MolierePairAuditTest(unittest.TestCase):
         member.size = len(payload)
         archive.addfile(member, io.BytesIO(payload))
 
-    def row(self, variant: str, use_prehydro: bool) -> bytes:
+    def row(
+        self, variant: str, use_prehydro: bool, *, hydro_field: str = "hydro_slot"
+    ) -> bytes:
         header = (
             "variant\tuse_prehydro\tenergy_loss_alpha\tbroadening_k\t"
             "do_moliere\thadro_type\tmoliere_tables_sha256\tprehydro_file\t"
             "returncode\ttimeout\tseconds\tdir\ttask_id\tseed\tcentrality\t"
-            "hydro_slot\thydro_event_id\thydro_ncoll\thydro_payload_sha256\n"
+            f"{hydro_field}\thydro_event_id\thydro_ncoll\thydro_payload_sha256\n"
         )
         payload = (
             f"{variant}\t{int(use_prehydro)}\t0.335\t15.0\t1\t1\t{TABLE_SHA}\t"
@@ -83,7 +85,11 @@ class MolierePairAuditTest(unittest.TestCase):
                 f"{pre}/hybrid_input.dat",
                 self.input_card(use_prehydro=True, do_elastic=do_elastic),
             )
-            pair = self.row("no_prehydro", False) + self.row("with_prehydro", True).split(b"\n", 1)[1]
+            pair = self.row(
+                "no_prehydro", False, hydro_field="hydro_index"
+            ) + self.row(
+                "with_prehydro", True, hydro_field="hydro_index"
+            ).split(b"\n", 1)[1]
             self.add_bytes(archive, f"runs/test/aa/hydro/task_00007_pair_summary.tsv", pair)
 
     def test_accepts_strict_moliere_pair(self) -> None:
