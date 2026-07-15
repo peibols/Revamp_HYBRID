@@ -313,6 +313,17 @@ def enforce_job_priority(args: argparse.Namespace) -> None:
     if args.dry_run:
         return
     constraint = f"{campaign_constraint(args.campaign)} && JobPrio != {args.job_priority}"
+    query_command = (
+        f"condor_q -name {args.schedd} -constraint '{constraint}' -af ClusterId"
+    )
+    query = subprocess.run(
+        [args.cernctl, "run", "bash", "-lc", query_command],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    if not any(line.strip() for line in query.stdout.splitlines()):
+        return
     command = (
         f"condor_qedit -name {args.schedd} -constraint '{constraint}' "
         f"JobPrio {args.job_priority}"
