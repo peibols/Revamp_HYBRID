@@ -36,17 +36,21 @@ VARIANT_MARKERS = {"noPrehydro": "o", "withPrehydro": "s"}
 RADII = (0.4, 0.8)
 PT_INTERVALS = ((30.0, 50.0), (50.0, 80.0), (80.0, None))
 HBARC_GEV_FM = 0.19732698
-CURRENT_ROOT_SCHEMA = "oo-paired-root-v7"
-LEGACY_ROOT_SCHEMAS = ("oo-paired-root-v5", "oo-paired-root-v6")
+CURRENT_ROOT_SCHEMA = "oo-paired-root-v8"
+ROOT_TAU_F_SCALES = {
+    "oo-paired-root-v5": 1.0,
+    "oo-paired-root-v6": 1.0,
+    "oo-paired-root-v7": 0.5,
+    CURRENT_ROOT_SCHEMA: 1.0,
+}
 
 
 def stored_tau_f_scale(schema: str) -> float:
-    """Return the scale needed to express stored times in the 2E/Q^2 convention."""
-    if schema == CURRENT_ROOT_SCHEMA:
-        return 1.0
-    if schema in LEGACY_ROOT_SCHEMAS:
-        return 2.0
-    raise ValueError(f"unsupported ROOT schema {schema}")
+    """Return the scale needed to express stored times in the E/Q^2 convention."""
+    try:
+        return ROOT_TAU_F_SCALES[schema]
+    except KeyError as error:
+        raise ValueError(f"unsupported ROOT schema {schema}") from error
 
 
 def root_string(root_object: Any) -> str:
@@ -315,7 +319,7 @@ def spectrum_plot(
     figure.suptitle(
         rf"O+O 5.36 TeV, 0--5%, anti-$k_T$ R={radius:g}, {pt_label(pt_low, pt_high)}"
         + f"\n{sample_label}; positive-constituent C/A tree; "
-        + r"$\tau_{\rm f}=2\hbar cE/Q^2$",
+        + r"$\tau_{\rm f}=\hbar cE/Q^2$",
         fontsize=11,
     )
     figure.text(
@@ -560,9 +564,9 @@ def validate_root(
         branches.extend(f"jet{radius_digit}{suffix}" for suffix in jet_suffixes)
     with uproot.open(input_root) as root_file:
         schema = root_string(root_file["metadata/schemaVersion"])
-        if schema not in (*LEGACY_ROOT_SCHEMAS, CURRENT_ROOT_SCHEMA):
+        if schema not in ROOT_TAU_F_SCALES:
             raise ValueError(
-                "formation-time analysis requires oo-paired-root-v5, v6, or v7; "
+                "formation-time analysis requires oo-paired-root-v5 through v8; "
                 f"found {schema}"
             )
         tau_f_scale = stored_tau_f_scale(schema)
@@ -711,7 +715,7 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
     summary_rows: list[dict[str, Any]] = []
     correlation_rows: list[dict[str, Any]] = []
     metadata: dict[str, Any] = {
-        "schemaVersion": "oo-jet-formation-time-v2",
+        "schemaVersion": "oo-jet-formation-time-v3",
         "inputRoot": str(input_root),
         "inputRootSchema": input_root_schema,
         "storedTauFScaleApplied": input_tau_f_scale,
@@ -729,15 +733,15 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
         "log10TauEdges": tau_edges.tolist(),
         "hbarCGeVFm": HBARC_GEV_FM,
         "formationTime": (
-            "2*hbarc*Eparent/Qparent^2 = "
-            "hbarc/[Eparent*z1*z2*(1-cos(theta12))], zi=Ei/Eparent; "
+            "hbarc*Eparent/Qparent^2 = "
+            "hbarc/[2*Eparent*z1*z2*(1-cos(theta12))], zi=Ei/Eparent; "
             "massless daughters and exact three-dimensional opening angle"
         ),
         "coefficientConvention": (
-            "factor-two-larger than the E/Q^2 convention in arXiv:2012.02199"
+            "E/Q^2 convention; schema-v7 2E/Q^2 values are divided by two on read"
         ),
         "smallAngleValidation": (
-            "2*hbarc/[Eparent*z1*z2*DeltaR12^2]; retained only as a validation"
+            "hbarc/[Eparent*z1*z2*DeltaR12^2]; retained only as a validation"
         ),
         "allSplittings": "every valid internal node in the full recursive C/A tree",
         "singleSplitting": (

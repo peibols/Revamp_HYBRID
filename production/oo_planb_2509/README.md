@@ -218,9 +218,10 @@ cross section for every radius and all three variants.
 
 Schema-v6 ROOT files retain the schema-v5 formation-time branches and add the
 signed `TotalMult = NNormal + NPositiveWake - NNegativeWake` jet branch.
-Schema v7 changes the formation-time coefficient to
-`tau_f = 2 hbar c E_parent / Q_parent^2`; the analysis readers multiply all
-v5/v6 formation-time values by two so existing converted samples remain usable.
+Schema v7 temporarily changed the formation-time coefficient to
+`tau_f = 2 hbar c E_parent / Q_parent^2`. Schema v8 restores the selected
+`tau_f = hbar c E_parent / Q_parent^2` convention. The analysis readers keep
+v5/v6/v8 values unchanged and divide v7 formation-time values by two.
 Run the formation-time analysis separately on each aligned ROOT
 pair:
 

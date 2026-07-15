@@ -17,8 +17,12 @@ import uproot
 
 
 RADIUS_DIGITS = (1, 2, 4, 8)
-CURRENT_ROOT_SCHEMA = "oo-paired-root-v7"
-LEGACY_FORMATION_ROOT_SCHEMAS = ("oo-paired-root-v6",)
+CURRENT_ROOT_SCHEMA = "oo-paired-root-v8"
+FORMATION_TAU_F_SCALES = {
+    "oo-paired-root-v6": 1.0,
+    "oo-paired-root-v7": 0.5,
+    CURRENT_ROOT_SCHEMA: 1.0,
+}
 FLAVORS = ("all", "quark", "gluon")
 FLAVOR_LABELS = {
     "all": "All jets",
@@ -46,12 +50,11 @@ def root_string(root_object: Any) -> str:
 
 
 def stored_formation_tau_f_scale(schema: str) -> float:
-    """Return the scale needed to express stored times in the 2E/Q^2 convention."""
-    if schema == CURRENT_ROOT_SCHEMA:
-        return 1.0
-    if schema in LEGACY_FORMATION_ROOT_SCHEMAS:
-        return 2.0
-    raise ValueError(f"unsupported ROOT schema {schema}")
+    """Return the scale needed to express stored times in the E/Q^2 convention."""
+    try:
+        return FORMATION_TAU_F_SCALES[schema]
+    except KeyError as error:
+        raise ValueError(f"unsupported ROOT schema {schema}") from error
 
 
 CATEGORY_LABELS = {
@@ -1016,8 +1019,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "inputRootSchema": input_root_schema,
         "formationStoredTauFScaleApplied": formation_tau_f_scale,
         "formationTimeConvention": (
-            "2*hbarc*Eparent/Qparent^2 = "
-            "hbarc/[Eparent*z1*z2*(1-cos(theta12))]"
+            "hbarc*Eparent/Qparent^2 = "
+            "hbarc/[2*Eparent*z1*z2*(1-cos(theta12))]"
         ),
         "inputBytes": input_root.stat().st_size,
         "pairCount": len(pair_ids),

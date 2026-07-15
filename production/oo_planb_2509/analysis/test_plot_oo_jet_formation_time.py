@@ -28,10 +28,11 @@ plotter = load("plot_oo_jet_formation_time", "plot_oo_jet_formation_time.py")
 
 
 class FormationTimePlotTest(unittest.TestCase):
-    def test_legacy_root_times_are_scaled_to_2e_over_q2(self) -> None:
-        self.assertEqual(plotter.stored_tau_f_scale("oo-paired-root-v5"), 2.0)
-        self.assertEqual(plotter.stored_tau_f_scale("oo-paired-root-v6"), 2.0)
-        self.assertEqual(plotter.stored_tau_f_scale("oo-paired-root-v7"), 1.0)
+    def test_root_times_are_scaled_to_e_over_q2(self) -> None:
+        self.assertEqual(plotter.stored_tau_f_scale("oo-paired-root-v5"), 1.0)
+        self.assertEqual(plotter.stored_tau_f_scale("oo-paired-root-v6"), 1.0)
+        self.assertEqual(plotter.stored_tau_f_scale("oo-paired-root-v7"), 0.5)
+        self.assertEqual(plotter.stored_tau_f_scale("oo-paired-root-v8"), 1.0)
         with self.assertRaises(ValueError):
             plotter.stored_tau_f_scale("oo-paired-root-v4")
 

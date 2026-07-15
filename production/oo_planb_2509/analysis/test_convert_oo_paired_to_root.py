@@ -263,10 +263,10 @@ class ConverterTest(unittest.TestCase):
             with uproot.open(output) as root_file:
                 self.assertEqual(
                     root_file["metadata/schemaVersion"].member("fTitle"),
-                    "oo-paired-root-v7",
+                    "oo-paired-root-v8",
                 )
                 self.assertIn(
-                    "tau_f=2 hbarc Eparent/Qparent^2",
+                    "tau_f=hbarc Eparent/Qparent^2",
                     root_file["metadata/formationTimeDefinition"].member("fTitle"),
                 )
                 hadrons = root_file["noPrehydro/Hadrons"].arrays(library="ak")
@@ -348,14 +348,12 @@ class ConverterTest(unittest.TestCase):
                 self.assertAlmostEqual(
                     tau_f,
                     0.19732698
-                    / (parent_energy * z * (1.0 - z) * (1.0 - math.cos(theta))),
+                    / (2.0 * parent_energy * z * (1.0 - z) * (1.0 - math.cos(theta))),
                     places=5,
                 )
                 self.assertAlmostEqual(
                     tau_f_small,
-                    2.0
-                    * 0.19732698
-                    / (parent_energy * z * (1.0 - z) * delta_r**2),
+                    0.19732698 / (parent_energy * z * (1.0 - z) * delta_r**2),
                     places=5,
                 )
                 self.assertAlmostEqual(

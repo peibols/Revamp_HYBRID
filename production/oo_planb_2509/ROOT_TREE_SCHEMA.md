@@ -174,7 +174,7 @@ audit, pT-slice closure, and inclusive jet-RAA workflow all include R=0.1,
 R=0.2, R=0.4, and R=0.8. The effective-charge response remains scoped to
 R=0.2, R=0.4, and R=0.8.
 
-## Formation-time estimator (schema v5--v7)
+## Formation-time estimator (schema v5--v8)
 
 Schema v5 stores the Cambridge--Aachen declustering tree needed for the
 final-state formation-time estimator for R=0.4 and R=0.8 jets with
@@ -192,8 +192,8 @@ For every valid internal node,
 
 ```text
 tau_f [fm/c] = 0.19732698
-               / (E_parent z1 z2 [1-cos(theta12)])
-             = 2 hbar c E_parent / Q_parent^2
+               / (2 E_parent z1 z2 [1-cos(theta12)])
+             = hbar c E_parent / Q_parent^2
 zi           = Ei / E_parent
 z            = min(z1,z2)
 kT           = min(pT1,pT2) DeltaR12.
@@ -204,12 +204,11 @@ two child momentum vectors, and `E_parent` is the C/A parent energy. The
 stored small-angle audit replaces `1-cos(theta12)` by `DeltaR12^2/2`; it is a
 validation quantity, not the nominal estimator.
 
-Schema v7 stores this `2 E_parent / Q_parent^2` coefficient natively. Schema
-v5 and v6 stored the factor-two-smaller `E_parent / Q_parent^2` value. The
-current analysis readers multiply all exact, small-angle, and hardest-split
-formation-time branches from v5/v6 files by two, and record that scale in
-their metadata. This coefficient choice is deliberately a factor of two
-larger than the convention used in arXiv:2012.02199.
+Schema v5 and v6 store the selected `E_parent / Q_parent^2` coefficient.
+Schema v7 temporarily stored the factor-two-larger `2 E_parent / Q_parent^2`
+value. Schema v8 restores `E_parent / Q_parent^2`. Current analysis readers
+leave v5/v6/v8 exact, small-angle, and hardest-split values unchanged, divide
+v7 values by two, and record the applied scale in their metadata.
 
 The C/A tree contains normal and positive-wake hadrons at physical
 four-momentum. Raw-label-2 negative wake particles and raw-label-3 hadronized
@@ -219,8 +218,8 @@ not inserted into the nonlinear C/A constituent tree. This is deliberate:
 4MomSub does not define a unique negative-subtracted nonlinear tree.
 
 For `jet4*` and `jet8*`, schema v5 adds the following branches. Their layout is
-unchanged through schema v7; only the stored formation-time coefficient changes
-in schema v7 as documented above:
+unchanged through schema v8; only the stored formation-time coefficient changes
+in schema v7 and is restored in schema v8 as documented above:
 
 | Branch suffix | Definition |
 | --- | --- |

@@ -288,7 +288,7 @@ def plot_spectra(
     figure.suptitle(
         rf"O+O 5.36 TeV, 0--5%, anti-$k_T$ R={radius:g}, {pair.pt_label(pt_low, pt_high)}"
         + f"\n{sample_label}; exact 3D opening angle; "
-        + r"$\tau_{\rm f}=2\hbar cE/Q^2$",
+        + r"$\tau_{\rm f}=\hbar cE/Q^2$",
         fontsize=11,
     )
     figure.text(
@@ -410,7 +410,7 @@ def plot_correlations(
     figure.suptitle(
         rf"All C/A declusterings: anti-$k_T$ R={radius:g}, {pair.pt_label(pt_low, pt_high)}"
         + f"\n{sample_label}; "
-        + r"$\tau_{\rm f}=2\hbar cE/Q^2$; "
+        + r"$\tau_{\rm f}=\hbar cE/Q^2$; "
         + "ratio cells require at least 10 no-prehydro entries",
         fontsize=11,
     )
@@ -493,7 +493,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     write_tsv(out_dir / f"{args.prefix}_summary.tsv", summary_rows)
     write_tsv(out_dir / f"{args.prefix}_correlations.tsv", correlation_rows)
     metadata = {
-        "schemaVersion": "oo-v3-jet-formation-time-v2",
+        "schemaVersion": "oo-v3-jet-formation-time-v3",
         "pairCount": args.expected_events,
         "strictNoPrehydroSpectrumAudit": "PASS",
         "strictNoPrehydroSummaryAudit": "PASS",
