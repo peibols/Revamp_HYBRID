@@ -25,6 +25,8 @@ FULL_TASK_COUNT=100000
 SUBMIT_TARGET="${SUBMIT_TARGET:-100000}"
 TASK_ID_START="${TASK_ID_START:-0}"
 MAX_JOBS_PER_SUBMIT="${MAX_JOBS_PER_SUBMIT:-10000}"
+MAX_MATERIALIZE_PER_CLUSTER="${MAX_MATERIALIZE_PER_CLUSTER:-250}"
+MAX_IDLE_PER_CLUSTER="${MAX_IDLE_PER_CLUSTER:-100}"
 SEED_OFFSET="${SEED_OFFSET:-900000}"
 ALPHA="${ALPHA:-0.335}"
 BROADENING_K="${BROADENING_K:-15.0}"
@@ -53,15 +55,19 @@ normalize_bool() {
 normalize_bool DRY_RUN "${DRY_RUN}"
 normalize_bool STORE_PREHYDRO_TABLE "${STORE_PREHYDRO_TABLE}"
 
-for name in SUBMIT_TARGET TASK_ID_START MAX_JOBS_PER_SUBMIT REQUEST_MEMORY_MB REQUEST_DISK_KB; do
+for name in SUBMIT_TARGET TASK_ID_START MAX_JOBS_PER_SUBMIT MAX_MATERIALIZE_PER_CLUSTER MAX_IDLE_PER_CLUSTER REQUEST_MEMORY_MB REQUEST_DISK_KB; do
   value="${!name}"
   if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
     echo "${name} must be a nonnegative integer, got: ${value}" >&2
     exit 1
   fi
 done
-if (( SUBMIT_TARGET <= 0 || MAX_JOBS_PER_SUBMIT <= 0 || REQUEST_MEMORY_MB <= 0 || REQUEST_DISK_KB <= 0 )); then
-  echo "submission target, batch size, memory, and disk must be positive" >&2
+if (( SUBMIT_TARGET <= 0 || MAX_JOBS_PER_SUBMIT <= 0 || MAX_MATERIALIZE_PER_CLUSTER <= 0 || MAX_IDLE_PER_CLUSTER <= 0 || REQUEST_MEMORY_MB <= 0 || REQUEST_DISK_KB <= 0 )); then
+  echo "submission target, queue limits, memory, and disk must be positive" >&2
+  exit 1
+fi
+if (( MAX_IDLE_PER_CLUSTER > MAX_MATERIALIZE_PER_CLUSTER )); then
+  echo "MAX_IDLE_PER_CLUSTER cannot exceed MAX_MATERIALIZE_PER_CLUSTER" >&2
   exit 1
 fi
 if (( TASK_ID_START + SUBMIT_TARGET > FULL_TASK_COUNT )); then
@@ -194,6 +200,8 @@ priority = ${JOB_PRIORITY}
 request_cpus = 1
 request_memory = ${REQUEST_MEMORY_MB}
 request_disk = ${REQUEST_DISK_KB}
+max_materialize = ${MAX_MATERIALIZE_PER_CLUSTER}
+max_idle = ${MAX_IDLE_PER_CLUSTER}
 queue chunk_id from aa_chunk_ids_part_${part_tag}.txt
 EOF_SUB
 done
@@ -257,6 +265,8 @@ request_disk_kb=${REQUEST_DISK_KB}
 timeout_s=${TIMEOUT_S}
 submit_parts=${PART_COUNT}
 jobs_per_submit_at_most=${MAX_JOBS_PER_SUBMIT}
+max_materialize_per_cluster=${MAX_MATERIALIZE_PER_CLUSTER}
+max_idle_per_cluster=${MAX_IDLE_PER_CLUSTER}
 pp_generated=false
 pp_reference=reuse the existing 1M pp reference because Moliere is a medium interaction
 EOF_MANIFEST
