@@ -134,6 +134,41 @@ class JetWeightingTest(unittest.TestCase):
             self.assertLess(float(specs["totalmult"].edges[0]), 0.0)
             self.assertGreater(float(specs["totalmult"].edges[-1]), 0.0)
 
+    def test_factor_two_rebin_preserves_soft_drop_failure_bin(self) -> None:
+        original = {
+            spec.key: spec for spec in plotter.variable_specs(4, 30.0)
+        }
+        rebinned = {
+            spec.key: spec
+            for spec in plotter.variable_specs(
+                4, 30.0, substructure_rebin_factor=2
+            )
+        }
+        for key in ("zg", "rg"):
+            self.assertEqual(rebinned[key].edges[0], original[key].edges[0])
+            self.assertEqual(rebinned[key].edges[1], original[key].edges[1])
+            self.assertEqual(
+                len(rebinned[key].edges) - 2,
+                (len(original[key].edges) - 2) // 2,
+            )
+        self.assertEqual(len(rebinned["ptd"].edges) - 1, 10)
+        np.testing.assert_array_equal(rebinned["pt"].edges, original["pt"].edges)
+
+    def test_factor_two_rebin_retains_odd_trailing_bin(self) -> None:
+        original = {
+            spec.key: spec for spec in plotter.variable_specs(4, 30.0)
+        }["maxkt"].edges
+        rebinned = {
+            spec.key: spec
+            for spec in plotter.variable_specs(
+                4, 30.0, substructure_rebin_factor=2
+            )
+        }["maxkt"].edges
+        self.assertEqual(len(original) - 1, 19)
+        self.assertEqual(len(rebinned) - 1, 10)
+        self.assertEqual(rebinned[-2], original[-2])
+        self.assertEqual(rebinned[-1], original[-1])
+
     def test_soft_drop_specs_reserve_equal_width_failure_bin(self) -> None:
         specs = {spec.key: spec for spec in plotter.variable_specs(4, 30.0)}
         for key, physical_minimum in (("zg", 0.1), ("rg", 0.0)):

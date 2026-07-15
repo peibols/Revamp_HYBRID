@@ -76,8 +76,36 @@ class MeanResult:
     weighted_entries: float
 
 
+def coarsen_edges(
+    edges: np.ndarray, factor: int, *, preserve_first_bin: bool = False
+) -> np.ndarray:
+    """Merge adjacent bins while optionally retaining a categorical first bin."""
+    edges = np.asarray(edges, dtype=float)
+    if factor < 1:
+        raise ValueError("rebin factor must be positive")
+    if edges.ndim != 1 or len(edges) < 2 or np.any(np.diff(edges) <= 0.0):
+        raise ValueError("histogram edges must be one-dimensional and increasing")
+    if factor == 1:
+        return edges.copy()
+
+    if preserve_first_bin:
+        physical_edges = edges[1:]
+        rebinned = physical_edges[::factor]
+        if rebinned[-1] != physical_edges[-1]:
+            rebinned = np.append(rebinned, physical_edges[-1])
+        return np.concatenate(([edges[0]], rebinned))
+
+    rebinned = edges[::factor]
+    if rebinned[-1] != edges[-1]:
+        rebinned = np.append(rebinned, edges[-1])
+    return rebinned
+
+
 def variable_specs(
-    radius_digit: int, pt_min: float, pt_max: float | None = None
+    radius_digit: int,
+    pt_min: float,
+    pt_max: float | None = None,
+    substructure_rebin_factor: int = 1,
 ) -> list[VariableSpec]:
     if radius_digit == 1:
         mass_edges = np.array(
@@ -133,7 +161,7 @@ def variable_specs(
         pt_edges = np.linspace(pt_min, pt_max, 11)
         pt_xscale = "linear"
 
-    return [
+    specs = [
         VariableSpec(
             "pt",
             "Pt",
@@ -236,6 +264,21 @@ def variable_specs(
             xscale="log",
             yscale="log",
         ),
+    ]
+    if substructure_rebin_factor == 1:
+        return specs
+    return [
+        dataclasses.replace(
+            spec,
+            edges=coarsen_edges(
+                spec.edges,
+                substructure_rebin_factor,
+                preserve_first_bin=spec.soft_drop_failure_bin,
+            ),
+        )
+        if spec.group == "substructure"
+        else spec
+        for spec in specs
     ]
 
 
@@ -627,6 +670,7 @@ def plot_group(
     specs: list[VariableSpec],
     histograms: dict[str, dict[str, HistogramResult]],
     ratios: dict[str, tuple[np.ndarray, np.ndarray]],
+    substructure_rebin_factor: int,
 ) -> None:
     import matplotlib
 
@@ -657,11 +701,18 @@ def plot_group(
         fontsize=13,
         y=0.992,
     )
+    rebin_note = (
+        f" Substructure bins merged by factor {substructure_rebin_factor}; "
+        "the SD-failure bin is preserved."
+        if group == "substructure" and substructure_rebin_factor > 1
+        else ""
+    )
     figure.text(
         0.5,
         0.012,
         r"Per-variant $(1/\sigma_{\rm jet})d\sigma/dx$; paired delete-one-run jackknife. "
-        "No additional jet-eta cut. First Zg/Rg bin is SoftDropValid=0; physical bins are valid jets.",
+        "No additional jet-eta cut. First Zg/Rg bin is SoftDropValid=0; physical bins are valid jets."
+        + rebin_note,
         ha="center",
         fontsize=8.5,
     )
@@ -686,6 +737,15 @@ def make_parser() -> argparse.ArgumentParser:
         type=float,
         help="optional inclusive upper pT bound; the lower bound is exclusive",
     )
+    parser.add_argument(
+        "--substructure-rebin-factor",
+        type=int,
+        default=1,
+        help=(
+            "merge this many adjacent substructure bins; the categorical "
+            "Soft-Drop-failure bin is retained separately"
+        ),
+    )
     parser.add_argument("--prefix", default="oo5360_jet_variables_pt30")
     return parser
 
@@ -695,6 +755,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("--pt-min must be positive")
     if args.pt_max is not None and args.pt_max <= args.pt_min:
         raise ValueError("--pt-max must be greater than --pt-min")
+    if args.substructure_rebin_factor < 1:
+        raise ValueError("--substructure-rebin-factor must be positive")
     input_root = args.input_root.expanduser().resolve()
     out_dir = args.out_dir.expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -702,7 +764,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     all_suffixes = {
         spec.branch_suffix
         for radius in RADIUS_DIGITS
-        for spec in variable_specs(radius, args.pt_min, args.pt_max)
+        for spec in variable_specs(
+            radius,
+            args.pt_min,
+            args.pt_max,
+            args.substructure_rebin_factor,
+        )
     }
     all_suffixes.add("SoftDropValid")
     tree_arrays: dict[str, ak.Array] = {}
@@ -753,6 +820,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         ),
         "selectionJetPtBranch": "4MomSub-corrected jetPt",
         "additionalJetEtaCut": None,
+        "substructureRebinFactor": args.substructure_rebin_factor,
+        "substructureRebinPolicy": (
+            "merge adjacent physical bins; preserve the categorical Soft-Drop-failure "
+            "bin; retain a final remainder bin when the physical bin count is not "
+            "divisible by the factor"
+        ),
         "weightSum": weight_sum,
         "weightedSigmaSum": weighted_sigma_sum,
         "sigmaMergedMb": sigma_merged,
@@ -782,7 +855,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     }
 
     for radius_digit in RADIUS_DIGITS:
-        specs = variable_specs(radius_digit, args.pt_min, args.pt_max)
+        specs = variable_specs(
+            radius_digit,
+            args.pt_min,
+            args.pt_max,
+            args.substructure_rebin_factor,
+        )
         selections: dict[str, ak.Array] = {}
         selected_counts: dict[str, np.ndarray] = {}
         integrated: dict[str, IntegratedResult] = {}
@@ -1029,6 +1107,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 [spec for spec in specs if spec.group == group],
                 histograms,
                 ratios,
+                args.substructure_rebin_factor,
             )
 
     with (out_dir / f"{args.prefix}_histograms.tsv").open("w", newline="") as stream:

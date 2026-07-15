@@ -10,6 +10,12 @@ PP_JET_CACHE="${PP_JET_CACHE:-${PP_LOCAL_EOS}/analysis_cache/oo5360_pp1m_jet_spe
 BUILD_DIR="${BUILD_DIR:-${SNAPSHOT}/build}"
 OVERWRITE="${OVERWRITE:-false}"
 REUSE_HADRON_RAA="${REUSE_HADRON_RAA:-false}"
+SUBSTRUCTURE_REBIN_FACTOR="${SUBSTRUCTURE_REBIN_FACTOR:-1}"
+
+if [[ ! "${SUBSTRUCTURE_REBIN_FACTOR}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "SUBSTRUCTURE_REBIN_FACTOR must be a positive integer" >&2
+  exit 1
+fi
 
 LOCAL_EOS="${SNAPSHOT}/local_eos"
 TASK_MANIFEST="${SNAPSHOT}/aa_task_manifest.tsv"
@@ -100,6 +106,7 @@ run_jet_variables() {
   shift
   python3 "${SCRIPT_DIR}/plot_oo_jet_variables.py" \
     --input-root "${ROOT_OUT}" --out-dir "${JET_OUT}" \
+    --substructure-rebin-factor "${SUBSTRUCTURE_REBIN_FACTOR}" \
     "$@" --prefix "${PREFIX}_jet_variables_${suffix}"
 }
 run_jet_variables pt20 --pt-min 20
