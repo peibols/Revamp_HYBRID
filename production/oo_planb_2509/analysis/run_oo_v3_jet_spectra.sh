@@ -12,6 +12,12 @@ out_dir=$(realpath -m "$3")
 expected_events=$4
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 python=${PYTHON:-python3}
+SUBSTRUCTURE_REBIN_FACTOR=${SUBSTRUCTURE_REBIN_FACTOR:-2}
+
+if [[ ! "${SUBSTRUCTURE_REBIN_FACTOR}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "SUBSTRUCTURE_REBIN_FACTOR must be a positive integer" >&2
+  exit 1
+fi
 
 mkdir -p "$out_dir"
 
@@ -28,6 +34,7 @@ run_pair_analysis() {
     --input-root "$root"
     --out-dir "$destination"
     --pt-min "$pt_min"
+    --substructure-rebin-factor "$SUBSTRUCTURE_REBIN_FACTOR"
     --prefix "$prefix"
   )
   if [[ -n "$pt_max" ]]; then
@@ -49,6 +56,7 @@ merge_selection() {
     --summary-alpha037 "$out_dir/pair_alpha037/$tag/pair_alpha037_${tag}_summary.tsv"
     --summary-alpha0335 "$out_dir/pair_alpha0335/$tag/pair_alpha0335_${tag}_summary.tsv"
     --pt-min "$pt_min"
+    --substructure-rebin-factor "$SUBSTRUCTURE_REBIN_FACTOR"
     --expected-events "$expected_events"
     --out-dir "$destination"
     --prefix "$prefix"

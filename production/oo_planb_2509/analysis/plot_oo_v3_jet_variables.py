@@ -409,11 +409,14 @@ def plot_groups(
     prefix: str,
     pt_min: float,
     pt_max: float | None,
+    substructure_rebin_factor: int,
 ) -> list[Path]:
     plots: list[Path] = []
     for radius_digit in base.RADIUS_DIGITS:
         radius = radius_digit / 10.0
-        specs = base.variable_specs(radius_digit, pt_min, pt_max)
+        specs = base.variable_specs(
+            radius_digit, pt_min, pt_max, substructure_rebin_factor
+        )
         for group in ("kinematics", "substructure"):
             grouped = [spec for spec in specs if spec.group == group]
             if group == "kinematics":
@@ -439,11 +442,18 @@ def plot_groups(
                 fontsize=13,
                 y=0.992,
             )
+            rebin_note = (
+                f" Substructure bins merged by factor {substructure_rebin_factor}; "
+                "the SD-failure bin is preserved."
+                if group == "substructure" and substructure_rebin_factor > 1
+                else ""
+            )
             figure.text(
                 0.5,
                 0.012,
                 r"Per-variant $(1/\sigma_{\rm jet})d\sigma/dx$; paired delete-one-event jackknife. "
-                "No additional jet-eta cut. First Zg/Rg bin is SoftDropValid=0.",
+                "No additional jet-eta cut. First Zg/Rg bin is SoftDropValid=0."
+                + rebin_note,
                 ha="center",
                 fontsize=8.3,
             )
@@ -464,6 +474,15 @@ def main() -> int:
     parser.add_argument("--summary-alpha0335", type=Path, required=True)
     parser.add_argument("--pt-min", type=float, required=True)
     parser.add_argument("--pt-max", type=float)
+    parser.add_argument(
+        "--substructure-rebin-factor",
+        type=int,
+        default=1,
+        help=(
+            "substructure rebin factor already used to construct the pair-level "
+            "histogram inputs; the categorical Soft-Drop-failure bin stays separate"
+        ),
+    )
     parser.add_argument("--expected-events", type=int, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--prefix", required=True)
@@ -472,6 +491,8 @@ def main() -> int:
         raise ValueError("--pt-min must be positive")
     if args.pt_max is not None and args.pt_max <= args.pt_min:
         raise ValueError("--pt-max must exceed --pt-min")
+    if args.substructure_rebin_factor < 1:
+        raise ValueError("--substructure-rebin-factor must be positive")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     histograms = merge_histograms(args.hist_alpha037, args.hist_alpha0335)
@@ -488,6 +509,7 @@ def main() -> int:
         prefix=args.prefix,
         pt_min=args.pt_min,
         pt_max=args.pt_max,
+        substructure_rebin_factor=args.substructure_rebin_factor,
     )
 
     radii: dict[str, object] = {}
@@ -519,6 +541,11 @@ def main() -> int:
         "ptMinGeV": args.pt_min,
         "ptMaxGeV": args.pt_max,
         "selection": base.pt_range_label(args.pt_min, args.pt_max),
+        "substructureRebinFactor": args.substructure_rebin_factor,
+        "substructureRebinPolicy": (
+            "merge adjacent physical bins; preserve the categorical Soft-Drop-failure "
+            "bin; retain a final remainder bin when needed"
+        ),
         "normalization": (
             "PythiaParallel sigmaGen/sum(weight), applied once; absolute cross "
             "sections retained in TSV; plotted shapes use each variant's "
