@@ -249,6 +249,7 @@ def sync_eos(args: argparse.Namespace, local_eos: Path) -> None:
                 "rsync",
                 "-a",
                 "--partial",
+                "--exclude=.sys.*",
                 f"{args.cern_remote}:{eos_base}/{member}/",
                 f"{destination}/",
             ],

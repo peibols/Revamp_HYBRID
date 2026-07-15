@@ -159,6 +159,7 @@ queue chunk_id from aa_chunk_ids.txt
                 ]
                 MODULE.sync_eos(args, Path(tmp))
         self.assertEqual(run.call_count, 2)
+        self.assertIn("--exclude=.sys.*", run.call_args_list[0].args[0])
 
     def test_sync_eos_rejects_other_rsync_failures(self) -> None:
         args = type(
