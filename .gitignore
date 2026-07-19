@@ -8,6 +8,8 @@ test/main
 test/*.out
 test/*.log
 test/*.sh
+!test/run_heavy_quark_unit.sh
+test/bin/
 test/hydroinfo*.dat
 test/hydro_test.input
 
