@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <fstream>
 #include "MoliereTables.h"
@@ -293,6 +294,7 @@ struct LresState {
 }
 
 EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int mode,
+                       const heavy_quark::Parameters &heavy_quark_parameters,
                        int ebe_hydro, bool do_elastic, bool do_lres,
                        bool do_moliere_on_unresolved_partons,
                        bool do_moliere_dynamic_unresolved_resolution,
@@ -308,6 +310,7 @@ EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int
                        const std::string &tables_path,
                        const HydroProfile &hydro_profile)
     : nr_(nr), kappa_(kappa), alpha_(alpha), tmethod_(tmethod), mode_(mode),
+      heavy_quark_parameters_(heavy_quark_parameters),
       ebe_hydro_(ebe_hydro), do_elastic_(do_elastic), do_lres_(do_lres),
       do_moliere_on_unresolved_partons_(do_moliere_on_unresolved_partons),
       do_moliere_dynamic_unresolved_resolution_(do_moliere_dynamic_unresolved_resolution),
@@ -369,6 +372,7 @@ EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int
       ed_record_tlength_(0.), ed_record_type_(""), ed_record_label_("")
 #endif
 {
+    heavy_quark::validate_for_energy_loss_model(heavy_quark_parameters_, mode_);
     if (do_elastic_) {
         MoliereTables::ensureLoaded(tables_path_);
     }
@@ -377,6 +381,18 @@ EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int
 
 EnergyLoss::~EnergyLoss() {
     close_event_display();
+    if (heavy_quark_parameters_.mode != heavy_quark::Mode::Disabled) {
+        std::cout << "Heavy-quark energy-loss diagnostics:"
+                  << " n_heavy_steps= " << heavy_quark_diagnostics_.n_heavy_steps
+                  << " n_baseline_steps= " << heavy_quark_diagnostics_.n_baseline_steps
+                  << " n_drag_steps= " << heavy_quark_diagnostics_.n_drag_steps
+                  << " n_diffusion_steps= " << heavy_quark_diagnostics_.n_diffusion_steps
+                  << " n_diffusion_only_steps= "
+                  << heavy_quark_diagnostics_.n_diffusion_only_steps
+                  << " n_invalid_steps= " << heavy_quark_diagnostics_.n_invalid_steps
+                  << " sum_energy_change= " << heavy_quark_diagnostics_.sum_energy_change
+                  << std::endl;
+    }
     if (n_unresolved_segments_dynamic_ > 0) {
         const double avg_qd =
             n_unresolved_candidate_scatters_ > 0
@@ -747,11 +763,13 @@ void EnergyLoss::do_eloss(const std::vector<Parton> &partons, std::vector<Quench
             std::vector<Quench> local_recoiled;
             moliere::do_eloss(partons, quenched, x, y, nr_, kappa_, alpha_, tmethod_, mode_,
                               ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, local_recoiled,
-                              do_event_display_ ? callback_factory : moliere::PartonCallbackFactory());
+                              do_event_display_ ? callback_factory : moliere::PartonCallbackFactory(),
+                              heavy_quark_parameters_, &heavy_quark_diagnostics_);
         } else {
             moliere::do_eloss(partons, quenched, x, y, nr_, kappa_, alpha_, tmethod_, mode_,
                               ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, *recoiled,
-                              do_event_display_ ? callback_factory : moliere::PartonCallbackFactory());
+                              do_event_display_ ? callback_factory : moliere::PartonCallbackFactory(),
+                              heavy_quark_parameters_, &heavy_quark_diagnostics_);
         }
         if (do_event_display_) {
             for (size_t i = 0; i < quenched.size() && i < p_before.size() && i < partons.size(); ++i) {
@@ -1649,7 +1667,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                     probe.p, probe.pos, remaining, partons[probe_id].GetId(),
                                     probe.rng, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
                                     compat_moliere_legacy_hydro_, hydro_profile_,
-                                    lres_moliere_particles, probe.had, probe.orient, callback);
+                                    lres_moliere_particles, probe.had, probe.orient, callback,
+                                    moliere::PropagationStepCallback(), heavy_quark_parameters_);
                             }
                             moliere::set_elastic_generator_state(elastic_rng_state);
                             return probe;
@@ -1939,7 +1958,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                     probe.p, probe.pos, remaining, partons[daughter].GetId(),
                                     probe.rng, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
                                     compat_moliere_legacy_hydro_, hydro_profile_,
-                                    lres_moliere_particles, probe.had, probe.orient, callback);
+                                    lres_moliere_particles, probe.had, probe.orient, callback,
+                                    moliere::PropagationStepCallback(), heavy_quark_parameters_);
                                 return probe;
                             };
 
@@ -2064,7 +2084,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                     p1, pos1, remaining_after, partons[d1].GetId(),
                                     nr_, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
                                     compat_moliere_legacy_hydro_, hydro_profile_,
-                                    lres_moliere_particles, had1, orient1, cb, step_cb);
+                                    lres_moliere_particles, had1, orient1, cb, step_cb,
+                                    heavy_quark_parameters_, &heavy_quark_diagnostics_);
                             }
                             if (remaining_after > 0. && p2[3] > 0.) {
                                 auto cb = make_moliere_scattering_callback(
@@ -2077,7 +2098,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                     p2, pos2, remaining_after, partons[d2].GetId(),
                                     nr_, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
                                     compat_moliere_legacy_hydro_, hydro_profile_,
-                                    lres_moliere_particles, had2, orient2, cb, step_cb);
+                                    lres_moliere_particles, had2, orient2, cb, step_cb,
+                                    heavy_quark_parameters_, &heavy_quark_diagnostics_);
                             }
 
                             qhad[d1] = had1;
@@ -2147,7 +2169,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             hydro_profile_, lres_moliere_particles, qhad[idx],
                             qorient[idx], dynamic_callback,
                             make_moliere_step_callback(idx, partons[idx].GetId(), quenched[idx].GetMom(),
-                                                       d1, d2, true, "modeC_dynamic_parent_step"));
+                                                       d1, d2, true, "modeC_dynamic_parent_step"),
+                            heavy_quark_parameters_, &heavy_quark_diagnostics_);
 
                         if (elastically_decohered) {
                             ++n_unresolved_pairs_elastically_decohered_;
@@ -2222,7 +2245,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                     p1, pos1, remaining_after, partons[d1].GetId(),
                                     nr_, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
                                     compat_moliere_legacy_hydro_, hydro_profile_,
-                                    lres_moliere_particles, had1, orient1, cb, step_cb);
+                                    lres_moliere_particles, had1, orient1, cb, step_cb,
+                                    heavy_quark_parameters_, &heavy_quark_diagnostics_);
                             }
                             if (remaining_after > 0. && p2[3] > 0.) {
                                 auto cb = make_moliere_scattering_callback(
@@ -2235,7 +2259,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                     p2, pos2, remaining_after, partons[d2].GetId(),
                                     nr_, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
                                     compat_moliere_legacy_hydro_, hydro_profile_,
-                                    lres_moliere_particles, had2, orient2, cb, step_cb);
+                                    lres_moliere_particles, had2, orient2, cb, step_cb,
+                                    heavy_quark_parameters_, &heavy_quark_diagnostics_);
                             }
 
                             qhad[d1] = had1;
@@ -2290,7 +2315,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                         moliere::propagate_segment_with_scattering_callback(
                             p1, pos1, tof, partons[d1].GetId(), nr_, kappa_, alpha_,
                             tmethod_, mode_, ebe_hydro_, compat_moliere_legacy_hydro_,
-                            hydro_profile_, lres_moliere_particles, had1, orient1, cb1, step_cb1);
+                            hydro_profile_, lres_moliere_particles, had1, orient1, cb1, step_cb1,
+                            heavy_quark_parameters_, &heavy_quark_diagnostics_);
                         auto cb2 = make_moliere_scattering_callback(
                             d2, partons[d2].GetId(), idx, d1, d2, true,
                             "modeB_unresolved_daughter_scattering");
@@ -2300,7 +2326,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                         moliere::propagate_segment_with_scattering_callback(
                             p2, pos2, tof, partons[d2].GetId(), nr_, kappa_, alpha_,
                             tmethod_, mode_, ebe_hydro_, compat_moliere_legacy_hydro_,
-                            hydro_profile_, lres_moliere_particles, had2, orient2, cb2, step_cb2);
+                            hydro_profile_, lres_moliere_particles, had2, orient2, cb2, step_cb2,
+                            heavy_quark_parameters_, &heavy_quark_diagnostics_);
 
                         qhad[d1] = had1;
                         qhad[d2] = had2;
@@ -2357,7 +2384,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             p, pos, tof, partons[idx].GetId(), nr_, kappa_, alpha_,
                             tmethod_, mode_, ebe_hydro_, compat_moliere_legacy_hydro_,
                             hydro_profile_, lres_moliere_particles, qhad[idx], qorient[idx],
-                            cb, step_cb);
+                            cb, step_cb, heavy_quark_parameters_, &heavy_quark_diagnostics_);
                     }
                     const double qperp = std::sqrt((p[0] - p_before[0]) * (p[0] - p_before[0]) +
                                                    (p[1] - p_before[1]) * (p[1] - p_before[1]));
@@ -2430,7 +2457,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
     if (do_elastic_) {
         std::vector<Quench> &recoiled_out = recoiled != nullptr ? *recoiled : local_recoiled;
         moliere::process_recoilers(lres_moliere_particles, nr_, kappa_, alpha_, tmethod_, mode_,
-                                   ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, recoiled_out);
+                                   ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, recoiled_out,
+                                   heavy_quark_parameters_, &heavy_quark_diagnostics_);
         for (const auto &rp : recoiled_out) {
             const std::string label = (rp.GetOrig() == "recoiler" || rp.GetOrig() == "hole") ? "response_parton" : "other";
             emit("medium_response", -1, -1, -1, -1, rp.GetRi()[3], rp.GetRi(), rp.vGetP(), 0.0, label, rp.GetOrig());
@@ -2472,8 +2500,14 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
     double Tc;
     if (tmethod_ == 0) Tc = 0.170;
     else Tc = 0.145;
-    constexpr double charm_mass = 1.25;
-    constexpr double b_mass = 4.2;
+    const double charm_mass =
+        heavy_quark_parameters_.mode == heavy_quark::Mode::Disabled
+            ? 1.25
+            : heavy_quark_parameters_.charm_mass;
+    const double b_mass =
+        heavy_quark_parameters_.mode == heavy_quark::Mode::Disabled
+            ? 4.2
+            : heavy_quark_parameters_.bottom_mass;
 
     double tot = pos[3] + tof;    // Final time
 
@@ -2607,8 +2641,40 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
                 if (std::abs(id) == 4 && p[3] <= charm_mass) doquench = false;
                 if (std::abs(id) == 5 && p[3] <= b_mass) doquench = false;
 
+                bool heavy_step_applied = false;
+                if (heavy_quark_parameters_.mode != heavy_quark::Mode::Disabled &&
+                    heavy_quark::is_heavy_quark(id)) {
+                    const double fluid_step = std::max(0., step*lore*(1.-vscalw));
+                    heavy_quark::StepInput heavy_input;
+                    heavy_input.pdg_id = id;
+                    heavy_input.temperature = temp;
+                    heavy_input.fluid_path_length_fm = fluid_step;
+
+                    // Compare against the light-parton HYBRID loss in the
+                    // local fluid frame. If it wins, the unchanged MMLI block
+                    // below applies the baseline update.
+                    if (alpha_ != 0. && mode_ == 0 && doquench) {
+                        const double Efs = ei*lore*(1.-vscalw);
+                        const double tstop = 0.2*pow(Efs,1./3.)/
+                                             (2.*pow(temp,4./3.)*alpha_)/CF;
+                        const double beta = tstop/f_dist;
+                        heavy_input.baseline_available = true;
+                        heavy_input.baseline_energy_loss_fluid =
+                            beta > 1.
+                                ? Efs*fluid_step*4./3.141592/
+                                      (beta*tstop*sqrt(beta*beta-1.))
+                                : std::numeric_limits<double>::infinity();
+                    }
+
+                    const auto heavy_result = heavy_quark::apply_step(
+                        p, v, heavy_input, heavy_quark_parameters_, nr_,
+                        &heavy_quark_diagnostics_);
+                    heavy_step_applied =
+                        heavy_quark::applies_heavy_update(heavy_result.decision);
+                }
+
                 // Strong coupling
-                if (alpha_ != 0. && mode_ == 0 && doquench) {
+                if (!heavy_step_applied && alpha_ != 0. && mode_ == 0 && doquench) {
                     double Efs = ei * lore * (1. - vscalw);
                     double tstop = 0.2 * pow(Efs, 1. / 3.) / (2. * pow(temp, 4. / 3.) * alpha_) / CF;
                     double beta = tstop / f_dist;
@@ -2622,14 +2688,14 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
                 }
 
                 // Radiative
-                if (alpha_ != 0. && mode_ == 1) {
+                if (!heavy_step_applied && alpha_ != 0. && mode_ == 1) {
                     double intpiece = CF * (step / 0.2) * alpha_ * temp * temp * temp * (f_dist / 0.2);
                     double quench = (p[3] - intpiece) / p[3];
                     p *= quench;
                 }
 
                 // Collisional
-                if (alpha_ != 0. && mode_ == 2) {
+                if (!heavy_step_applied && alpha_ != 0. && mode_ == 2) {
                     double intpiece = CF * (step / 0.2) * alpha_ * temp * temp;
                     double quench = (p[3] - intpiece) / p[3];
                     p *= quench;

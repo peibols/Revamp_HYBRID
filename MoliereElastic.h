@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "HydroProfile.h"
+#include "HeavyQuarkEnergyLoss.h"
 #include "Parton.h"
 #include "Quench.h"
 #include "Random.h"
@@ -63,7 +64,10 @@ void propagate_segment(std::array<double,4> &p,
                        std::vector<Quench> &new_particles,
                        int &had_scattering,
                        std::array<double,4> &orient,
-                       const PropagationStepCallback &step_callback = nullptr);
+                       const PropagationStepCallback &step_callback = nullptr,
+                       const heavy_quark::Parameters &heavy_quark_parameters =
+                           heavy_quark::Parameters(),
+                       heavy_quark::Diagnostics *heavy_quark_diagnostics = nullptr);
 
 void propagate_segment_with_scattering_callback(std::array<double,4> &p,
                                                 std::array<double,4> &pos,
@@ -81,7 +85,10 @@ void propagate_segment_with_scattering_callback(std::array<double,4> &p,
                                                 int &had_scattering,
                                                 std::array<double,4> &orient,
                                                 const ScatteringCallback &callback,
-                                                const PropagationStepCallback &step_callback = nullptr);
+                                                const PropagationStepCallback &step_callback = nullptr,
+                                                const heavy_quark::Parameters &heavy_quark_parameters =
+                                                    heavy_quark::Parameters(),
+                                                heavy_quark::Diagnostics *heavy_quark_diagnostics = nullptr);
 
 void process_recoilers(std::vector<Quench> &new_particles,
                        numrand &nr,
@@ -92,7 +99,10 @@ void process_recoilers(std::vector<Quench> &new_particles,
                        int ebe_hydro,
                        bool compat_moliere_legacy_hydro,
                        const HydroProfile &hydro_profile,
-                       std::vector<Quench> &recoiled);
+                       std::vector<Quench> &recoiled,
+                       const heavy_quark::Parameters &heavy_quark_parameters =
+                           heavy_quark::Parameters(),
+                       heavy_quark::Diagnostics *heavy_quark_diagnostics = nullptr);
 
 void do_eloss(const std::vector<Parton> &partons,
               std::vector<Quench> &quenched,
@@ -107,6 +117,9 @@ void do_eloss(const std::vector<Parton> &partons,
               bool compat_moliere_legacy_hydro,
               const HydroProfile &hydro_profile,
               std::vector<Quench> &recoiled,
-              const PartonCallbackFactory &callback_factory = nullptr);
+              const PartonCallbackFactory &callback_factory = nullptr,
+              const heavy_quark::Parameters &heavy_quark_parameters =
+                  heavy_quark::Parameters(),
+              heavy_quark::Diagnostics *heavy_quark_diagnostics = nullptr);
 
 }

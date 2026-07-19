@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "HYBRID.h"
 
+#include <exception>
 #include <iostream>
 
 int main(int argc, char **argv) {
@@ -15,8 +16,13 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    HYBRID sim(cfg);
-    sim.run();
+    try {
+        HYBRID sim(cfg);
+        sim.run();
+    } catch (const std::exception &error) {
+        std::cerr << "HYBRID configuration/runtime error: " << error.what() << '\n';
+        return 3;
+    }
 
     return 0;
 }

@@ -17,6 +17,7 @@
 #include "LundGenerator.h"
 #include "GlauberModel.h"
 #include "EnergyLoss.h"
+#include "HeavyQuarkEnergyLoss.h"
 
 class HYBRID {
 private:
@@ -44,6 +45,7 @@ private:
     double alpha_;
     int tmethod_;
     int mode_;
+    heavy_quark::Parameters heavy_quark_parameters_;
     int ebe_hydro_;
     int hadro_type_;
     double lres_rpower_;

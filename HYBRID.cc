@@ -6,6 +6,7 @@
 #include <cassert>
 #include <algorithm>
 #include <sstream>
+#include <stdexcept>
 #include "vector_operators.h"
 
 namespace {
@@ -15,6 +16,19 @@ constexpr int kLundSeedOffset = 2337;
 
 int getSeedBase(const Config &cfg) {
     return cfg.getIntOr("seed_base", cfg.getIntOr("njob", 0));
+}
+
+heavy_quark::Parameters getHeavyQuarkParameters(const Config &cfg) {
+    const int heavy_mode = cfg.getIntOr("heavy_quark_eloss_mode", 0);
+    const auto heavy_lambda = cfg.getDouble("heavy_quark_lambda");
+    if (heavy_mode != 0 && !heavy_lambda.has_value()) {
+        throw std::invalid_argument(
+            "heavy_quark_lambda must be set explicitly when heavy_quark_eloss_mode is enabled");
+    }
+    return heavy_quark::make_parameters(
+        heavy_mode, heavy_lambda.value_or(0.),
+        cfg.getDoubleOr("heavy_quark_charm_mass", 1.25),
+        cfg.getDoubleOr("heavy_quark_bottom_mass", 4.2));
 }
 }
 
@@ -40,6 +54,7 @@ HYBRID::HYBRID(const Config &cfg) :
       alpha_(cfg.getDoubleOr("alpha", 1.0)),
       tmethod_(cfg.getIntOr("tmethod", 0)),
       mode_(cfg.getIntOr("mode", 0)),
+      heavy_quark_parameters_(getHeavyQuarkParameters(cfg)),
       ebe_hydro_(cfg.getIntOr("ebe_hydro", 0)),
       hadro_type_(cfg.getIntOr("hadro_type", cfg.getBoolOr("do_elastic", false) ? 1 : 0)),
       lres_rpower_(cfg.getDoubleOr("lres_rpower", cfg.getDoubleOr("rpower", 2.0))),
@@ -61,6 +76,7 @@ HYBRID::HYBRID(const Config &cfg) :
       lund_gen_(std::make_unique<LundGenerator>()),
       glauber_model_(std::make_unique<GlauberModel>()),
       energy_loss_(std::make_unique<EnergyLoss>(nr_, kappa_, alpha_, tmethod_, mode_,
+                                                heavy_quark_parameters_,
                                                 ebe_hydro_, do_elastic_, do_lres_,
                                                 do_moliere_on_unresolved_partons_,
                                                 do_moliere_dynamic_unresolved_resolution_,
@@ -87,6 +103,15 @@ HYBRID::HYBRID(const Config &cfg) :
               << " shower= " << shower_seed_
               << " hybrid= " << hybrid_seed_
               << " lund= " << lund_seed_ << std::endl;
+    if (heavy_quark_parameters_.mode != heavy_quark::Mode::Disabled) {
+        std::cout << "Heavy-quark energy loss requested"
+                  << " mode= " << static_cast<int>(heavy_quark_parameters_.mode)
+                  << " (" << heavy_quark::mode_name(heavy_quark_parameters_.mode) << ")"
+                  << " lambda= " << heavy_quark_parameters_.t_hooft_lambda
+                  << " charm_mass= " << heavy_quark_parameters_.charm_mass
+                  << " bottom_mass= " << heavy_quark_parameters_.bottom_mass
+                  << std::endl;
+    }
     if (do_elastic_) {
         std::cout << "Elastic scattering requested"
                   << " hadro_type= " << hadro_type_

@@ -7,10 +7,12 @@
 #include "Quench.h"
 #include "Random.h"
 #include "HydroProfile.h"
+#include "HeavyQuarkEnergyLoss.h"
 
 class EnergyLoss {
 public:
     EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int mode,
+               const heavy_quark::Parameters &heavy_quark_parameters,
                int ebe_hydro, bool do_elastic, bool do_lres,
                bool do_moliere_on_unresolved_partons,
                bool do_moliere_dynamic_unresolved_resolution,
@@ -37,6 +39,8 @@ private:
     double alpha_;
     int tmethod_;
     int mode_;
+    heavy_quark::Parameters heavy_quark_parameters_;
+    heavy_quark::Diagnostics heavy_quark_diagnostics_;
     int ebe_hydro_;
     bool do_elastic_;
     bool do_lres_;

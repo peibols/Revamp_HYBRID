@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 #include "FourVector.h"
@@ -241,15 +242,23 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile, vector<Quench> &new_particles,
                int &had_scattering, vector<double> &orient,
                const ScatteringCallback *scattering_callback = nullptr,
-               const PropagationStepCallback *step_callback = nullptr) {
+               const PropagationStepCallback *step_callback = nullptr,
+               const heavy_quark::Parameters &heavy_quark_parameters = heavy_quark::Parameters(),
+               heavy_quark::Diagnostics *heavy_quark_diagnostics = nullptr) {
     auto &workspaces = integration_workspaces();
     gsl_integration_workspace *wdk = workspaces.wdk;
     gsl_integration_workspace *wkcm = workspaces.wkcm;
     gsl_integration_workspace *wx = workspaces.wx;
 
     double Tc = (tmethod == 0) ? 0.170 : 0.145;
-    double charm_mass = 1.25;
-    double b_mass = 4.2;
+    const double charm_mass =
+        heavy_quark_parameters.mode == heavy_quark::Mode::Disabled
+            ? 1.25
+            : heavy_quark_parameters.charm_mass;
+    const double b_mass =
+        heavy_quark_parameters.mode == heavy_quark::Mode::Disabled
+            ? 4.2
+            : heavy_quark_parameters.bottom_mass;
 
     double tot = pos[3] + tof;
     double ei = p[3];
@@ -457,7 +466,47 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
 
                 p_prev = p;
 
-                if (alpha != 0. && model == 0 && doquench) {
+                bool heavy_step_applied = false;
+                if (heavy_quark_parameters.mode != heavy_quark::Mode::Disabled &&
+                    heavy_quark::is_heavy_quark(id)) {
+                    const double fluid_step = std::max(0., step*lore*(1.-vscalw));
+                    heavy_quark::StepInput heavy_input;
+                    heavy_input.pdg_id = id;
+                    heavy_input.temperature = temp;
+                    heavy_input.fluid_path_length_fm = fluid_step;
+
+                    // The crossover compares the candidate drag loss to the
+                    // light-parton HYBRID loss in the local fluid frame.  The
+                    // ordinary MMLI expression below remains authoritative
+                    // whenever the kernel selects UseBaseline.
+                    if (alpha != 0. && model == 0 && doquench) {
+                        const double Efs = ei*lore*(1.-vscalw);
+                        const double tstop = 0.2*std::pow(Efs,1./3.)/
+                                             (2.*std::pow(temp,4./3.)*alpha)/CF;
+                        const double beta_s = tstop/f_dist;
+                        heavy_input.baseline_available = true;
+                        heavy_input.baseline_energy_loss_fluid =
+                            beta_s > 1.
+                                ? Efs*fluid_step*4./3.141592/
+                                      (beta_s*tstop*std::sqrt(beta_s*beta_s-1.))
+                                : std::numeric_limits<double>::infinity();
+                    }
+
+                    auto heavy_p = to_arr(p);
+                    const auto heavy_result = heavy_quark::apply_step(
+                        heavy_p, {v[0], v[1], v[2], v[3]}, heavy_input,
+                        heavy_quark_parameters, nr, heavy_quark_diagnostics);
+                    heavy_step_applied =
+                        heavy_quark::applies_heavy_update(heavy_result.decision);
+                    if (heavy_step_applied) {
+                        p = to_vec(heavy_p);
+                        orient[0] = p[0]/p[3];
+                        orient[1] = p[1]/p[3];
+                        orient[2] = p[2]/p[3];
+                    }
+                }
+
+                if (!heavy_step_applied && alpha != 0. && model == 0 && doquench) {
                     double Efs = ei*lore*(1.-vscalw);
                     double tstop = 0.2*std::pow(Efs,1./3.)/(2.*std::pow(temp,4./3.)*alpha)/CF;
                     double beta_s = tstop/f_dist;
@@ -469,12 +518,12 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                         p[3] = 0.;
                     }
                 }
-                if (alpha != 0. && model == 1) {
+                if (!heavy_step_applied && alpha != 0. && model == 1) {
                     double intpiece = CF*(step/0.2)*alpha*temp*temp*temp*(f_dist/0.2);
                     double quench = (p[3]-intpiece)/p[3];
                     p *= quench;
                 }
-                if (alpha != 0. && model == 2) {
+                if (!heavy_step_applied && alpha != 0. && model == 2) {
                     double intpiece = CF*(step/0.2)*alpha*temp*temp;
                     double quench = (p[3]-intpiece)/p[3];
                     p *= quench;
@@ -553,14 +602,17 @@ void propagate_segment(std::array<double,4> &p, std::array<double,4> &pos, doubl
                        bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile,
                        std::vector<Quench> &new_particles, int &had_scattering,
                        std::array<double,4> &orient,
-                       const PropagationStepCallback &step_callback) {
+                       const PropagationStepCallback &step_callback,
+                       const heavy_quark::Parameters &heavy_quark_parameters,
+                       heavy_quark::Diagnostics *heavy_quark_diagnostics) {
     vector<double> p_vec = to_vec(p);
     vector<double> pos_vec = to_vec(pos);
     vector<double> orient_vec = to_vec(orient);
     loss_rate(p_vec, pos_vec, tof, id, nr, kappa, alpha, tmethod, model,
               ebe_hydro, compat_moliere_legacy_hydro, hydro_profile,
               new_particles, had_scattering, orient_vec, nullptr,
-              step_callback ? &step_callback : nullptr);
+              step_callback ? &step_callback : nullptr,
+              heavy_quark_parameters, heavy_quark_diagnostics);
     p = to_arr(p_vec);
     pos = to_arr(pos_vec);
     orient = to_arr(orient_vec);
@@ -576,14 +628,17 @@ void propagate_segment_with_scattering_callback(std::array<double,4> &p, std::ar
                                                 int &had_scattering,
                                                 std::array<double,4> &orient,
                                                 const ScatteringCallback &callback,
-                                                const PropagationStepCallback &step_callback) {
+                                                const PropagationStepCallback &step_callback,
+                                                const heavy_quark::Parameters &heavy_quark_parameters,
+                                                heavy_quark::Diagnostics *heavy_quark_diagnostics) {
     vector<double> p_vec = to_vec(p);
     vector<double> pos_vec = to_vec(pos);
     vector<double> orient_vec = to_vec(orient);
     loss_rate(p_vec, pos_vec, tof, id, nr, kappa, alpha, tmethod, model,
               ebe_hydro, compat_moliere_legacy_hydro, hydro_profile,
               new_particles, had_scattering, orient_vec, &callback,
-              step_callback ? &step_callback : nullptr);
+              step_callback ? &step_callback : nullptr,
+              heavy_quark_parameters, heavy_quark_diagnostics);
     p = to_arr(p_vec);
     pos = to_arr(pos_vec);
     orient = to_arr(orient_vec);
@@ -591,7 +646,9 @@ void propagate_segment_with_scattering_callback(std::array<double,4> &p, std::ar
 
 void process_recoilers(std::vector<Quench> &new_particles, numrand &nr, double kappa, double alpha,
                        int tmethod, int model, int ebe_hydro, bool compat_moliere_legacy_hydro,
-                       const HydroProfile &hydro_profile, std::vector<Quench> &recoiled) {
+                       const HydroProfile &hydro_profile, std::vector<Quench> &recoiled,
+                       const heavy_quark::Parameters &heavy_quark_parameters,
+                       heavy_quark::Diagnostics *heavy_quark_diagnostics) {
     while (true) {
         vector<Quench> current_particles = new_particles;
         new_particles.clear();
@@ -608,7 +665,9 @@ void process_recoilers(std::vector<Quench> &new_particles, numrand &nr, double k
             std::array<double,4> orig_en = current_particles[ip].vGetP();
             int had_scattering = 0;
             loss_rate(p, pos, tof, current_particles[ip].GetId(), nr, kappa, alpha, tmethod, model,
-                      ebe_hydro, compat_moliere_legacy_hydro, hydro_profile, new_particles, had_scattering, orient);
+                      ebe_hydro, compat_moliere_legacy_hydro, hydro_profile, new_particles,
+                      had_scattering, orient, nullptr, nullptr,
+                      heavy_quark_parameters, heavy_quark_diagnostics);
             current_particles[ip].setOrigEn(orig_en);
             current_particles[ip].vSetP(p);
             current_particles[ip].vSetRf(to_arr(pos));
@@ -626,7 +685,9 @@ void process_recoilers(std::vector<Quench> &new_particles, numrand &nr, double k
 void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double xcre, double ycre,
               numrand &nr, double kappa, double alpha, int tmethod, int model, int ebe_hydro,
               bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile, std::vector<Quench> &recoiled,
-              const PartonCallbackFactory &callback_factory) {
+              const PartonCallbackFactory &callback_factory,
+              const heavy_quark::Parameters &heavy_quark_parameters,
+              heavy_quark::Diagnostics *heavy_quark_diagnostics) {
     vector<int> FinId;
     for (unsigned int i = 0; i < quenched.size(); ++i) {
         if (quenched[i].GetD1() == -1 && quenched[i].GetOrig() != "rem") {
@@ -688,7 +749,8 @@ void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
                 loss_rate(p, pos, tof, quenched[tp].GetId(), nr, kappa, alpha, tmethod, model,
                           ebe_hydro, compat_moliere_legacy_hydro, hydro_profile, new_particles, had_scattering, orient,
                           scattering_callback ? &scattering_callback : nullptr,
-                          step_callback ? &step_callback : nullptr);
+                          step_callback ? &step_callback : nullptr,
+                          heavy_quark_parameters, heavy_quark_diagnostics);
             } else {
                 pos += p/p[3]*tof;
             }
@@ -739,7 +801,8 @@ void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
     FinId.clear();
 
     process_recoilers(new_particles, nr, kappa, alpha, tmethod, model, ebe_hydro,
-                      compat_moliere_legacy_hydro, hydro_profile, recoiled);
+                      compat_moliere_legacy_hydro, hydro_profile, recoiled,
+                      heavy_quark_parameters, heavy_quark_diagnostics);
 }
 
 }  // namespace moliere
