@@ -12,6 +12,7 @@
 #include <utility>
 #include "MoliereTables.h"
 #include "MoliereElastic.h"
+#include "ModeEPolicy.h"
 #include "vector_operators.h"
 #ifdef HAVE_ROOT
 #include "TFile.h"
@@ -1782,7 +1783,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             probe.orient = qorient[active_ancestor];
 
                             ++n_recursive_coherent_resample_requests_;
-                            if (!isColored(partons[active_ancestor].GetId())) {
+                            if (!modee::is_colored_coherent_source(
+                                    partons[active_ancestor].GetId())) {
                                 ++n_recursive_color_neutral_parent_skips_;
                                 emit("recursive_coherent_resample_skip", active_ancestor,
                                      quenched[active_ancestor].GetMom(),
@@ -2074,7 +2076,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                      "modeE_discard_daughter_qperp_recoil_hole");
 
                                 const bool colored_parent =
-                                    isColored(partons[active_ancestor].GetId());
+                                    modee::is_colored_coherent_source(
+                                        partons[active_ancestor].GetId());
                                 // Dani's failed-probe rule: once the daughter proposal is
                                 // rejected, follow the coherent source until its first
                                 // genuinely unresolving proposal or the LRES interval end.
