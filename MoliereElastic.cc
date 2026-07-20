@@ -223,7 +223,7 @@ FourVector BoostBack(double b[3], FourVector p) {
 
 void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numrand &nr, double kappa,
                double alpha, int tmethod, int model, int ebe_hydro,
-               const HydroProfile &hydro_profile, vector<Quench> &new_particles,
+               bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile, vector<Quench> &new_particles,
                int &had_scattering, vector<double> &orient) {
     auto &workspaces = integration_workspaces();
     gsl_integration_workspace *wdk = workspaces.wdk;
@@ -276,8 +276,12 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
         double tau0h = (ebe_hydro == 1) ? 0.4 : 0.6;
         if (tau >= tau0h) {
             vector<double> v;
-            vx = gVx_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta);
-            vy = gVy_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta);
+            vx = compat_moliere_legacy_hydro
+                ? gVx_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta)
+                : gVx(hydro_profile, tau, pos[0], pos[1]);
+            vy = compat_moliere_legacy_hydro
+                ? gVy_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta)
+                : gVy(hydro_profile, tau, pos[0], pos[1]);
             vz = pos[2]/pos[3];
             double frap = std::atanh(vz);
             vx /= std::cosh(frap);
@@ -290,7 +294,9 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
             if (v2 >= 1.) v2 = 0.999999999;
             double lore = 1./std::sqrt(1.-v2);
 
-            double temp = gT_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta);
+            double temp = compat_moliere_legacy_hydro
+                ? gT_legacy_elastic(hydro_profile, tau, pos[0], pos[1], eta)
+                : gT(hydro_profile, tau, pos[0], pos[1]);
 
             l_dist += step;
             double f_lore = w2 + lore*lore*(v2 - 2.*vscalw + vscalw*vscalw);
@@ -304,7 +310,10 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                     if (tpos[3] > tot) break;
                     tau = std::sqrt(tpos[3]*tpos[3]-tpos[2]*tpos[2]);
                     eta = 0.5*std::log((tpos[3]+tpos[2])/(tpos[3]-tpos[2]));
-                    if (gT_legacy_elastic(hydro_profile, tau, tpos[0], tpos[1], eta) > Tc) {
+                    const double ttemp = compat_moliere_legacy_hydro
+                        ? gT_legacy_elastic(hydro_profile, tau, tpos[0], tpos[1], eta)
+                        : gT(hydro_profile, tau, tpos[0], tpos[1]);
+                    if (ttemp > Tc) {
                         will_hot = int(j);
                         break;
                     }
@@ -466,9 +475,59 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
 
 }  // namespace
 
+void propagate_segment(std::array<double,4> &p, std::array<double,4> &pos, double tof, int id,
+                       numrand &nr, double kappa, double alpha, int tmethod, int model, int ebe_hydro,
+                       bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile,
+                       std::vector<Quench> &new_particles, int &had_scattering,
+                       std::array<double,4> &orient) {
+    vector<double> p_vec = to_vec(p);
+    vector<double> pos_vec = to_vec(pos);
+    vector<double> orient_vec = to_vec(orient);
+    loss_rate(p_vec, pos_vec, tof, id, nr, kappa, alpha, tmethod, model,
+              ebe_hydro, compat_moliere_legacy_hydro, hydro_profile,
+              new_particles, had_scattering, orient_vec);
+    p = to_arr(p_vec);
+    pos = to_arr(pos_vec);
+    orient = to_arr(orient_vec);
+}
+
+void process_recoilers(std::vector<Quench> &new_particles, numrand &nr, double kappa, double alpha,
+                       int tmethod, int model, int ebe_hydro, bool compat_moliere_legacy_hydro,
+                       const HydroProfile &hydro_profile, std::vector<Quench> &recoiled) {
+    while (true) {
+        vector<Quench> current_particles = new_particles;
+        new_particles.clear();
+        for (unsigned int ip = 0; ip < current_particles.size(); ++ip) {
+            if (current_particles[ip].GetOrig() == "hole") {
+                current_particles[ip].SetIsDone(true);
+                recoiled.push_back(current_particles[ip]);
+                continue;
+            }
+            vector<double> p = to_vec(current_particles[ip].vGetP());
+            vector<double> pos = to_vec(current_particles[ip].GetRi());
+            double tof = current_particles[ip].GetQ();
+            vector<double> orient = to_vec(current_particles[ip].orient());
+            std::array<double,4> orig_en = current_particles[ip].vGetP();
+            int had_scattering = 0;
+            loss_rate(p, pos, tof, current_particles[ip].GetId(), nr, kappa, alpha, tmethod, model,
+                      ebe_hydro, compat_moliere_legacy_hydro, hydro_profile, new_particles, had_scattering, orient);
+            current_particles[ip].setOrigEn(orig_en);
+            current_particles[ip].vSetP(p);
+            current_particles[ip].vSetRf(to_arr(pos));
+            current_particles[ip].setOrient(to_arr(orient));
+            current_particles[ip].setHadScattering(had_scattering);
+            current_particles[ip].SetIsDone(true);
+            if (p[3] == 0.) current_particles[ip].SetP(0.,0.,0.,0.);
+            recoiled.push_back(current_particles[ip]);
+        }
+        if (new_particles.empty()) break;
+        std::cout << " RESCATTERING! " << std::endl;
+    }
+}
+
 void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double xcre, double ycre,
               numrand &nr, double kappa, double alpha, int tmethod, int model, int ebe_hydro,
-              const HydroProfile &hydro_profile, std::vector<Quench> &recoiled) {
+              bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile, std::vector<Quench> &recoiled) {
     vector<int> FinId;
     for (unsigned int i = 0; i < quenched.size(); ++i) {
         if (quenched[i].GetD1() == -1 && quenched[i].GetOrig() != "rem") {
@@ -520,7 +579,7 @@ void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
             vector<double> orient = to_vec(quenched[tp].orient());
             if (std::abs(quenched[tp].GetId()) <= 6 || quenched[tp].GetId() == 21) {
                 loss_rate(p, pos, tof, quenched[tp].GetId(), nr, kappa, alpha, tmethod, model,
-                          ebe_hydro, hydro_profile, new_particles, had_scattering, orient);
+                          ebe_hydro, compat_moliere_legacy_hydro, hydro_profile, new_particles, had_scattering, orient);
             } else {
                 pos += p/p[3]*tof;
             }
@@ -570,35 +629,8 @@ void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
     }
     FinId.clear();
 
-    while (true) {
-        vector<Quench> current_particles = new_particles;
-        new_particles.clear();
-        for (unsigned int ip = 0; ip < current_particles.size(); ++ip) {
-            if (current_particles[ip].GetOrig() == "hole") {
-                current_particles[ip].SetIsDone(true);
-                recoiled.push_back(current_particles[ip]);
-                continue;
-            }
-            vector<double> p = to_vec(current_particles[ip].vGetP());
-            vector<double> pos = to_vec(current_particles[ip].GetRi());
-            double tof = current_particles[ip].GetQ();
-            vector<double> orient = to_vec(current_particles[ip].orient());
-            std::array<double,4> orig_en = current_particles[ip].vGetP();
-            int had_scattering = 0;
-            loss_rate(p, pos, tof, current_particles[ip].GetId(), nr, kappa, alpha, tmethod, model,
-                      ebe_hydro, hydro_profile, new_particles, had_scattering, orient);
-            current_particles[ip].setOrigEn(orig_en);
-            current_particles[ip].vSetP(p);
-            current_particles[ip].vSetRf(to_arr(pos));
-            current_particles[ip].setOrient(to_arr(orient));
-            current_particles[ip].setHadScattering(had_scattering);
-            current_particles[ip].SetIsDone(true);
-            if (p[3] == 0.) current_particles[ip].SetP(0.,0.,0.,0.);
-            recoiled.push_back(current_particles[ip]);
-        }
-        if (new_particles.empty()) break;
-        std::cout << " RESCATTERING! " << std::endl;
-    }
+    process_recoilers(new_particles, nr, kappa, alpha, tmethod, model, ebe_hydro,
+                      compat_moliere_legacy_hydro, hydro_profile, recoiled);
 }
 
 }  // namespace moliere

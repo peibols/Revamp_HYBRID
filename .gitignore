@@ -1,6 +1,5 @@
 # Compiled binaries
 main
-main_trigger
 *.o
 *.dSYM/
 
