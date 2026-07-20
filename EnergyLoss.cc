@@ -2083,7 +2083,9 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 apply_resolved_daughter_kick(
                                     applied_candidate, qstate[active_ancestor].p,
                                     lres_moliere_particles, qhad[active_ancestor],
-                                    qorient[active_ancestor]);
+                                    qorient[active_ancestor],
+                                    partons[active_ancestor].GetId(),
+                                    heavy_quark_parameters_, &heavy_quark_diagnostics_);
                                 qstate[active_ancestor].r = applied_candidate.pos;
                                 ++n_unresolved_coherent_scatters_;
                                 ++n_recursive_coherent_applications_;
@@ -2135,7 +2137,9 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                     apply_resolved_daughter_kick(
                                         applied_candidate, qstate[active_ancestor].p,
                                         lres_moliere_particles, qhad[active_ancestor],
-                                        qorient[active_ancestor]);
+                                        qorient[active_ancestor],
+                                        partons[active_ancestor].GetId(),
+                                        heavy_quark_parameters_, &heavy_quark_diagnostics_);
                                     qstate[active_ancestor].r = applied_candidate.pos;
                                     ++n_unresolved_coherent_scatters_;
                                     ++n_recursive_coherent_applications_;

@@ -38,6 +38,12 @@ RECURSIVE_RE = re.compile(
     r"Recursive unresolved Moliere diagnostics:.*"
     r" n_recursive_frontier_permutation_checks= (?P<permutation_checks>\d+)"
     r" n_recursive_frontier_permutation_mismatches= (?P<permutation_mismatches>\d+)"
+    r".* n_recursive_failed_daughter_vetoes= (?P<failed_daughter_vetoes>\d+)"
+    r".* n_recursive_coherent_resample_candidates= (?P<coherent_resample_candidates>\d+)"
+    r" n_recursive_coherent_candidate_vetoes= (?P<coherent_candidate_vetoes>\d+)"
+    r" n_recursive_coherent_candidate_accepts= (?P<coherent_candidate_accepts>\d+)"
+    r".* recursive_candidate_accounting_delta= (?P<recursive_candidate_delta>-?\d+)"
+    r" coherent_candidate_accounting_delta= (?P<coherent_candidate_delta>-?\d+)"
     r".* n_recursive_opening_closure_checks= (?P<opening_checks>\d+)"
     r" avg_recursive_opening_spatial_residual= (?P<opening_avg_spatial>[-+0-9.eE]+)"
     r" max_recursive_opening_spatial_residual= (?P<opening_max_spatial>[-+0-9.eE]+)"
@@ -182,8 +188,12 @@ def main() -> int:
             )
         if row["events"] != row["hadron_end"] or row["events"] != row["parton_end"]:
             raise RuntimeError(f"{run_dir.name}: incomplete output event blocks")
-        if "candidates" in row and row["candidates"] != row["coherent"] + row["resolving"]:
-            raise RuntimeError(f"{run_dir.name}: unresolved-candidate accounting does not close")
+        if "candidates" in row:
+            if "recursive_candidate_delta" in row:
+                if row["recursive_candidate_delta"] != 0 or row["coherent_candidate_delta"] != 0:
+                    raise RuntimeError(f"{run_dir.name}: recursive candidate accounting does not close")
+            elif row["candidates"] != row["coherent"] + row["resolving"]:
+                raise RuntimeError(f"{run_dir.name}: unresolved-candidate accounting does not close")
         if row.get("permutation_mismatches", 0) != 0:
             raise RuntimeError(f"{run_dir.name}: Mode E permutation mismatch")
         if (row.get("opening_checks") is not None and
@@ -214,6 +224,12 @@ def main() -> int:
         "resolving",
         "permutation_checks",
         "permutation_mismatches",
+        "failed_daughter_vetoes",
+        "coherent_resample_candidates",
+        "coherent_candidate_vetoes",
+        "coherent_candidate_accepts",
+        "recursive_candidate_delta",
+        "coherent_candidate_delta",
         "opening_checks",
         "opening_avg_spatial",
         "opening_max_spatial",

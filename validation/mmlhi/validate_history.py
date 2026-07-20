@@ -26,7 +26,7 @@ def main() -> int:
             if (
                 args.mode == "E"
                 and row["record_type"] == "moliere_kick"
-                and row["note"].startswith("modeE_recursive_")
+                and row["note"].startswith("modeE_")
             ):
                 selected[key] += 1
             if row["record_type"] == "medium_response" and row["note"] == "recoiler":

@@ -16,9 +16,11 @@ The latest validated matrix and its physics interpretation are recorded in
 their matching caveats, and remaining production gates are separated in
 [`PHYSICS-CONTRACT.md`](PHYSICS-CONTRACT.md).
 
-The defaults assume the validated local MMLI parent, Moliere tables, and PbPb
-smoke hydro inputs. They can be overridden with `PARENT_REPO`, `PYTHIA_HOME`,
-`MOLIERE_TABLES`, `MMLHI_REFERENCE_RUN`, and `MMLHI_VALIDATION_OUT`.
+The defaults assume the validated local MMLI parent, Moliere tables, PbPb smoke
+hydro inputs, and the recorded high-pT Mode-E seed fixture in `clean_port_run`.
+They can be overridden with `PARENT_REPO`, `PYTHIA_HOME`, `MOLIERE_TABLES`,
+`MMLHI_REFERENCE_RUN`, `MMLHI_MODEE_REFERENCE_RUN`, and
+`MMLHI_VALIDATION_OUT`.
 
 The runner checks:
 
@@ -27,6 +29,8 @@ The runner checks:
 - byte-identical heavy-mode-off closure in standard, LRES, Moliere, and
   combined Mode A-E propagation;
 - targeted Mode-C, Mode-D, and recursive Mode-E resolving-scattering paths;
+- seed-fixed Mode-E failed-daughter veto, independent coherent-source accept,
+  and resolving parent-candidate veto paths;
 - forced charm modes 1, 2, and 3;
 - forced charm with LRES, Moliere, and combined Modes A-E;
 - a 100-event charm hard-scattering coverage sample;

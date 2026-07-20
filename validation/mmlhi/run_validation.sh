@@ -9,13 +9,18 @@ parent_repo="${PARENT_REPO:-${workspace}/wt_main_moliere_lres_integration_clean}
 pythia_home="${PYTHIA_HOME:-/data/yjlee/pythia/pythia8/pythia8315}"
 tables_path="${MOLIERE_TABLES:-${workspace}/moliere_table_bundle/a10_tables}"
 reference_run="${MMLHI_REFERENCE_RUN:-${workspace}/test/events_per_seed_hybrid_timing_20260505/mmli_pbpb_noelastic_events1_n1/no_moliere_no_wake/seed_860001}"
+modee_reference_run="${MMLHI_MODEE_REFERENCE_RUN:-${workspace}/clean_port_run}"
 output_root="${MMLHI_VALIDATION_OUT:-${workspace}/test/mmhli_validation_current}"
 
 hydro_file="${reference_run}/hydroinfoPlaintxtHuichaoFormat.dat"
 tab_file="${reference_run}/TAb2LL.dat"
+modee_hydro_file="${modee_reference_run}/hydroinfoPlaintxtHuichaoFormat.dat"
+modee_tab_file="${modee_reference_run}/TAb2LL.dat"
+modee_pythia_card="${modee_reference_run}/setup_pythia.cmnd"
 
 for path in "${parent_repo}" "${pythia_home}/include" "${pythia_home}/lib" \
-            "${tables_path}" "${hydro_file}" "${tab_file}"; do
+            "${tables_path}" "${hydro_file}" "${tab_file}" \
+            "${modee_hydro_file}" "${modee_tab_file}" "${modee_pythia_card}"; do
     if [[ ! -e "${path}" ]]; then
         echo "Required validation input is missing: ${path}" >&2
         exit 2
@@ -89,6 +94,8 @@ run_one() {
     local executable="$2"
     local config="$3"
     local pythia_card="$4"
+    local run_hydro="${5:-${hydro_file}}"
+    local run_tab="${6:-${tab_file}}"
     local run_dir="${output_root}/runs/${name}"
     local expected_events
     expected_events="$(awk -F= '$1 ~ /^Nev / {gsub(/[[:space:]]/, "", $2); print $2}' "${config}")"
@@ -105,8 +112,8 @@ run_one() {
           "${run_dir}/result_history.tsv" "${run_dir}/run.log" "${run_dir}/wall.txt"
     ln -sfn "${config}" "${run_dir}/hybrid_input.dat"
     ln -sfn "${pythia_card}" "${run_dir}/setup_pythia.cmnd"
-    ln -sfn "${hydro_file}" "${run_dir}/hydroinfoPlaintxtHuichaoFormat.dat"
-    ln -sfn "${tab_file}" "${run_dir}/TAb2LL.dat"
+    ln -sfn "${run_hydro}" "${run_dir}/hydroinfoPlaintxtHuichaoFormat.dat"
+    ln -sfn "${run_tab}" "${run_dir}/TAb2LL.dat"
     (
         cd "${run_dir}"
         /usr/bin/time -f "wall_seconds=%e" -o wall.txt \
@@ -127,9 +134,13 @@ run_parent_child() {
     local label="$1"
     local config="$2"
     local card="$3"
-    run_one "parent_${label}" "${parent_repo}/main" "${config}" "${card}" &
+    local run_hydro="${4:-${hydro_file}}"
+    local run_tab="${5:-${tab_file}}"
+    run_one "parent_${label}" "${parent_repo}/main" "${config}" "${card}" \
+        "${run_hydro}" "${run_tab}" &
     local parent_pid=$!
-    run_one "child_${label}" "${repo_root}/main" "${config}" "${card}" &
+    run_one "child_${label}" "${repo_root}/main" "${config}" "${card}" \
+        "${run_hydro}" "${run_tab}" &
     local child_pid=$!
     wait "${parent_pid}"
     wait "${child_pid}"
@@ -180,6 +191,23 @@ render_config "${output_root}/config/closure_mode_e_resolving.input" 0 14 0 true
 run_parent_child closure_mode_e_resolving \
     "${output_root}/config/closure_mode_e_resolving.input" "${generic_card}"
 
+# Dani failed-probe correction: these cards are small deterministic coverage
+# cases for independent coherent-source acceptance and resolving-parent veto.
+render_config "${output_root}/config/closure_mode_e_dani_parent_accept.input" \
+    29 2 0 true true E 1000000000.0 true 0.2
+sed -i 's/^use_fixed_xy = true$/use_fixed_xy = false/' \
+    "${output_root}/config/closure_mode_e_dani_parent_accept.input"
+run_parent_child closure_mode_e_dani_parent_accept \
+    "${output_root}/config/closure_mode_e_dani_parent_accept.input" \
+    "${modee_pythia_card}" "${modee_hydro_file}" "${modee_tab_file}"
+render_config "${output_root}/config/closure_mode_e_dani_parent_veto.input" \
+    29 2 0 true true E 0.45 true 0.2
+sed -i 's/^use_fixed_xy = true$/use_fixed_xy = false/' \
+    "${output_root}/config/closure_mode_e_dani_parent_veto.input"
+run_parent_child closure_mode_e_dani_parent_veto \
+    "${output_root}/config/closure_mode_e_dani_parent_veto.input" \
+    "${modee_pythia_card}" "${modee_hydro_file}" "${modee_tab_file}"
+
 for resolving_run in child_closure_mode_d child_closure_mode_c_resolving \
                      child_closure_mode_e_resolving; do
     resolving_count="$(sed -n 's/.*n_unresolved_resolving_scatters= \([0-9][0-9]*\).*/\1/p' \
@@ -199,6 +227,17 @@ python3 "${validation_root}/validate_history.py" D \
 python3 "${validation_root}/validate_history.py" E \
     "${output_root}/runs/child_closure_mode_e_resolving/result_history.tsv" \
     > "${output_root}/logs/history_mode_e.log"
+python3 "${repo_root}/test/analyze_modeE_validation.py" --strict \
+    --require-failed-veto --require-parent-accept \
+    --output "${output_root}/logs/history_mode_e_parent_accept.md" \
+    "${output_root}/runs/child_closure_mode_e_dani_parent_accept/result_history.tsv"
+python3 "${repo_root}/test/analyze_modeE_validation.py" --strict \
+    --require-failed-veto --require-parent-veto \
+    --output "${output_root}/logs/history_mode_e_parent_veto.md" \
+    "${output_root}/runs/child_closure_mode_e_dani_parent_veto/result_history.tsv"
+python3 "${validation_root}/validate_history.py" E \
+    "${output_root}/runs/child_closure_mode_e_dani_parent_accept/result_history.tsv" \
+    > "${output_root}/logs/history_mode_e_parent_accept_response.log"
 
 echo "Running feature-on charm and bottom coverage"
 for heavy_mode in 1 2 3; do
@@ -308,6 +347,7 @@ python3 "${validation_root}/summarize.py" "${output_root}/runs" \
     echo "pythia_home=${pythia_home}"
     echo "tables_path=${tables_path}"
     echo "reference_run=${reference_run}"
+    echo "modee_reference_run=${modee_reference_run}"
 } > "${output_root}/provenance.txt"
 
 echo "MMLHI validation passed. Summary: ${output_root}/summary.tsv"
