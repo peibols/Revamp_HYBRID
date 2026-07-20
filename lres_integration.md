@@ -516,4 +516,10 @@ Validation scratch files are under `/raid5/data/yjlee/hybrid_dev/test/mmli_modee
   - recursive and coherent candidate-accounting deltas both zero;
   - 53/53 reversed-frontier checks agree.
 - The seed-fixed samples exercise nested bottom-up tests and use live projected positions only; vacuum `d_perp` fallbacks are zero.
-- The color-neutral source guard is implemented directly in the source-selection path. A dedicated stochastic `gamma -> q qbar` fixture has not yet been captured, so that rare topology remains a targeted fixture rather than an observed production event.
+- The color-neutral source guard is implemented through the shared
+  `modee::is_colored_coherent_source` policy used directly by the source-selection path.
+  `test/run_modee_policy_unit.sh` deterministically checks quarks, antiquarks, the
+  gluon, photon, leptons, representative hadrons, and PDG ID zero. A stochastic
+  `gamma -> q qbar` integration fixture has not yet been captured, so that rare
+  shower topology remains an integration-test target rather than an observed
+  production event.
