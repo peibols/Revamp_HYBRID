@@ -1,0 +1,2 @@
+event_id	record_id	parton_index	pdg_id	record_type	t_start	t_end	temperature	mass2_start	mass2_end	mass_start	mass_end	energy_start	energy_end	delta_energy
+0	529	1	-4	moliere_propagation_step	7.16558140028	7.26558140028	0.51478799831	0	1.5625	0	1.25	48.7677477645	51.3506790708	2.58293130623

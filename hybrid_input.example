@@ -13,18 +13,28 @@ alpha = 0.404
 tmethod = 0
 mode = 0
 
-# Heavy-quark extension. Mode 0 is the exact backward-compatible MMLI path.
+# Heavy-quark extension. Mode 0 with the compatibility-default switches below
+# is the exact backward-compatible MMLI path.
 # heavy_quark_eloss_mode = 0: disabled
 # heavy_quark_eloss_mode = 1: heavy drag / light-HYBRID crossover
 # heavy_quark_eloss_mode = 2: mode 1 plus heavy-quark diffusion
 # heavy_quark_eloss_mode = 3: heavy-quark diffusion only
 # Modes 1 and 2 require the strong-coupling HYBRID setting mode=0.
 # The legacy coupling convention is kappa_HQ = pi*sqrt(heavy_quark_lambda).
-# Generic soft broadening (kappa above) remains additive in modes 1--3.
+# The charm/bottom mass settings are lower invariant-mass floors. The kernel
+# keeps a larger live shower mass (PYTHIA 8.315 defaults to m0=1.50/4.80 GeV).
+# Mode 1 retains generic kappa broadening. In modes 2 and 3, the first Boolean
+# below selects additive generic broadening (true, compatibility default) or
+# suppresses it (false, no-overlap diagnostic setting). Neither choice is yet
+# a complete soft-matching prescription for mode 2.
 #heavy_quark_eloss_mode = 0
 #heavy_quark_lambda = 0.0
 #heavy_quark_charm_mass = 1.25
 #heavy_quark_bottom_mass = 4.2
+#heavy_quark_add_generic_broadening_with_diffusion = true
+# Hard charm uses an inherited massless Moliere sampler and is not recommended
+# for physics production. Bottom hard Moliere is always disabled.
+#heavy_quark_enable_hard_moliere = true
 
 # Physics toggles
 # do_quench: true/false

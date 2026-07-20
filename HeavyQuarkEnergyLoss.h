@@ -28,7 +28,10 @@ struct Parameters {
 struct StepInput {
     int pdg_id = 0;
     double temperature = 0.;
-    // Local-fluid-frame distance traversed during this integration step.
+    // Local-fluid-frame elapsed time during this integration step:
+    // dt* = gamma_flow * (1 - v_flow dot v_parton) * dt.  The historical
+    // field name says "path length"; it equals a spatial path only in the
+    // ultrarelativistic limit.
     double fluid_path_length_fm = 0.;
     // Candidate light-parton HYBRID loss used by the drag crossover.
     bool baseline_available = false;

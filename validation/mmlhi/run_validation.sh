@@ -209,7 +209,8 @@ done
 
 # Preserve coverage of the first MMLHI release, where generic light-parton
 # broadening and heavy diffusion were additive. The recommended matrix below
-# uses the matched setting (false).
+# uses the no-overlap diagnostic setting (false); this is not yet a complete
+# production matching prescription.
 render_config "${output_root}/config/charm_mode_2_additive_compat.input" \
     870001 1 2 false false A 1.0 false 2.0 false true
 run_one charm_mode_2_additive_compat "${repo_root}/main" \

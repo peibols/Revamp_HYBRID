@@ -69,17 +69,17 @@ double normal_draw(numrand &nr, double variance) {
 }
 
 void apply_diffusion(std::array<double,4> &p_fluid, double mass,
-                     double temperature, double path_length_fm,
+                     double temperature, double fluid_time_fm,
                      double t_hooft_lambda, numrand &nr) {
-    if (t_hooft_lambda <= 0. || temperature <= 0. || path_length_fm <= 0.) return;
+    if (t_hooft_lambda <= 0. || temperature <= 0. || fluid_time_fm <= 0.) return;
     put_on_shell(p_fluid, mass);
     const double gamma = std::max(1., p_fluid[3] / mass);
     // Legacy convention: kappa_HQ = pi*sqrt(lambda), with
-    // <Delta p_i^2> = kappa_HQ*gamma*T^3*Delta x for each component.
+    // <Delta p_i^2> = kappa_HQ*gamma*T^3*Delta t* for each component.
     const double kappa_hq = kPi * std::sqrt(t_hooft_lambda);
-    const double path_length_inverse_gev = path_length_fm / kHbarCGeVFm;
+    const double fluid_time_inverse_gev = fluid_time_fm / kHbarCGeVFm;
     const double variance = kappa_hq * gamma * std::pow(temperature, 3.) *
-                            path_length_inverse_gev;
+                            fluid_time_inverse_gev;
     p_fluid[0] += normal_draw(nr, variance);
     p_fluid[1] += normal_draw(nr, variance);
     p_fluid[2] += normal_draw(nr, variance);
@@ -323,10 +323,10 @@ StepResult apply_step(std::array<double,4> &p_lab,
     auto p_fluid_drag = p_fluid_before;
     const double eta_drag = 0.5 * kPi * std::sqrt(parameters.t_hooft_lambda) *
                             input.temperature * input.temperature / result.effective_mass;
-    const double path_length_inverse_gev = input.fluid_path_length_fm / kHbarCGeVFm;
+    const double fluid_time_inverse_gev = input.fluid_path_length_fm / kHbarCGeVFm;
     // This is the legacy first-order drag update for the spatial momentum.
     // Recomputing E from the mass shell removes its O(step^2) inconsistency.
-    const double drag_factor = std::max(0., 1. - eta_drag * path_length_inverse_gev);
+    const double drag_factor = std::max(0., 1. - eta_drag * fluid_time_inverse_gev);
     p_fluid_drag[0] *= drag_factor;
     p_fluid_drag[1] *= drag_factor;
     p_fluid_drag[2] *= drag_factor;

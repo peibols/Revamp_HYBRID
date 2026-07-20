@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import math
 import re
@@ -37,6 +38,13 @@ RECURSIVE_RE = re.compile(
     r"Recursive unresolved Moliere diagnostics:.*"
     r" n_recursive_frontier_permutation_checks= (?P<permutation_checks>\d+)"
     r" n_recursive_frontier_permutation_mismatches= (?P<permutation_mismatches>\d+)"
+    r".* n_recursive_opening_closure_checks= (?P<opening_checks>\d+)"
+    r" avg_recursive_opening_spatial_residual= (?P<opening_avg_spatial>[-+0-9.eE]+)"
+    r" max_recursive_opening_spatial_residual= (?P<opening_max_spatial>[-+0-9.eE]+)"
+    r" avg_recursive_opening_energy_residual= (?P<opening_avg_energy>[-+0-9.eE]+)"
+    r" max_recursive_opening_energy_residual= (?P<opening_max_energy>[-+0-9.eE]+)"
+    r" n_recursive_live_dperp_tests= (?P<live_dperp_tests>\d+)"
+    r" n_recursive_vacuum_dperp_fallbacks= (?P<vacuum_dperp_fallbacks>\d+)"
 )
 FATAL_PATTERNS = (
     "Both charms!?",
@@ -61,14 +69,14 @@ def output_count(path: Path, prefix: str) -> int:
         return sum(1 for line in stream if line.startswith(prefix))
 
 
-def parse_log(path: Path) -> dict[str, int | str]:
+def parse_log(path: Path) -> dict[str, int | float | str]:
     text = path.read_text(encoding="utf-8", errors="replace")
     failures = [pattern for pattern in FATAL_PATTERNS if pattern in text]
     heavy_match = HEAVY_RE.search(text)
     hard_heavy_match = HARD_HEAVY_RE.search(text)
     dynamic_match = DYNAMIC_RE.search(text)
     recursive_match = RECURSIVE_RE.search(text)
-    result: dict[str, int | str] = {
+    result: dict[str, int | float | str] = {
         "failures": ",".join(failures),
         "hadronization_retries": text.count(
             "Pythia::forceHadronLevel: hadronLevel failed; try again"
@@ -85,11 +93,35 @@ def parse_log(path: Path) -> dict[str, int | str]:
     if dynamic_match:
         result.update({key: int(value) for key, value in dynamic_match.groupdict().items()})
     if recursive_match:
-        result.update({key: int(value) for key, value in recursive_match.groupdict().items()})
+        for key, value in recursive_match.groupdict().items():
+            result[key] = float(value) if "avg" in key or "max" in key else int(value)
     return result
 
 
-def summarize_run(run_dir: Path) -> dict[str, int | str]:
+def parse_opening_history(path: Path) -> dict[str, int | float]:
+    if not path.is_file():
+        return {}
+    residuals: list[float] = []
+    with path.open(encoding="utf-8", errors="replace", newline="") as stream:
+        for row in csv.DictReader(stream, delimiter="\t"):
+            if row.get("record_type") != "recursive_opening_closure":
+                continue
+            if row.get("label") != "relative_spatial_residual":
+                continue
+            value = float(row["qperp"])
+            if not math.isfinite(value):
+                raise RuntimeError(f"{path}: non-finite Mode-E opening residual")
+            residuals.append(value)
+    if not residuals:
+        return {}
+    return {
+        "opening_history_checks": len(residuals),
+        "opening_relative_avg": sum(residuals) / len(residuals),
+        "opening_relative_max": max(residuals),
+    }
+
+
+def summarize_run(run_dir: Path) -> dict[str, int | float | str]:
     log = run_dir / "run.log"
     hadrons = run_dir / "result_Hadrons.out"
     partons = run_dir / "result_Partons.out"
@@ -97,6 +129,7 @@ def summarize_run(run_dir: Path) -> dict[str, int | str]:
         if not required.is_file():
             raise RuntimeError(f"missing validation output: {required}")
     result = parse_log(log)
+    result.update(parse_opening_history(run_dir / "result_history.tsv"))
     result.update(
         {
             "events": output_count(hadrons, "# event "),
@@ -133,7 +166,7 @@ def main() -> int:
     parser.add_argument("--expected-events", type=int)
     args = parser.parse_args()
 
-    rows: list[tuple[str, dict[str, int | str]]] = []
+    rows: list[tuple[str, dict[str, int | float | str]]] = []
     for log in sorted(args.output_dir.glob("*/run.log")):
         run_dir = log.parent
         if run_dir.name.startswith("invalid_"):
@@ -153,6 +186,10 @@ def main() -> int:
             raise RuntimeError(f"{run_dir.name}: unresolved-candidate accounting does not close")
         if row.get("permutation_mismatches", 0) != 0:
             raise RuntimeError(f"{run_dir.name}: Mode E permutation mismatch")
+        if (row.get("opening_checks") is not None and
+                row.get("opening_history_checks") is not None and
+                row["opening_checks"] != row["opening_history_checks"]):
+            raise RuntimeError(f"{run_dir.name}: Mode E opening-history count mismatch")
         rows.append((run_dir.name, row))
 
     columns = (
@@ -177,6 +214,15 @@ def main() -> int:
         "resolving",
         "permutation_checks",
         "permutation_mismatches",
+        "opening_checks",
+        "opening_avg_spatial",
+        "opening_max_spatial",
+        "opening_avg_energy",
+        "opening_max_energy",
+        "opening_relative_avg",
+        "opening_relative_max",
+        "live_dperp_tests",
+        "vacuum_dperp_fallbacks",
         "heavy_hard_scattered",
         "hadron_sha256",
         "parton_sha256",

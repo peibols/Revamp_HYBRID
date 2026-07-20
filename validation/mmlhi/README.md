@@ -38,7 +38,11 @@ The runner checks:
 - output completeness, invalid-step counters, dynamic candidate accounting,
   one recoil/hole pair per accepted unresolved scattering, finite output
   values, Mode-E frontier-permutation diagnostics, and explicit counts of
-  PYTHIA hadronization retries or give-ups.
+  PYTHIA hadronization retries or give-ups;
+- Mode-E opening energy, absolute spatial-momentum, and relative
+  spatial-momentum residuals. These are reported rather than treated as closed:
+  the current live-parent opening is energy-preserving, not a four-momentum
+  conserving daughter materialization.
 
 The matrix is an implementation validation. It is not a heavy-flavor physics
 tune and does not establish D- or B-hadron observables because the legacy
@@ -50,3 +54,13 @@ For controlled same-tree comparisons against a legacy heavy output, use:
 validation/mmlhi/compare_legacy_partons.py \
   LEGACY_RESULT_PARTONS MMLHI_RESULT_PARTONS --max-abs-eta 1
 ```
+
+To inspect heavy-parton mass-shell changes in a ROOT event display, use:
+
+```bash
+validation/mmlhi/audit_event_display_mass_shell.py eventDisplay.root
+```
+
+The July 20 seed-870001 Mode-E audit output is stored in
+[`results/20260720-modee-heavy-mass-shell-audit.tsv`](results/20260720-modee-heavy-mass-shell-audit.tsv).
+It captures the currently known massless-daughter-to-heavy-floor transition.

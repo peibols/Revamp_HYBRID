@@ -7,8 +7,11 @@ This branch layers a heavy-quark transport kernel on
 into the existing MMLI propagation paths. It does not yet port the legacy
 heavy-flavor recombination, coalescence, or dedicated heavy-hadron analysis.
 
-The implementation is default-off. With `heavy_quark_eloss_mode = 0`, it does
-no heavy-specific arithmetic and consumes no additional random numbers.
+The implementation is default-off. With `heavy_quark_eloss_mode = 0` and the
+compatibility-default Boolean switches, it does no heavy-specific arithmetic,
+consumes no additional random numbers, and follows parent MMLI exactly. A user
+can still change charm hard-scattering eligibility with the separate hard
+Moliere switch, so mode 0 alone is not the complete compatibility condition.
 
 ## Runtime Interface
 
@@ -30,8 +33,11 @@ kappa_HQ = pi * sqrt(heavy_quark_lambda).
 
 For example, `kappa_HQ = 4.4` corresponds to
 `heavy_quark_lambda = (4.4/pi)^2`, approximately `1.96`. The mass settings are
-floors. If a shower parton already has a larger timelike invariant mass, the
-kernel preserves that larger mass.
+lower invariant-mass floors, not replacements for the live shower mass. If a
+parton already has a larger timelike invariant mass, the kernel preserves it.
+With the unmodified pinned PYTHIA 8.315 particle data, direct charm and bottom
+quarks normally enter with `m0 = 1.50` and `4.80 GeV`; those values are larger
+than the configured `1.25` and `4.2 GeV` floors.
 
 The two Boolean options default to `true` so configurations from the first
 MMLHI implementation retain their behavior. The controlled no-overlap
@@ -45,7 +51,7 @@ Modes 1 and 2 require the global light-parton setting `mode = 0`:
 
 | Heavy mode | Behavior for charm and bottom |
 |---|---|
-| 0 | Disabled; exact parent-MMLI path |
+| 0 | Disabled; exact parent-MMLI path when the compatibility-default Boolean switches are retained |
 | 1 | Choose the smaller loss between heavy drag and the light-HYBRID strong-coupling candidate |
 | 2 | Mode 1, with heavy diffusion added whenever the heavy-drag branch is selected |
 | 3 | Heavy diffusion only; the previously advertised but broken legacy mode is now explicit |
@@ -60,18 +66,22 @@ For a charm or bottom quark in a cell with `T >= Tc`:
 2. The four-momentum is boosted to the local fluid rest frame.
 3. The effective heavy mass is the larger of the configured floor and the
    current timelike invariant mass.
-4. For modes 1 and 2, form the drag coefficient
+4. Compute the local-fluid-frame elapsed time
+   `dt_star = gamma_flow*(1-v_flow dot v_parton)*dt`. The implementation keeps
+   the historical field name `fluid_path_length_fm`, but this is a time-like
+   increment; it equals a spatial path only for an ultrarelativistic projectile.
+5. For modes 1 and 2, form the drag coefficient
    `eta_D = (pi/2) sqrt(lambda) T^2/M` and apply the first-order spatial update
-   `p_i -> p_i (1 - eta_D*dx/0.2)`. Energy is recomputed on shell.
-5. Compare that drag energy loss to the light-HYBRID strong-coupling candidate
+   `p_i -> p_i (1 - eta_D*dt_star/0.2)`. Energy is recomputed on shell.
+6. Compare that drag energy loss to the light-HYBRID strong-coupling candidate
    in the same fluid frame. Use heavy drag when it loses less energy, when the
    light candidate would cross the mass shell, or when the light stopping
    distance is exhausted. Otherwise, apply the winning baseline energy loss in
    the same fluid frame while preserving the heavy mass shell.
-6. In mode 2, add independent Gaussian kicks with per-component variance
-   `pi*sqrt(lambda)*gamma*T^3*dx/0.2` after a selected drag update.
-7. In mode 3, apply only the diffusion update.
-8. Put the heavy quark on shell and boost back to the lab frame.
+7. In mode 2, add independent Gaussian kicks with per-component variance
+   `pi*sqrt(lambda)*gamma*T^3*dt_star/0.2` after a selected drag update.
+8. In mode 3, apply only the diffusion update.
+9. Put the heavy quark on shell and boost back to the lab frame.
 
 The factor `1/0.2` preserves the codebase's existing GeV/fm conversion. The
 new on-shell reconstruction intentionally removes the order-step-squared
@@ -90,8 +100,12 @@ tested directly.
   transport only when the active object itself has charm or bottom identity.
 - **Moliere modes A-E:** the same kernel runs inside the Moliere segment
   stepper. Daughter-level segments receive daughter-level heavy transport.
-  Mode D/E speculative candidate probes include the heavy kinematics but do
-  not increment committed-step diagnostics.
+  Mode D speculative probes are momentum/response side-effect-free but advance
+  copied transport RNG state in the fixed daughter-1 then daughter-2 sequence.
+  Mode E instead gives each frontier object a deterministic branch-local RNG
+  stream, restores the global elastic generator after a probe batch, and has
+  zero traversal-order mismatches in the tested samples. Neither mode increments
+  committed heavy-step diagnostics for speculative probes.
 - **Hard Moliere plus diffusion:** eligible hard scattering occurs before the
   continuous heavy update. Charm hard scattering is controlled separately by
   `heavy_quark_enable_hard_moliere`; bottom is always excluded. Generic soft
@@ -108,6 +122,32 @@ tested directly.
   bottom remains excluded from hard Moliere sampling.
 - **Sources/wakes:** no separate heavy response model is added. Builds with
   the existing source bookkeeping see the net step-level momentum change.
+
+### Mode-E heavy-flavor boundary
+
+Mode E currently materializes two daughters from a live coherent parent as
+massless four-vectors. It preserves the live parent energy exactly and rotates
+the vacuum daughter axes, but it does not preserve the parent's full spatial
+momentum. In the fresh 20-event heavy Mode-E sample, 23 openings have an average
+spatial residual of `0.189 GeV`, a maximum of `1.856 GeV`, and a maximum relative
+residual of `0.222`; the energy residual is zero at printed precision.
+
+This construction is not mass-safe for heavy daughters. In the event-display
+audit with seed `870001`, an unresolved anti-charm daughter was materialized at
+`t = 6.166 fm/c` with zero invariant mass. It remained massless until its first
+in-medium heavy update at `t = 7.166 fm/c`, where the kernel imposed the
+`1.25 GeV` floor and the lab energy changed from `48.768` to `51.351 GeV` before
+ordinary drag. This is an open Mode-E/heavy interface defect, not a validated
+energy-loss effect.
+
+### Hadronization boundary
+
+`LundGenerator` does not pass the stored transport energy directly to PYTHIA.
+It keeps the transported three-momentum and rebuilds the energy with PYTHIA's
+particle-data mass `m0`. This is harmless for a parton already on that shell,
+but it is another energy discontinuity for a Mode-E heavy daughter carried on
+the configured floor. Heavy fragmentation/coalescence and energy closure across
+this boundary are therefore not validated.
 
 ## Diagnostics
 
@@ -152,6 +192,11 @@ Validation used PYTHIA 8.315. The reproducible runner and exact results are in
   Targeted C, D, and E samples exercise resolving scatterings; candidate
   accounting closes, Mode E has zero frontier-order mismatches, and each
   accepted unresolved scattering produces exactly one recoil and one hole.
+- The fresh feature-on 20-event C, D, and E samples contain zero unresolved
+  elastic candidates. They validate continuous heavy transport through those
+  code paths, but not a heavy daughter participating in a resolving dynamic
+  scattering. Dynamic resolving coverage currently comes from heavy-mode-off
+  tests.
 - A controlled same-tree comparison to the clean legacy heavy branch gives
   small parton-level differences at `|eta| < 1`: 3.64% RMS in charm `pT` and
   1.58% RMS in bottom `pT` across 11 matched final heavy quarks of each flavor.
@@ -169,5 +214,5 @@ physics validation. The no-overlap configuration prevents generic soft
 Moliere, but leaves baseline-winning Mode-2 steps without a stochastic soft
 kick. A production claim still requires a resolved soft-matching prescription,
 a massive hard-scattering implementation if hard charm is desired, plus the
-intended D/B-hadron formation contract and observable-level `R_AA` and `v2`
-validation.
+  a mass-aware, four-momentum-defined Mode-E opening, the intended D/B-hadron
+  formation contract, and observable-level `R_AA` and `v2` validation.

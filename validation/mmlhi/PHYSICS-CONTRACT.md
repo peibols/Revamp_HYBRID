@@ -20,6 +20,14 @@ local fluid frame. It applies the smaller allowed energy loss while preserving
 the heavy-particle mass shell. As in the legacy implementation, heavy diffusion
 is added only when the heavy-drag branch wins.
 
+The configured masses are lower invariant-mass floors. They do not overwrite a
+larger live shower mass. The pinned PYTHIA 8.315 particle data uses
+`m0(c)=1.50 GeV` and `m0(b)=4.80 GeV`, so direct heavy quarks normally retain
+those larger masses. The per-step increment is
+`dt_star = gamma_flow*(1-v_flow dot v_parton)*dt`, the elapsed time in the local
+fluid frame. The C++ field retains the historical `fluid_path_length_fm` name;
+calling it a spatial distance is only accurate in the ultrarelativistic limit.
+
 The two Boolean settings default to `true` to preserve results from the first
 MMLHI implementation when they are omitted. They are set to `false` in the
 validation template for the reasons below.
@@ -87,6 +95,40 @@ materialized active object; an unresolved light parent receives light/coherent
 transport. This mode-dependent identity assignment is a physics choice and
 must be included in any Mode A-E interpretation.
 
+Mode D daughter probes do not commit momentum, recoil, hole, or heavy-step
+diagnostics, but they do advance copied RNG state in a fixed daughter-1 then
+daughter-2 sequence and return that state to the global transport generator.
+Only Mode E uses deterministic branch-local probe streams and restores the
+global elastic generator after the probe batch. “Side-effect-free” must
+therefore not be used as an unqualified description of Mode D.
+
+There are two additional Mode-E qualifications:
+
+- The current live-parent opening preserves total daughter energy but not the
+  full parent three-momentum. In the 20-event feature-on sample, the 23 opening
+  operations have average/max spatial residuals of `0.189/1.856 GeV`; the
+  maximum relative residual is `0.222`. Energy residuals are zero at printed
+  precision. This is not four-momentum conservation.
+- The opening helper creates massless daughters. A seed-`870001` event-display
+  audit materializes an anti-charm daughter massless at `t=6.166 fm/c`; its
+  first in-medium heavy update at `t=7.166 fm/c` imposes the `1.25 GeV` floor
+  and changes lab energy from `48.768` to `51.351 GeV`. A mass-aware opening
+  prescription is required before Mode E is used for heavy-flavor physics.
+
+The feature-on 20-event C/D/E runs sampled no unresolved elastic candidate.
+They establish continuous heavy execution through those paths, while the
+resolving-scattering and response-accounting tests are currently heavy-mode-off.
+
+## Hadronization Interface
+
+The current `LundGenerator` keeps each transported three-momentum but rebuilds
+its energy from PYTHIA's particle-data mass before appending the parton. It does
+not pass the transport energy through unchanged. This re-on-shell operation is
+not an integrated heavy-hadron formation model and can add another energy
+discontinuity when a transported heavy daughter is on the configured floor
+rather than PYTHIA's `m0`. No D/B-hadron claim should use this interface without
+an explicit fragmentation/coalescence and four-momentum-closure validation.
+
 ## Remaining Physics Gates
 
 The no-overlap configuration is suitable for implementation validation and
@@ -99,6 +141,8 @@ require:
 - observable-level `R_AA` and `v2` validation;
 - a massive hard-scattering implementation before enabling hard Moliere for
   charm;
+- a mass-aware, four-momentum-defined Mode-E daughter materialization before
+  combining recursive coherence with heavy transport;
 - an explicit soft-matching choice for baseline-winning Mode-2 steps;
 - a separate physics decision and tables before adding hard Moliere for
   bottom.
