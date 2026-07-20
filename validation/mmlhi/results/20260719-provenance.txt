@@ -1,0 +1,5 @@
+parent_commit=a1989cfa9273c1878371ac089757fada7aa84241
+child_commit=f04285d9650140b891f8b9240e832c7b82fddcb0
+pythia_home=/data/yjlee/pythia/pythia8/pythia8315
+tables_path=/raid5/data/yjlee/hybrid_dev/moliere_table_bundle/a10_tables
+reference_run=/raid5/data/yjlee/hybrid_dev/test/events_per_seed_hybrid_timing_20260505/mmli_pbpb_noelastic_events1_n1/no_moliere_no_wake/seed_860001

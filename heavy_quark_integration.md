@@ -106,8 +106,9 @@ kicks can add energy.
 
 ## Validation Performed
 
-Validation used PYTHIA 8.315 and scratch outputs under
-`/raid5/data/yjlee/hybrid_dev/test/mmhli_validation_20260719`.
+Validation used PYTHIA 8.315. The reproducible runner and exact results are in
+[`validation/mmlhi`](validation/mmlhi/README.md) and
+[`RESULTS-20260719.md`](validation/mmlhi/RESULTS-20260719.md).
 
 - Standalone deterministic tests cover disabled-mode RNG closure, light-parton
   bypass, analytic drag, crossover selection, diffusion determinism, explicit
@@ -118,11 +119,21 @@ Validation used PYTHIA 8.315 and scratch outputs under
   byte-identically.
 - Forced charm finite-LRES, Moliere, and combined finite-LRES-plus-Moliere
   smokes complete with nonzero committed heavy-step counters.
+- Heavy-mode-off Modes A-E close byte-for-byte to the parent MMLI branch.
+  Targeted C, D, and E samples exercise resolving scatterings; candidate
+  accounting closes, Mode E has zero frontier-order mismatches, and each
+  accepted unresolved scattering produces exactly one recoil and one hole.
+- A 100-event forced-charm Moliere sample retains four hard-scattered charm
+  final partons while executing 207,185 heavy steps with no invalid update.
 - A forced bottom event completes in standard and Moliere configurations. The
-  two outputs agree when no hard scattering is sampled, as expected from the
-  current bottom exclusion.
+  parton outputs agree when no hard scattering is sampled, as expected from
+  the current bottom exclusion. Hadron files differ because requesting
+  Moliere selects the existing Moliere hadronization path.
 
 These are implementation and smoke validations, not sufficient-statistics
-physics validation. The next stage is charm/bottom parton spectra followed by
-the intended D/B-hadron `R_AA` and `v2` setup after the heavy hadronization
-contract is integrated.
+physics validation. In particular, generic soft `kappa` broadening and heavy
+diffusion are currently additive and may double count soft momentum transfer;
+the charm hard-scattering path also needs a dedicated massive-kinematics
+review. The next stage is charm/bottom parton spectra followed by the intended
+D/B-hadron `R_AA` and `v2` setup after the heavy hadronization contract is
+integrated.

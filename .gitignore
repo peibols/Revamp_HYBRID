@@ -12,6 +12,8 @@ test/*.sh
 test/bin/
 test/hydroinfo*.dat
 test/hydro_test.input
+__pycache__/
+*.pyc
 
 # macOS
 .DS_Store
