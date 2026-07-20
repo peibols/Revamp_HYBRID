@@ -4,6 +4,8 @@ This directory contains the reproducible software-validation matrix for the
 heavy-quark transport layer on top of MMLI. It uses the pinned PYTHIA 8.315
 installation by default and writes all generated inputs, binaries, logs, and
 event output under the workspace `test/` directory.
+The callback-contract check uses the Python `uproot` package to inspect the
+generated ROOT event-display tree.
 
 Run from the MMLHI worktree:
 
@@ -25,9 +27,14 @@ They can be overridden with `PARENT_REPO`, `PYTHIA_HOME`, `MOLIERE_TABLES`,
 The runner checks:
 
 - pinned parent and child builds;
+- the Mode-E coherent-source eligibility policy for quarks, gluons, photons,
+  leptons, representative hadrons, and PDG ID zero;
 - unit tests plus AddressSanitizer and UndefinedBehaviorSanitizer;
 - byte-identical heavy-mode-off closure in standard, LRES, Moliere, and
   combined Mode A-E propagation;
+- byte-identical standard Moliere output with a null scattering callback and
+  an `Apply` observer callback, with ROOT records proving that hard candidates
+  and one recoil/hole pair per candidate were observed;
 - targeted Mode-C, Mode-D, and recursive Mode-E resolving-scattering paths;
 - seed-fixed Mode-E failed-daughter veto, independent coherent-source accept,
   and resolving parent-candidate veto paths;

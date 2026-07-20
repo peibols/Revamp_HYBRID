@@ -109,7 +109,8 @@ run_one() {
         fi
     fi
     rm -f "${run_dir}/result_Hadrons.out" "${run_dir}/result_Partons.out" \
-          "${run_dir}/result_history.tsv" "${run_dir}/run.log" "${run_dir}/wall.txt"
+          "${run_dir}/result_history.tsv" "${run_dir}/eventDisplay.root" \
+          "${run_dir}/run.log" "${run_dir}/wall.txt"
     ln -sfn "${config}" "${run_dir}/hybrid_input.dat"
     ln -sfn "${pythia_card}" "${run_dir}/setup_pythia.cmnd"
     ln -sfn "${run_hydro}" "${run_dir}/hydroinfoPlaintxtHuichaoFormat.dat"
@@ -152,6 +153,8 @@ build_repo "${parent_repo}" > "${output_root}/logs/build_parent.log" 2>&1
 build_repo "${repo_root}" > "${output_root}/logs/build_child.log" 2>&1
 
 echo "Running heavy-kernel unit and sanitizer tests"
+"${repo_root}/test/run_modee_policy_unit.sh" \
+    > "${output_root}/logs/modee_policy_unit.log" 2>&1
 "${repo_root}/test/run_heavy_quark_unit.sh" > "${output_root}/logs/unit.log" 2>&1
 g++ -std=c++17 -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined \
     -I"${repo_root}" \
@@ -173,6 +176,24 @@ render_config "${output_root}/config/closure_moliere.input" 860001 1 0 true fals
 run_parent_child closure_standard "${output_root}/config/closure_standard.input" "${generic_card}"
 run_parent_child closure_lres "${output_root}/config/closure_lres.input" "${generic_card}"
 run_parent_child closure_moliere "${output_root}/config/closure_moliere.input" "${generic_card}"
+
+# The ordinary do_elastic path passes a null scattering callback. Enabling the
+# event display installs an observer callback that always returns Apply. Both
+# paths must commit exactly the same physics state and RNG sequence.
+cp "${output_root}/config/closure_moliere.input" \
+   "${output_root}/config/closure_moliere_apply_observer.input"
+sed -i 's/^doEventDisplay = false$/doEventDisplay = true/' \
+    "${output_root}/config/closure_moliere_apply_observer.input"
+run_parent_child closure_moliere_apply_observer \
+    "${output_root}/config/closure_moliere_apply_observer.input" "${generic_card}"
+assert_same_output parent_closure_moliere parent_closure_moliere_apply_observer
+assert_same_output child_closure_moliere child_closure_moliere_apply_observer
+for callback_run in parent_closure_moliere_apply_observer \
+                    child_closure_moliere_apply_observer; do
+    python3 "${validation_root}/validate_callback_event_display.py" \
+        "${output_root}/runs/${callback_run}/eventDisplay.root" \
+        > "${output_root}/logs/${callback_run}.log"
+done
 
 for lres_mode in A B C D E; do
     mode_lower="$(printf '%s' "${lres_mode}" | tr '[:upper:]' '[:lower:]')"
