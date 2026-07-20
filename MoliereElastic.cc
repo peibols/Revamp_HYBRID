@@ -427,6 +427,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                         }
 
                         vector<double> vkf{kf.x(), kf.y(), kf.z(), kf.t()};
+                        ScatteringDecision scattering_decision = ScatteringDecision::Apply;
                         if (scattering_callback != nullptr) {
                             ScatteringCandidate candidate;
                             candidate.pos = to_arr(vpos);
@@ -438,30 +439,33 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                                 p_before_scattering, p_after_scattering);
                             candidate.recoiler_id = recoiler_id;
                             candidate.hole_id = kf_id;
-                            if ((*scattering_callback)(candidate) == ScatteringDecision::StopBeforeApply) {
+                            scattering_decision = (*scattering_callback)(candidate);
+                            if (scattering_decision == ScatteringDecision::StopBeforeApply) {
                                 marker = 1;
                                 break;
                             }
                         }
 
-                        if (heavy_quark_parameters.mode != heavy_quark::Mode::Disabled &&
-                            heavy_quark::is_heavy_quark(id)) {
-                            const auto check = heavy_quark::check_hard_scattering_kinematics(
-                                to_arr(p_before_scattering), to_arr(p_after_scattering),
-                                to_arr(recoiler_p), to_arr(vkf),
-                                heavy_quark::mass_for_pdg(id, heavy_quark_parameters));
-                            heavy_quark::record_hard_scattering_check(
-                                check, heavy_quark_diagnostics);
-                        }
+                        if (scattering_decision == ScatteringDecision::Apply) {
+                            if (heavy_quark_parameters.mode != heavy_quark::Mode::Disabled &&
+                                heavy_quark::is_heavy_quark(id)) {
+                                const auto check = heavy_quark::check_hard_scattering_kinematics(
+                                    to_arr(p_before_scattering), to_arr(p_after_scattering),
+                                    to_arr(recoiler_p), to_arr(vkf),
+                                    heavy_quark::mass_for_pdg(id, heavy_quark_parameters));
+                                heavy_quark::record_hard_scattering_check(
+                                    check, heavy_quark_diagnostics);
+                            }
 
-                        had_scattering = 1;
-                        p = p_after_scattering;
-                        new_particles.emplace_back(Parton(recoiler_p, 100000000., 0., 0, -1, -1,
-                                                          recoiler_id, "recoiler", 0, 0, false));
-                        new_particles.back().vSetRi(to_arr(vpos));
-                        new_particles.emplace_back(Parton(vkf, 100000000., 0., 0, -1, -1, kf_id, "hole", 0, 0, true));
-                        new_particles.back().vSetRi(to_arr(vpos));
-                        p_prev = p;
+                            had_scattering = 1;
+                            p = p_after_scattering;
+                            new_particles.emplace_back(Parton(recoiler_p, 100000000., 0., 0, -1, -1,
+                                                              recoiler_id, "recoiler", 0, 0, false));
+                            new_particles.back().vSetRi(to_arr(vpos));
+                            new_particles.emplace_back(Parton(vkf, 100000000., 0., 0, -1, -1, kf_id, "hole", 0, 0, true));
+                            new_particles.back().vSetRi(to_arr(vpos));
+                            p_prev = p;
+                        }
                     } else if (elscat[0] == -1) {
                         std::cout << " Elscat problem!" << std::endl;
                     }

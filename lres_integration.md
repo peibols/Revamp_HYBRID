@@ -225,9 +225,9 @@ Mode D:
 - Failed Mode-D tests coherently apply a kick that was sampled from a daughter probe. This is deliberate in the current implementation and should be described as an approximation.
 - Mode E follow-up implemented locally: when a coherent object opens, daughter momenta are now materialized by rotating the vacuum daughter directions into the live parent axis and conserving the live parent energy. If no elastic candidate decoheres the parent before the normal finite-LRES boundary, the boundary split now seeds live daughter states so coherent parent deflections are inherited by later descendants. The residual spatial-momentum mismatch from opening an on-shell coherent parent is an explicit approximation to validate.
 - Mode E follow-up implemented locally: recursive `q_perp d_perp` tests now use live projected daughter positions when available (`qperp_dperp_live` in the history output) and fall back to the old vacuum estimate only if projection fails (`qperp_dperp_vac_fallback`). Diagnostics count live tests and fallbacks.
-- Remaining TODO for Mode E: when a daughter/frontier candidate fails the resolution test, the current code still maps that sampled daughter kick upward to the coherent parent. The desired correction is to veto the failed daughter candidate, discard its sampled `q_perp`/recoil, and sample the active coherent object over the remaining unresolved interval. Accept the coherent-source sample only when the parent gets a kick that is itself unresolved (`q_perp * d_perp <= c_res`) and therefore legitimately coherent. If a parent-sampled candidate would resolve the dipole, veto that parent candidate too and keep resampling. The coherent-source sampling must use the coherent object's color/scattering rate; if the active parent is color neutral, e.g. `gamma -> q qbar`, no coherent Moliere kick should be applied to the photon.
-- Remaining TODO for Mode E: replace the current whole-unresolved-interval/segment treatment with an event-driven or timestep coherence scheduler. The scheduler should advance through the interval by actual control points--elastic/Moliere candidate time, hydro integration step, PYTHIA splitting time, geometric finite-`L_res` boundary--and re-evaluate the live coherence graph with updated positions and momenta at each point. This avoids treating the interval from splitting to decoherence as a single frozen object when accepted kicks can change the later daughter geometry and local QGP sampling.
-- Remaining TODO for Mode E: audit whether deterministic frontier order (`4, 5, 3`, for example) biases candidate selection or RNG consumption. The robust target is an order-independent candidate scheduler, not a cosmetic shuffle.
+- Implemented on July 20 for Mode E: a daughter/frontier candidate that fails every enclosing-dipole test is now vetoed completely. Its sampled `q_perp`, post-kick momentum, recoil, and hole are discarded. The active colored coherent object is then sampled with its own identity and rate until it produces an unresolving candidate or the finite-`L_res` interval ends. Resolving parent candidates are vetoed with `VetoAndContinue`; a color-neutral coherent parent is never sampled as a Moliere source.
+- Implemented on July 20 for Mode E: the scheduler now advances through ordered candidate times, daughter-formation boundaries, the Moliere integrator's hydro steps, and the fixed finite-`L_res` boundary. Each accepted interaction restarts from its updated position and momentum. Parent-candidate dipole sizes are projected from the parent probe's candidate-time state, so continuous updates accumulated while resampling are included. The precomputed finite-`L_res` timeline itself is intentionally unchanged.
+- Validated on July 20 for Mode E: branch-local probe streams are order independent in the targeted correction samples. The parent-accept and parent-veto cases give `54/54` and `53/53` reversed-frontier matches, respectively.
 - TODO validation study: for the nested example `1 -> 2 + 3`, `2 -> 4 + 5` (final frontier `4,5,3`), compare how the angular distribution relative to the original parent-1 direction changes with and without color-coherence treatment. Track angles such as `DeltaR(4,1)`, `DeltaR(5,1)`, `DeltaR(3,1)`, and the effective-subtree axes before/after coherent parent kicks, then compare coherent propagation, independent daughter propagation, and recursive Mode-E-style coherence.
 - The event-display tree/timeline animation is currently a diagnostic visualization, not a physics validation observable.
 - The slide source has local changes not yet pushed to Overleaf after the slide 8-12 code-link update.
@@ -471,3 +471,49 @@ Validation TODOs after implementing this correction:
 - Compare the accepted candidate-time distribution before and after the veto/resampling correction.
 - Re-run the reversed-frontier scheduler check, because the veto path must remain independent of daughter traversal order.
 - Re-check examples with color-neutral parents to confirm no coherent photon kick is generated.
+
+## Status Snapshot: 2026-07-20 Mode-E Failed-Probe Correction
+
+The Dani failed-probe correction is implemented on `main_moliere_lres_integration`.
+
+### Accepted-event algorithm
+
+1. Build the formed colored frontier below each active coherent object. End the current search window at the next daughter-formation time or the existing finite-`L_res` boundary.
+2. Probe every frontier branch with a branch-local Moliere RNG stream and select the earliest candidate by timestamp. Probes do not commit momentum, recoil, or hole state.
+3. Starting from the struck branch, test enclosing sibling dipoles bottom-up with the actual sampled `q_perp` and live candidate-time `d_perp`.
+4. If a test passes, materialize the required live daughter path, apply the kick to the resolved branch, create exactly one recoil/hole pair, and restart the scheduler from that interaction time.
+5. If every test fails, discard the daughter proposal completely. It contributes no momentum transfer and no medium response.
+6. If the active coherent object is colored, start a new Moliere stream using that object's PDG identity and scattering rate. Test every parent-source proposal against all formed unresolved dipoles below it.
+7. A resolving parent proposal is vetoed with `ScatteringDecision::VetoAndContinue`, creating no recoil/hole pair. Sampling of that same coherent source continues.
+8. The first parent proposal that remains unresolved is applied once to the coherent object, with one recoil/hole pair. If no such proposal appears before the finite-`L_res` boundary, no coherent hard kick is forced.
+9. If the coherent object is color neutral, such as a photon above a `gamma -> q qbar` pair, skip parent resampling and apply no coherent photon kick. Later daughter candidates may still resolve the pair.
+10. Continuous HYBRID energy loss remains attached to the currently active coherent object. After elastic decoherence, the newly active daughter groups propagate independently. The normal LRES radiative timeline and all A-D paths are unchanged.
+
+### API and diagnostics
+
+- `MoliereElastic` now supports `ScatteringDecision::VetoAndContinue`: reject one sampled hard candidate, create no recoil/hole, retain the continuous propagation step, and inspect later candidates from the same source.
+- New recursive counters distinguish failed daughter vetoes, coherent resampling requests, parent candidates, parent accepts, parent vetoes, exhausted searches, and color-neutral skips.
+- Two derived accounting deltas must be zero:
+  - all unresolved candidates equal coherent applications plus resolving daughter candidates plus failed daughter vetoes plus resolving parent vetoes;
+  - all coherent-source candidates equal coherent accepts plus coherent vetoes.
+- `test/analyze_modeE_validation.py --strict` checks the history-level request/outcome closure and one-to-one matching between accepted parent tests and committed coherent-parent kicks.
+
+### Final local validation
+
+Validation scratch files are under `/raid5/data/yjlee/hybrid_dev/test/mmli_modee_dani_20260720/`. The executable was built with pinned PYTHIA 8.315.
+
+- Backward compatibility: Mode A, B, C, and D hadron and parton outputs are byte-identical to a clean `a1989cf` executable for the same cards and seeds.
+- Parent-accept case, seed/card `modee_parent_accept2_final.input`:
+  - 2 failed daughter proposals;
+  - 1 independently sampled coherent-source candidate;
+  - 1 accepted unresolving parent kick and 1 exhausted search;
+  - recursive and coherent candidate-accounting deltas both zero;
+  - 54/54 reversed-frontier checks agree.
+- Parent-veto case, seed/card `modee_parent_veto2_final.input`:
+  - 1 failed daughter proposal;
+  - 1 independently sampled parent proposal that resolves a dipole and is vetoed;
+  - no coherent kick is committed before the interval ends;
+  - recursive and coherent candidate-accounting deltas both zero;
+  - 53/53 reversed-frontier checks agree.
+- The seed-fixed samples exercise nested bottom-up tests and use live projected positions only; vacuum `d_perp` fallbacks are zero.
+- The color-neutral source guard is implemented directly in the source-selection path. A dedicated stochastic `gamma -> q qbar` fixture has not yet been captured, so that rare topology remains a targeted fixture rather than an observed production event.

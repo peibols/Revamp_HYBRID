@@ -69,6 +69,13 @@ private:
     long long n_recursive_inner_resolutions_;
     long long n_recursive_outer_resolutions_;
     long long n_recursive_coherent_applications_;
+    long long n_recursive_failed_daughter_vetoes_;
+    long long n_recursive_coherent_resample_requests_;
+    long long n_recursive_coherent_resample_candidates_;
+    long long n_recursive_coherent_candidate_vetoes_;
+    long long n_recursive_coherent_candidate_accepts_;
+    long long n_recursive_coherent_resample_exhausted_;
+    long long n_recursive_color_neutral_parent_skips_;
     long long n_recursive_tree_updates_;
     long long n_recursive_opening_closure_checks_;
     double sum_recursive_opening_spatial_residual_;

@@ -53,8 +53,14 @@ mode = 0
 #                                                    q_perp*d_perp test. This takes precedence
 #                                                    over the parent-candidate dynamic mode.
 # do_Moliere_recursive_unresolved_resolution: true recursively probes the finest
-#                                             available nested constituents, then maps
-#                                             failed tests back up the effective-charge tree.
+#                                             formed colored constituents. A resolving
+#                                             daughter candidate acts on that branch; a
+#                                             fully unresolved daughter candidate is
+#                                             discarded. The active colored coherent
+#                                             object is then sampled with its own rate
+#                                             until an unresolving candidate is found or
+#                                             the LRES interval ends. Color-neutral
+#                                             coherent objects cannot receive a hard kick.
 #                                             This takes precedence over all other
 #                                             unresolved Moliere modes.
 # moliere_unresolved_resolution_c: O(1) dynamic dipole-resolution threshold.
