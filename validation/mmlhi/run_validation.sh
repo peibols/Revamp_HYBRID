@@ -45,7 +45,16 @@ render_config() {
     local c_res="$8"
     local dump_history="$9"
     local rpower="${10:-2.0}"
+    local heavy_hard_moliere="${11:-auto}"
+    local heavy_generic_broadening="${12:-false}"
     local mode_b=false mode_c=false mode_d=false mode_e=false hadro_type=0
+    if [[ "${heavy_hard_moliere}" == auto ]]; then
+        if [[ "${heavy_mode}" == 0 ]]; then
+            heavy_hard_moliere=true
+        else
+            heavy_hard_moliere=false
+        fi
+    fi
     if [[ "${do_elastic}" == true ]]; then hadro_type=1; fi
     case "${lres_mode}" in
         A) ;;
@@ -68,6 +77,8 @@ render_config() {
         -e "s|@C_RES@|${c_res}|g" \
         -e "s|@RPOWER@|${rpower}|g" \
         -e "s|@HADRO_TYPE@|${hadro_type}|g" \
+        -e "s|@HEAVY_HARD_MOLIERE@|${heavy_hard_moliere}|g" \
+        -e "s|@HEAVY_GENERIC_BROADENING@|${heavy_generic_broadening}|g" \
         -e "s|@TABLES_PATH@|${tables_path}/|g" \
         -e "s|@DUMP_HISTORY@|${dump_history}|g" \
         "${validation_root}/hybrid.input.in" > "${output}"
@@ -196,11 +207,20 @@ for heavy_mode in 1 2 3; do
     run_one "charm_mode_${heavy_mode}" "${repo_root}/main" "${config}" "${charm_card}"
 done
 
+# Preserve coverage of the first MMLHI release, where generic light-parton
+# broadening and heavy diffusion were additive. The recommended matrix below
+# uses the matched setting (false).
+render_config "${output_root}/config/charm_mode_2_additive_compat.input" \
+    870001 1 2 false false A 1.0 false 2.0 false true
+run_one charm_mode_2_additive_compat "${repo_root}/main" \
+    "${output_root}/config/charm_mode_2_additive_compat.input" "${charm_card}"
+
 render_config "${output_root}/config/charm_lres_mode_2.input" 870001 1 2 false true A 1.0 false
 run_one charm_lres_mode_2 "${repo_root}/main" \
     "${output_root}/config/charm_lres_mode_2.input" "${charm_card}"
 
-render_config "${output_root}/config/charm_moliere_mode_2.input" 870001 100 2 true false A 1.0 true
+render_config "${output_root}/config/charm_moliere_mode_2.input" \
+    870001 100 2 true false A 1.0 true 2.0 true
 run_one charm_moliere_mode_2 "${repo_root}/main" \
     "${output_root}/config/charm_moliere_mode_2.input" "${charm_card}"
 
@@ -211,8 +231,19 @@ for lres_mode in A B C D E; do
     run_one "charm_lres_moliere_mode_${mode_lower}" "${repo_root}/main" "${config}" "${charm_card}"
 done
 
+for lres_mode in A B C D E; do
+    mode_lower="$(printf '%s' "${lres_mode}" | tr '[:upper:]' '[:lower:]')"
+    recommended_log="${output_root}/runs/charm_lres_moliere_mode_${mode_lower}/run.log"
+    recommended_hard_count="$(sed -n 's/.*n_hard_scattered_heavy= \([0-9][0-9]*\).*/\1/p' \
+        "${recommended_log}" | tail -1)"
+    if [[ "${recommended_hard_count:-missing}" != 0 ]]; then
+        echo "Recommended Mode ${lres_mode} unexpectedly applied hard charm Moliere" >&2
+        exit 3
+    fi
+done
+
 render_config "${output_root}/config/charm_lres_moliere_mode_e_hard100.input" \
-    870001 100 2 true true E 0.0 true
+    870001 100 2 true true E 0.0 true 2.0 true
 run_one charm_lres_moliere_mode_e_hard100 "${repo_root}/main" \
     "${output_root}/config/charm_lres_moliere_mode_e_hard100.input" "${charm_card}"
 
@@ -227,6 +258,18 @@ hard_charm_count="$(awk 'NF == 6 && ($5 == 4 || $5 == -4) && $6 == 1 {n++} END {
     "${output_root}/runs/charm_moliere_mode_2/result_Partons.out")"
 if [[ "${hard_charm_count}" -le 0 ]]; then
     echo "The charm Moliere coverage run did not retain a hard-scattered charm" >&2
+    exit 3
+fi
+hard_charm_diagnostics="$(sed -n 's/.*n_hard_scattered_heavy= \([0-9][0-9]*\).*/\1/p' \
+    "${output_root}/runs/charm_moliere_mode_2/run.log" | tail -1)"
+hard_charm_mass_failures="$(sed -n 's/.*n_hard_heavy_mass_shell_failures= \([0-9][0-9]*\).*/\1/p' \
+    "${output_root}/runs/charm_moliere_mode_2/run.log" | tail -1)"
+hard_charm_closure_failures="$(sed -n 's/.*n_hard_heavy_momentum_closure_failures= \([0-9][0-9]*\).*/\1/p' \
+    "${output_root}/runs/charm_moliere_mode_2/run.log" | tail -1)"
+if [[ -z "${hard_charm_diagnostics}" || "${hard_charm_diagnostics}" -le 0 ||
+      -z "${hard_charm_mass_failures}" || "${hard_charm_mass_failures}" -le 0 ||
+      -z "${hard_charm_closure_failures}" || "${hard_charm_closure_failures}" -le 0 ]]; then
+    echo "The charm Moliere coverage run did not characterize the known massive-kinematics gap" >&2
     exit 3
 fi
 
@@ -259,6 +302,8 @@ python3 "${validation_root}/summarize.py" "${output_root}/runs" \
 {
     echo "parent_commit=$(git -C "${parent_repo}" rev-parse HEAD)"
     echo "child_commit=$(git -C "${repo_root}" rev-parse HEAD)"
+    echo "parent_tracked_changes=$(git -C "${parent_repo}" status --porcelain --untracked-files=no | awk 'END {print NR}')"
+    echo "child_tracked_changes=$(git -C "${repo_root}" status --porcelain --untracked-files=no | awk 'END {print NR}')"
     echo "pythia_home=${pythia_home}"
     echo "tables_path=${tables_path}"
     echo "reference_run=${reference_run}"

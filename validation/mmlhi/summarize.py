@@ -19,6 +19,13 @@ HEAVY_RE = re.compile(
     r" n_diffusion_only_steps= (?P<diffusion_only>\d+)"
     r" n_invalid_steps= (?P<invalid>\d+)"
 )
+HARD_HEAVY_RE = re.compile(
+    r"n_hard_scattered_heavy= (?P<hard_heavy>\d+)"
+    r" n_hard_heavy_mass_shell_failures= (?P<hard_mass_failures>\d+)"
+    r" n_hard_heavy_momentum_closure_failures= (?P<hard_closure_failures>\d+)"
+    r" max_hard_heavy_mass_shell_residual= (?P<hard_max_mass_residual>[-+0-9.eE]+)"
+    r" max_hard_heavy_momentum_closure_residual= (?P<hard_max_closure_residual>[-+0-9.eE]+)"
+)
 DYNAMIC_RE = re.compile(
     r"Dynamic unresolved Moliere diagnostics:"
     r" n_unresolved_segments_dynamic= (?P<segments>\d+)"
@@ -58,11 +65,23 @@ def parse_log(path: Path) -> dict[str, int | str]:
     text = path.read_text(encoding="utf-8", errors="replace")
     failures = [pattern for pattern in FATAL_PATTERNS if pattern in text]
     heavy_match = HEAVY_RE.search(text)
+    hard_heavy_match = HARD_HEAVY_RE.search(text)
     dynamic_match = DYNAMIC_RE.search(text)
     recursive_match = RECURSIVE_RE.search(text)
-    result: dict[str, int | str] = {"failures": ",".join(failures)}
+    result: dict[str, int | str] = {
+        "failures": ",".join(failures),
+        "hadronization_retries": text.count(
+            "Pythia::forceHadronLevel: hadronLevel failed; try again"
+        ),
+        "hadronization_giveups": text.count(
+            "Pythia::forceHadronLevel: hadronLevel failed; giving up"
+        ),
+    }
     if heavy_match:
         result.update({key: int(value) for key, value in heavy_match.groupdict().items()})
+    if hard_heavy_match:
+        for key, value in hard_heavy_match.groupdict().items():
+            result[key] = float(value) if "residual" in key else int(value)
     if dynamic_match:
         result.update({key: int(value) for key, value in dynamic_match.groupdict().items()})
     if recursive_match:
@@ -145,6 +164,13 @@ def main() -> int:
         "diffusion",
         "diffusion_only",
         "invalid",
+        "hadronization_retries",
+        "hadronization_giveups",
+        "hard_heavy",
+        "hard_mass_failures",
+        "hard_closure_failures",
+        "hard_max_mass_residual",
+        "hard_max_closure_residual",
         "segments",
         "candidates",
         "coherent",

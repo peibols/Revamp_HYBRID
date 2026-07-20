@@ -91,6 +91,7 @@ void record_result(const StepResult &result, Diagnostics *diagnostics) {
     ++diagnostics->n_heavy_steps;
     switch (result.decision) {
         case StepDecision::UseBaseline:
+        case StepDecision::AppliedBaselineOnShell:
             ++diagnostics->n_baseline_steps;
             break;
         case StepDecision::AppliedDrag:
@@ -115,7 +116,9 @@ void record_result(const StepResult &result, Diagnostics *diagnostics) {
 }  // namespace
 
 Parameters make_parameters(int mode, double t_hooft_lambda,
-                           double charm_mass, double bottom_mass) {
+                           double charm_mass, double bottom_mass,
+                           bool add_generic_broadening_with_diffusion,
+                           bool enable_hard_moliere) {
     if (mode < 0 || mode > 3) {
         throw std::invalid_argument("heavy_quark_eloss_mode must be in [0,3]");
     }
@@ -131,6 +134,9 @@ Parameters make_parameters(int mode, double t_hooft_lambda,
     parameters.t_hooft_lambda = t_hooft_lambda;
     parameters.charm_mass = charm_mass;
     parameters.bottom_mass = bottom_mass;
+    parameters.add_generic_broadening_with_diffusion =
+        add_generic_broadening_with_diffusion;
+    parameters.enable_hard_moliere = enable_hard_moliere;
     return parameters;
 }
 
@@ -162,9 +168,94 @@ double mass_for_pdg(int pdg_id, const Parameters &parameters) {
 }
 
 bool applies_heavy_update(StepDecision decision) {
-    return decision == StepDecision::AppliedDrag ||
+    return decision == StepDecision::AppliedBaselineOnShell ||
+           decision == StepDecision::AppliedDrag ||
            decision == StepDecision::AppliedDragAndDiffusion ||
            decision == StepDecision::AppliedDiffusionOnly;
+}
+
+bool apply_generic_broadening(int pdg_id, const Parameters &parameters) {
+    if (!is_heavy_quark(pdg_id) || parameters.mode == Mode::Disabled ||
+        parameters.mode == Mode::Drag) {
+        return true;
+    }
+    return parameters.add_generic_broadening_with_diffusion;
+}
+
+bool apply_hard_moliere(int pdg_id, const Parameters &parameters) {
+    if (std::abs(pdg_id) == 5) return false;
+    if (std::abs(pdg_id) == 4) return parameters.enable_hard_moliere;
+    return true;
+}
+
+HardScatteringCheck check_hard_scattering_kinematics(
+    const std::array<double,4> &projectile_before,
+    const std::array<double,4> &projectile_after,
+    const std::array<double,4> &recoiler_after,
+    const std::array<double,4> &thermal_hole_before,
+    double mass_floor) {
+    HardScatteringCheck check;
+    if (!finite_four_vector(projectile_before) ||
+        !finite_four_vector(projectile_after) ||
+        !finite_four_vector(recoiler_after) ||
+        !finite_four_vector(thermal_hole_before) ||
+        !std::isfinite(mass_floor) || mass_floor <= 0.) {
+        return check;
+    }
+
+    const double incoming_mass2 =
+        projectile_before[3] * projectile_before[3] - spatial_norm2(projectile_before);
+    check.expected_mass2 = std::max(mass_floor * mass_floor, incoming_mass2);
+    check.outgoing_mass2 =
+        projectile_after[3] * projectile_after[3] - spatial_norm2(projectile_after);
+    check.mass_shell_residual = std::abs(check.outgoing_mass2 - check.expected_mass2);
+
+    double closure2 = 0.;
+    double momentum_scale = 1.;
+    for (int component = 0; component < 4; ++component) {
+        const double residual = projectile_before[component] + thermal_hole_before[component] -
+                                projectile_after[component] - recoiler_after[component];
+        closure2 += residual * residual;
+        momentum_scale = std::max(
+            momentum_scale,
+            std::max({std::abs(projectile_before[component]),
+                      std::abs(projectile_after[component]),
+                      std::abs(recoiler_after[component]),
+                      std::abs(thermal_hole_before[component])}));
+    }
+    check.momentum_closure_residual = std::sqrt(closure2);
+    const double mass_scale2 = std::max(
+        {1., std::abs(check.expected_mass2), std::abs(check.outgoing_mass2),
+         momentum_scale * momentum_scale});
+    check.finite = std::isfinite(check.mass_shell_residual) &&
+                   std::isfinite(check.momentum_closure_residual);
+    check.outgoing_on_mass_shell =
+        check.finite && check.mass_shell_residual <= 1.e-9 * mass_scale2;
+    check.four_momentum_conserved =
+        check.finite && check.momentum_closure_residual <= 1.e-9 * momentum_scale;
+    return check;
+}
+
+void record_hard_scattering_check(const HardScatteringCheck &check,
+                                  Diagnostics *diagnostics) {
+    if (diagnostics == nullptr) return;
+    ++diagnostics->n_hard_scattered_heavy;
+    if (!check.outgoing_on_mass_shell) {
+        ++diagnostics->n_hard_heavy_mass_shell_failures;
+    }
+    if (!check.four_momentum_conserved) {
+        ++diagnostics->n_hard_heavy_momentum_closure_failures;
+    }
+    if (std::isfinite(check.mass_shell_residual)) {
+        diagnostics->max_hard_heavy_mass_shell_residual = std::max(
+            diagnostics->max_hard_heavy_mass_shell_residual,
+            check.mass_shell_residual);
+    }
+    if (std::isfinite(check.momentum_closure_residual)) {
+        diagnostics->max_hard_heavy_momentum_closure_residual = std::max(
+            diagnostics->max_hard_heavy_momentum_closure_residual,
+            check.momentum_closure_residual);
+    }
 }
 
 StepResult apply_step(std::array<double,4> &p_lab,
@@ -248,7 +339,32 @@ StepResult apply_step(std::array<double,4> &p_lab,
     const bool use_drag = !input.baseline_available || baseline_would_cross_mass ||
                           input.baseline_energy_loss_fluid > drag_energy_loss;
     if (!use_drag) {
-        result.decision = StepDecision::UseBaseline;
+        // The legacy crossover applies the winning light-HYBRID energy loss
+        // in the local fluid frame. Keep that behavior while enforcing the
+        // configured heavy mass instead of falling through to the massless
+        // MMLI four-vector rescaling in the caller.
+        auto p_fluid_baseline = p_fluid_before;
+        const double target_energy = std::max(
+            result.effective_mass,
+            p_fluid_before[3] - input.baseline_energy_loss_fluid);
+        const double momentum_before = std::sqrt(spatial_norm2(p_fluid_before));
+        const double momentum_after = std::sqrt(std::max(
+            0., target_energy * target_energy -
+                    result.effective_mass * result.effective_mass));
+        if (momentum_before > 0.) {
+            const double scale = momentum_after / momentum_before;
+            p_fluid_baseline[0] *= scale;
+            p_fluid_baseline[1] *= scale;
+            p_fluid_baseline[2] *= scale;
+        } else {
+            p_fluid_baseline[0] = 0.;
+            p_fluid_baseline[1] = 0.;
+            p_fluid_baseline[2] = 0.;
+        }
+        p_fluid_baseline[3] = target_energy;
+        p_lab = boost_from_fluid(p_fluid_baseline, fluid_velocity);
+        result.decision = StepDecision::AppliedBaselineOnShell;
+        result.energy_after = p_lab[3];
         record_result(result, diagnostics);
         return result;
     }

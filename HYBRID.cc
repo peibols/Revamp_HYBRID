@@ -28,7 +28,9 @@ heavy_quark::Parameters getHeavyQuarkParameters(const Config &cfg) {
     return heavy_quark::make_parameters(
         heavy_mode, heavy_lambda.value_or(0.),
         cfg.getDoubleOr("heavy_quark_charm_mass", 1.25),
-        cfg.getDoubleOr("heavy_quark_bottom_mass", 4.2));
+        cfg.getDoubleOr("heavy_quark_bottom_mass", 4.2),
+        cfg.getBoolOr("heavy_quark_add_generic_broadening_with_diffusion", true),
+        cfg.getBoolOr("heavy_quark_enable_hard_moliere", true));
 }
 }
 
@@ -110,6 +112,10 @@ HYBRID::HYBRID(const Config &cfg) :
                   << " lambda= " << heavy_quark_parameters_.t_hooft_lambda
                   << " charm_mass= " << heavy_quark_parameters_.charm_mass
                   << " bottom_mass= " << heavy_quark_parameters_.bottom_mass
+                  << " add_generic_broadening_with_diffusion= "
+                  << heavy_quark_parameters_.add_generic_broadening_with_diffusion
+                  << " enable_hard_moliere= "
+                  << heavy_quark_parameters_.enable_hard_moliere
                   << std::endl;
     }
     if (do_elastic_) {

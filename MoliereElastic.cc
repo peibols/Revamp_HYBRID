@@ -360,12 +360,17 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
 
             if (p[3] > 0. && temp >= Tc) {
                 FourVector pp;
+                // The inherited hard-scattering tables use a massless
+                // projectile. Charm is therefore guarded by the runtime
+                // switch below and audited before later continuous updates.
                 pp.Set(p[0], p[1], p[2], std::sqrt(p[0]*p[0]+p[1]*p[1]+p[2]*p[2]));
                 double beta[3] = {v[0], v[1], v[2]};
                 pp = Boost(beta, pp);
 
                 double pin = std::sqrt(pp.x()*pp.x()+pp.y()*pp.y()+pp.z()*pp.z())/temp;
-                if ((id == 21 || std::abs(id) <= 4) && pin < 1500.) {
+                if ((id == 21 || std::abs(id) <= 4) &&
+                    heavy_quark::apply_hard_moliere(id, heavy_quark_parameters) &&
+                    pin < 1500.) {
                     double deltime = f_step*temp/0.2;
                     vector<double> elscat = gen_particles(pp.x()/temp, pp.y()/temp, pp.z()/temp, id, deltime, wdk, wkcm, wx);
                     if (elscat[0] == 1) {
@@ -439,6 +444,16 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                             }
                         }
 
+                        if (heavy_quark_parameters.mode != heavy_quark::Mode::Disabled &&
+                            heavy_quark::is_heavy_quark(id)) {
+                            const auto check = heavy_quark::check_hard_scattering_kinematics(
+                                to_arr(p_before_scattering), to_arr(p_after_scattering),
+                                to_arr(recoiler_p), to_arr(vkf),
+                                heavy_quark::mass_for_pdg(id, heavy_quark_parameters));
+                            heavy_quark::record_hard_scattering_check(
+                                check, heavy_quark_diagnostics);
+                        }
+
                         had_scattering = 1;
                         p = p_after_scattering;
                         new_particles.emplace_back(Parton(recoiler_p, 100000000., 0., 0, -1, -1,
@@ -454,7 +469,10 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
 
                 if (marker == 1) continue;
 
-                if (kappa != 0. && step != 0.) trans_kick(w, w2, v, p, temp, vscalw, lore, step, kappa, nr);
+                if (kappa != 0. && step != 0. &&
+                    heavy_quark::apply_generic_broadening(id, heavy_quark_parameters)) {
+                    trans_kick(w, w2, v, p, temp, vscalw, lore, step, kappa, nr);
+                }
 
                 orient[0] = p[0]/p[3];
                 orient[1] = p[1]/p[3];
@@ -476,9 +494,9 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                     heavy_input.fluid_path_length_fm = fluid_step;
 
                     // The crossover compares the candidate drag loss to the
-                    // light-parton HYBRID loss in the local fluid frame.  The
-                    // ordinary MMLI expression below remains authoritative
-                    // whenever the kernel selects UseBaseline.
+                    // light-parton HYBRID loss in the local fluid frame. A
+                    // valid winning baseline is applied on the heavy mass
+                    // shell by the kernel; only invalid inputs fall through.
                     if (alpha != 0. && model == 0 && doquench) {
                         const double Efs = ei*lore*(1.-vscalw);
                         const double tstop = 0.2*std::pow(Efs,1./3.)/

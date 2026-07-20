@@ -21,6 +21,8 @@ struct Parameters {
     double t_hooft_lambda = 0.;
     double charm_mass = 1.25;
     double bottom_mass = 4.2;
+    bool add_generic_broadening_with_diffusion = true;
+    bool enable_hard_moliere = true;
 };
 
 struct StepInput {
@@ -36,6 +38,7 @@ struct StepInput {
 enum class StepDecision {
     NotApplicable,
     UseBaseline,
+    AppliedBaselineOnShell,
     AppliedDrag,
     AppliedDragAndDiffusion,
     AppliedDiffusionOnly
@@ -55,17 +58,48 @@ struct Diagnostics {
     long long n_diffusion_steps = 0;
     long long n_diffusion_only_steps = 0;
     long long n_invalid_steps = 0;
+    long long n_hard_scattered_heavy = 0;
+    long long n_hard_heavy_mass_shell_failures = 0;
+    long long n_hard_heavy_momentum_closure_failures = 0;
+    double max_hard_heavy_mass_shell_residual = 0.;
+    double max_hard_heavy_momentum_closure_residual = 0.;
     double sum_energy_change = 0.;
+};
+
+struct HardScatteringCheck {
+    double expected_mass2 = 0.;
+    double outgoing_mass2 = 0.;
+    double mass_shell_residual = 0.;
+    double momentum_closure_residual = 0.;
+    bool finite = false;
+    bool outgoing_on_mass_shell = false;
+    bool four_momentum_conserved = false;
 };
 
 Parameters make_parameters(int mode, double t_hooft_lambda,
                            double charm_mass = 1.25,
-                           double bottom_mass = 4.2);
+                           double bottom_mass = 4.2,
+                           bool add_generic_broadening_with_diffusion = true,
+                           bool enable_hard_moliere = true);
 void validate_for_energy_loss_model(const Parameters &parameters, int energy_loss_model);
 std::string mode_name(Mode mode);
 bool is_heavy_quark(int pdg_id);
 double mass_for_pdg(int pdg_id, const Parameters &parameters);
 bool applies_heavy_update(StepDecision decision);
+bool apply_generic_broadening(int pdg_id, const Parameters &parameters);
+bool apply_hard_moliere(int pdg_id, const Parameters &parameters);
+
+// Inspect the immediate 2->2 hard-scattering record before any later soft
+// broadening or energy loss. The expected outgoing mass is the larger of the
+// configured heavy-quark floor and the incoming invariant mass.
+HardScatteringCheck check_hard_scattering_kinematics(
+    const std::array<double,4> &projectile_before,
+    const std::array<double,4> &projectile_after,
+    const std::array<double,4> &recoiler_after,
+    const std::array<double,4> &thermal_hole_before,
+    double mass_floor);
+void record_hard_scattering_check(const HardScatteringCheck &check,
+                                  Diagnostics *diagnostics);
 
 StepResult apply_step(std::array<double,4> &p_lab,
                       const std::array<double,4> &fluid_velocity,

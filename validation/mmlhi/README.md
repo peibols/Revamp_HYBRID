@@ -12,7 +12,9 @@ validation/mmlhi/run_validation.sh
 ```
 
 The latest validated matrix and its physics interpretation are recorded in
-[`RESULTS-20260719.md`](RESULTS-20260719.md).
+[`RESULTS-20260720.md`](RESULTS-20260720.md). The controlled runtime choices,
+their matching caveats, and remaining production gates are separated in
+[`PHYSICS-CONTRACT.md`](PHYSICS-CONTRACT.md).
 
 The defaults assume the validated local MMLI parent, Moliere tables, and PbPb
 smoke hydro inputs. They can be overridden with `PARENT_REPO`, `PYTHIA_HOME`,
@@ -30,11 +32,21 @@ The runner checks:
 - a 100-event charm hard-scattering coverage sample;
 - bottom continuous transport with Moliere requested;
 - deterministic mode-2 and Mode-E reruns;
+- explicit hard-charm mass-shell and immediate four-momentum-closure
+  diagnostics;
 - missing-`heavy_quark_lambda` rejection;
 - output completeness, invalid-step counters, dynamic candidate accounting,
   one recoil/hole pair per accepted unresolved scattering, finite output
-  values, and Mode-E frontier-permutation diagnostics.
+  values, Mode-E frontier-permutation diagnostics, and explicit counts of
+  PYTHIA hadronization retries or give-ups.
 
 The matrix is an implementation validation. It is not a heavy-flavor physics
 tune and does not establish D- or B-hadron observables because the legacy
 heavy hadronization/coalescence contract has not been integrated.
+
+For controlled same-tree comparisons against a legacy heavy output, use:
+
+```bash
+validation/mmlhi/compare_legacy_partons.py \
+  LEGACY_RESULT_PARTONS MMLHI_RESULT_PARTONS --max-abs-eta 1
+```

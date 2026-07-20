@@ -259,7 +259,21 @@ void apply_resolved_daughter_kick(const moliere::ScatteringCandidate &candidate,
                                   std::array<double,4> &p,
                                   std::vector<Quench> &new_particles,
                                   int &had_scattering,
-                                  std::array<double,4> &orient) {
+                                  std::array<double,4> &orient,
+                                  int sampled_pdg_id,
+                                  const heavy_quark::Parameters &heavy_parameters,
+                                  heavy_quark::Diagnostics *heavy_diagnostics) {
+    // Callback-driven LRES modes stop the sampler before it commits the
+    // candidate, then apply it here. Audit the sampled 2->2 record exactly
+    // once, before mapping its momentum transfer to a live LRES object.
+    if (heavy_parameters.mode != heavy_quark::Mode::Disabled &&
+        heavy_quark::is_heavy_quark(sampled_pdg_id)) {
+        const auto check = heavy_quark::check_hard_scattering_kinematics(
+            candidate.p_before, candidate.p_after, candidate.recoiler_p,
+            candidate.hole_p,
+            heavy_quark::mass_for_pdg(sampled_pdg_id, heavy_parameters));
+        heavy_quark::record_hard_scattering_check(check, heavy_diagnostics);
+    }
     for (int i = 0; i < 4; ++i) {
         p[i] += candidate.p_after[i] - candidate.p_before[i];
     }
@@ -391,6 +405,16 @@ EnergyLoss::~EnergyLoss() {
                   << heavy_quark_diagnostics_.n_diffusion_only_steps
                   << " n_invalid_steps= " << heavy_quark_diagnostics_.n_invalid_steps
                   << " sum_energy_change= " << heavy_quark_diagnostics_.sum_energy_change
+                  << " n_hard_scattered_heavy= "
+                  << heavy_quark_diagnostics_.n_hard_scattered_heavy
+                  << " n_hard_heavy_mass_shell_failures= "
+                  << heavy_quark_diagnostics_.n_hard_heavy_mass_shell_failures
+                  << " n_hard_heavy_momentum_closure_failures= "
+                  << heavy_quark_diagnostics_.n_hard_heavy_momentum_closure_failures
+                  << " max_hard_heavy_mass_shell_residual= "
+                  << heavy_quark_diagnostics_.max_hard_heavy_mass_shell_residual
+                  << " max_hard_heavy_momentum_closure_residual= "
+                  << heavy_quark_diagnostics_.max_hard_heavy_momentum_closure_residual
                   << std::endl;
     }
     if (n_unresolved_segments_dynamic_ > 0) {
@@ -1843,9 +1867,11 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             // object or resolved subtree that the medium actually sees.
                             applied_candidate.pos = qstate[final_apply].r;
                             applied_candidate.pos[3] = chosen.candidate.pos[3];
-                            apply_resolved_daughter_kick(applied_candidate, qstate[final_apply].p,
-                                                         lres_moliere_particles, qhad[final_apply],
-                                                         qorient[final_apply]);
+                            apply_resolved_daughter_kick(
+                                applied_candidate, qstate[final_apply].p,
+                                lres_moliere_particles, qhad[final_apply],
+                                qorient[final_apply], partons[chosen.probe].GetId(),
+                                heavy_quark_parameters_, &heavy_quark_diagnostics_);
                             qstate[final_apply].r = applied_candidate.pos;
                             emit("moliere_kick", final_apply, quenched[final_apply].GetMom(),
                                  quenched[final_apply].GetD1(), quenched[final_apply].GetD2(),
@@ -2018,9 +2044,11 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 // coherent parent kick and one recoil/hole
                                 // source, then continue looking for later
                                 // candidate scatterings.
-                                apply_resolved_daughter_kick(chosen.candidate, p,
-                                                             lres_moliere_particles,
-                                                             qhad[idx], qorient[idx]);
+                                apply_resolved_daughter_kick(
+                                    chosen.candidate, p, lres_moliere_particles,
+                                    qhad[idx], qorient[idx],
+                                    partons[chosen.daughter].GetId(),
+                                    heavy_quark_parameters_, &heavy_quark_diagnostics_);
                                 pos = chosen.candidate.pos;
                                 if (pos[3] <= previous_segment_time) {
                                     pos[3] = std::min(total_end, previous_segment_time + 1.e-6);
@@ -2056,11 +2084,15 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             pos2 = pos;
 
                             if (chosen.daughter == d1) {
-                                apply_resolved_daughter_kick(chosen.candidate, p1,
-                                                             lres_moliere_particles, had1, orient1);
+                                apply_resolved_daughter_kick(
+                                    chosen.candidate, p1, lres_moliere_particles,
+                                    had1, orient1, partons[chosen.daughter].GetId(),
+                                    heavy_quark_parameters_, &heavy_quark_diagnostics_);
                             } else {
-                                apply_resolved_daughter_kick(chosen.candidate, p2,
-                                                             lres_moliere_particles, had2, orient2);
+                                apply_resolved_daughter_kick(
+                                    chosen.candidate, p2, lres_moliere_particles,
+                                    had2, orient2, partons[chosen.daughter].GetId(),
+                                    heavy_quark_parameters_, &heavy_quark_diagnostics_);
                             }
                             emit("moliere_kick", chosen.daughter, idx, d1, d2,
                                  chosen.candidate.pos[3], chosen.candidate.pos,
@@ -2214,15 +2246,19 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             if (struck == d2 && p2[3] + delta_e <= 0. && p1[3] + delta_e > 0.) struck = d1;
 
                             if (struck == d1) {
-                                apply_resolved_daughter_kick(resolving_candidate, p1,
-                                                             lres_moliere_particles, had1, orient1);
+                                apply_resolved_daughter_kick(
+                                    resolving_candidate, p1, lres_moliere_particles,
+                                    had1, orient1, partons[idx].GetId(),
+                                    heavy_quark_parameters_, &heavy_quark_diagnostics_);
                                 emit("moliere_kick", d1, idx, d1, d2,
                                      resolving_candidate.pos[3], resolving_candidate.pos,
                                      p1, resolving_candidate.qperp,
                                      "q_perp", "dynamic_resolving_daughter_kick");
                             } else {
-                                apply_resolved_daughter_kick(resolving_candidate, p2,
-                                                             lres_moliere_particles, had2, orient2);
+                                apply_resolved_daughter_kick(
+                                    resolving_candidate, p2, lres_moliere_particles,
+                                    had2, orient2, partons[idx].GetId(),
+                                    heavy_quark_parameters_, &heavy_quark_diagnostics_);
                                 emit("moliere_kick", d2, idx, d1, d2,
                                      resolving_candidate.pos[3], resolving_candidate.pos,
                                      p2, resolving_candidate.qperp,
@@ -2632,7 +2668,8 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
                 }
 
                 // Broadening
-                if (kappa_ != 0.) {
+                if (kappa_ != 0. &&
+                    heavy_quark::apply_generic_broadening(id, heavy_quark_parameters_)) {
                     trans_kick(w, w2, v, p, temp, vscalw, lore, step, kappa_);
                 }
 
@@ -2651,8 +2688,8 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
                     heavy_input.fluid_path_length_fm = fluid_step;
 
                     // Compare against the light-parton HYBRID loss in the
-                    // local fluid frame. If it wins, the unchanged MMLI block
-                    // below applies the baseline update.
+                    // local fluid frame. A valid winning baseline is applied
+                    // on the heavy mass shell inside the kernel.
                     if (alpha_ != 0. && mode_ == 0 && doquench) {
                         const double Efs = ei*lore*(1.-vscalw);
                         const double tstop = 0.2*pow(Efs,1./3.)/
