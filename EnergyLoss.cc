@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <sstream>
 #include <fstream>
+#include <utility>
 #include "MoliereTables.h"
 #include "MoliereElastic.h"
 #include "vector_operators.h"
@@ -44,6 +45,17 @@ int modeEBranchLocalSeed(int base_seed, int event_id, int segment_id,
 
     // numrand stores an int seed. Keep the seed positive and nonzero while
     // retaining deterministic branch-local independence for Mode E probes.
+    return static_cast<int>(seed % 2147483646ULL) + 1;
+}
+
+int modeECoherentSourceSeed(int base_seed, int event_id, int segment_id,
+                            int iteration, int active_ancestor) {
+    std::uint64_t seed = 0x6d6f6465455f434fULL;  // "modeE_CO" tag
+    seed = hashCombine(seed, static_cast<std::uint64_t>(base_seed));
+    seed = hashCombine(seed, static_cast<std::uint64_t>(event_id));
+    seed = hashCombine(seed, static_cast<std::uint64_t>(segment_id));
+    seed = hashCombine(seed, static_cast<std::uint64_t>(iteration));
+    seed = hashCombine(seed, static_cast<std::uint64_t>(active_ancestor + 1000003));
     return static_cast<int>(seed % 2147483646ULL) + 1;
 }
 
@@ -334,6 +346,13 @@ EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int
       n_recursive_inner_resolutions_(0),
       n_recursive_outer_resolutions_(0),
       n_recursive_coherent_applications_(0),
+      n_recursive_failed_daughter_vetoes_(0),
+      n_recursive_coherent_resample_requests_(0),
+      n_recursive_coherent_resample_candidates_(0),
+      n_recursive_coherent_candidate_vetoes_(0),
+      n_recursive_coherent_candidate_accepts_(0),
+      n_recursive_coherent_resample_exhausted_(0),
+      n_recursive_color_neutral_parent_skips_(0),
       n_recursive_tree_updates_(0),
       n_recursive_opening_closure_checks_(0),
       sum_recursive_opening_spatial_residual_(0.),
@@ -394,6 +413,17 @@ EnergyLoss::~EnergyLoss() {
                   << std::endl;
     }
     if (n_unresolved_segments_recursive_ > 0) {
+        const long long classified_recursive_candidates =
+            n_recursive_coherent_applications_ +
+            n_unresolved_resolving_scatters_ +
+            n_recursive_failed_daughter_vetoes_ +
+            n_recursive_coherent_candidate_vetoes_;
+        const long long recursive_candidate_accounting_delta =
+            n_unresolved_candidate_scatters_ - classified_recursive_candidates;
+        const long long coherent_candidate_accounting_delta =
+            n_recursive_coherent_resample_candidates_ -
+            n_recursive_coherent_candidate_accepts_ -
+            n_recursive_coherent_candidate_vetoes_;
         std::cout << "Recursive unresolved Moliere diagnostics:"
                   << " n_unresolved_segments_recursive= " << n_unresolved_segments_recursive_
                   << " n_recursive_frontier_candidates= " << n_recursive_frontier_candidates_
@@ -408,6 +438,24 @@ EnergyLoss::~EnergyLoss() {
                   << " n_recursive_inner_resolutions= " << n_recursive_inner_resolutions_
                   << " n_recursive_outer_resolutions= " << n_recursive_outer_resolutions_
                   << " n_recursive_coherent_applications= " << n_recursive_coherent_applications_
+                  << " n_recursive_failed_daughter_vetoes= "
+                  << n_recursive_failed_daughter_vetoes_
+                  << " n_recursive_coherent_resample_requests= "
+                  << n_recursive_coherent_resample_requests_
+                  << " n_recursive_coherent_resample_candidates= "
+                  << n_recursive_coherent_resample_candidates_
+                  << " n_recursive_coherent_candidate_vetoes= "
+                  << n_recursive_coherent_candidate_vetoes_
+                  << " n_recursive_coherent_candidate_accepts= "
+                  << n_recursive_coherent_candidate_accepts_
+                  << " n_recursive_coherent_resample_exhausted= "
+                  << n_recursive_coherent_resample_exhausted_
+                  << " n_recursive_color_neutral_parent_skips= "
+                  << n_recursive_color_neutral_parent_skips_
+                  << " recursive_candidate_accounting_delta= "
+                  << recursive_candidate_accounting_delta
+                  << " coherent_candidate_accounting_delta= "
+                  << coherent_candidate_accounting_delta
                   << " n_recursive_tree_updates= " << n_recursive_tree_updates_
                   << " n_recursive_opening_closure_checks= "
                   << n_recursive_opening_closure_checks_
@@ -1332,8 +1380,14 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                 effective_mom[d1_segment] == idx && effective_mom[d2_segment] == idx &&
                 life[d1_segment].effective_time > life[idx].effective_time &&
                 life[d2_segment].effective_time > life[idx].effective_time;
+            const bool modee_unresolved_segment =
+                do_elastic_ && do_moliere_recursive_unresolved_resolution_ &&
+                segment_has_unresolved_pair;
             std::string segment_type = "lres_zero_momentum_segment";
-            if (isColored(partons[idx].GetId())) {
+            // Mode E must still inspect colored descendants of an unresolved
+            // color-neutral parent (for example gamma -> q qbar).  Such a parent
+            // is never used as a coherent Moliere source below.
+            if (isColored(partons[idx].GetId()) || modee_unresolved_segment) {
                 if (do_elastic_) {
                     const auto p_before = p;
                     const auto pos_before = pos;
@@ -1348,17 +1402,16 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                     //   B: propagate unresolved daughters independently;
                     //   A: default coherent unresolved parent.
                     if (do_moliere_recursive_unresolved_resolution_ && has_unresolved_pair) {
-                        // Mode E: recursively test the unresolved LRES tree scattering-by-scattering.
-                        // The active_groups vector is the set of objects currently seen coherently by
-                        // the medium for elastic/Moliere purposes.  For each candidate scattering, probe
-                        // the finest already-formed colored frontier below those active objects.  Then
-                        // walk back up the shower tree and test each sibling dipole with q_perp*d_perp >
-                        // c_res.  A failed inner test maps the same candidate kick to the next coherent
-                        // parent; a passed test splits active_groups down to the resolved object and kicks
-                        // that object.  Daughter states are materialized from the live parent axis and
-                        // position, so coherent parent deflections are inherited when the tree opens.
-                        // Between candidates, HYBRID energy loss acts on the active coherent objects,
-                        // leaving the existing LRES timeline unchanged.
+                        // Mode E recursively tests the already-formed colored frontier below each
+                        // active coherent object. A daughter candidate is walked upward through its
+                        // enclosing sibling dipoles. If it resolves one level, it acts on that branch.
+                        // If it resolves none, the daughter proposal is vetoed completely and the
+                        // active colored coherent object is sampled with its own identity and rate.
+                        // Parent proposals are accepted only when they remain unresolved; resolving
+                        // parent proposals are vetoed and the parent stream continues. This keeps one
+                        // recoil/hole source per accepted scattering and forbids coherent kicks on a
+                        // color-neutral parent. Shower-formation times split the search into ordered
+                        // windows, while the finite-LRES timeline itself remains unchanged.
                         segment_type = "modeE_recursive_unresolved";
                         ++n_unresolved_segments_dynamic_;
                         ++n_unresolved_segments_recursive_;
@@ -1495,10 +1548,13 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             int had = 0;
                             std::array<double,4> orient = {0., 0., 0., 1.};
                         };
-                        auto project_from_active = [&](int node, double target_time) {
+                        auto project_from_ancestor_state =
+                            [&](int node, int ancestor,
+                                const std::array<double,4> &ancestor_p,
+                                const std::array<double,4> &ancestor_pos,
+                                int ancestor_had, double target_time) {
                             RecursiveProjectedState state;
-                            const int ancestor = find_active_ancestor(node);
-                            if (ancestor < 0) return state;
+                            if (ancestor < 0 || !descends_from(node, ancestor)) return state;
                             std::vector<int> path;
                             int cur = node;
                             while (cur != ancestor && cur >= 0 && cur < static_cast<int>(n)) {
@@ -1507,8 +1563,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             }
                             if (cur != ancestor) return state;
                             state.ok = true;
-                            state.p = qstate[ancestor].p;
-                            state.pos = qstate[ancestor].r;
+                            state.p = ancestor_p;
+                            state.pos = ancestor_pos;
                             if (target_time > state.pos[3] + 1.e-9 && state.p[3] > 0.) {
                                 state.pos += causalVelocity(state.p) * (target_time - state.pos[3]);
                             }
@@ -1533,9 +1589,16 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 state.p = (child == c1) ? p1 : p2;
                                 state.pos = (child == c1) ? pos1 : pos2;
                             }
-                            if (qhad[ancestor] == 1 || qhad[ancestor] == 2) state.had = 2;
+                            if (ancestor_had == 1 || ancestor_had == 2) state.had = 2;
                             state.orient = orientationFor(state.p);
                             return state;
+                        };
+                        auto project_from_active = [&](int node, double target_time) {
+                            const int ancestor = find_active_ancestor(node);
+                            if (ancestor < 0) return RecursiveProjectedState{};
+                            return project_from_ancestor_state(
+                                node, ancestor, qstate[ancestor].p, qstate[ancestor].r,
+                                qhad[ancestor], target_time);
                         };
                         struct ModeEPairDperp {
                             double dperp = 0.;
@@ -1555,11 +1618,36 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 life[child].creation, target_time);
                             return result;
                         };
+                        auto modeE_pair_dperp_from_source =
+                            [&](int child, int sibling, int ancestor,
+                                const std::array<double,4> &source_p,
+                                const std::array<double,4> &source_pos,
+                                int source_had, double target_time) {
+                                ModeEPairDperp result;
+                                const auto child_state = project_from_ancestor_state(
+                                    child, ancestor, source_p, source_pos,
+                                    source_had, target_time);
+                                const auto sibling_state = project_from_ancestor_state(
+                                    sibling, ancestor, source_p, source_pos,
+                                    source_had, target_time);
+                                if (child_state.ok && sibling_state.ok) {
+                                    result.dperp = transverseSeparation(
+                                        child_state.pos, sibling_state.pos);
+                                    result.used_live_positions = true;
+                                    return result;
+                                }
+                                result.dperp = compute_unresolved_pair_dperp(
+                                    partons[child].vGetP(), partons[sibling].vGetP(),
+                                    life[child].creation, target_time);
+                                return result;
+                            };
                         std::function<void(int, double, std::vector<int>&)> collect_probe_frontier =
                             [&](int node, double t, std::vector<int> &frontier) {
                                 int c1 = -1;
                                 int c2 = -1;
-                                if (child_pair(node, c1, c2) && life[c1].creation <= t + 1.e-9) {
+                                if (child_pair(node, c1, c2) &&
+                                    life[c1].creation <= t + 1.e-9 &&
+                                    life[c2].creation <= t + 1.e-9) {
                                     collect_probe_frontier(c1, t, frontier);
                                     collect_probe_frontier(c2, t, frontier);
                                     return;
@@ -1567,6 +1655,20 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 if (isColored(partons[node].GetId()) &&
                                     std::find(frontier.begin(), frontier.end(), node) == frontier.end()) {
                                     frontier.push_back(node);
+                                }
+                            };
+                        std::function<void(int, double, double&)> tighten_next_formation_boundary =
+                            [&](int node, double t, double &boundary) {
+                                int c1 = -1;
+                                int c2 = -1;
+                                if (!child_pair(node, c1, c2)) return;
+                                for (int child : {c1, c2}) {
+                                    const double creation = life[child].creation;
+                                    if (creation > t + 1.e-9) {
+                                        boundary = std::min(boundary, creation);
+                                    } else {
+                                        tighten_next_formation_boundary(child, t, boundary);
+                                    }
                                 }
                             };
                         auto propagate_active_groups = [&](double target_time) {
@@ -1625,7 +1727,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             numrand rng;
                         };
                         auto probe_object = [&](int probe_id, const RecursiveProjectedState &start,
-                                                numrand rng_start, int elastic_seed) {
+                                                double probe_end, numrand rng_start,
+                                                int elastic_seed) {
                             RecursiveProbe probe;
                             probe.probe = probe_id;
                             probe.active_ancestor = find_active_ancestor(probe_id);
@@ -1634,7 +1737,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             probe.had = start.had;
                             probe.orient = start.orient;
                             probe.rng = rng_start;
-                            const double remaining = std::max(0., total_end - probe.pos[3]);
+                            const double remaining = std::max(0., probe_end - probe.pos[3]);
                             auto callback = [&](const moliere::ScatteringCandidate &candidate) {
                                 probe.found = true;
                                 probe.candidate = candidate;
@@ -1654,9 +1757,128 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             moliere::set_elastic_generator_state(elastic_rng_state);
                             return probe;
                         };
+                        std::function<void(int, double, std::vector<std::pair<int,int>>&)> collect_formed_pairs =
+                            [&](int node, double t, std::vector<std::pair<int,int>> &pairs) {
+                                int c1 = -1;
+                                int c2 = -1;
+                                if (!child_pair(node, c1, c2)) return;
+                                if (life[c1].creation > t + 1.e-9 ||
+                                    life[c2].creation > t + 1.e-9) {
+                                    return;
+                                }
+                                pairs.emplace_back(c1, c2);
+                                collect_formed_pairs(c1, t, pairs);
+                                collect_formed_pairs(c2, t, pairs);
+                            };
+
+                        auto resample_coherent_source = [&](int active_ancestor, double probe_end,
+                                                            int iteration_id) {
+                            RecursiveProbe probe;
+                            probe.probe = active_ancestor;
+                            probe.active_ancestor = active_ancestor;
+                            probe.p = qstate[active_ancestor].p;
+                            probe.pos = qstate[active_ancestor].r;
+                            probe.had = qhad[active_ancestor];
+                            probe.orient = qorient[active_ancestor];
+
+                            ++n_recursive_coherent_resample_requests_;
+                            if (!isColored(partons[active_ancestor].GetId())) {
+                                ++n_recursive_color_neutral_parent_skips_;
+                                emit("recursive_coherent_resample_skip", active_ancestor,
+                                     quenched[active_ancestor].GetMom(),
+                                     quenched[active_ancestor].GetD1(),
+                                     quenched[active_ancestor].GetD2(), probe.pos[3],
+                                     probe.pos, probe.p, 0., "color_neutral_parent",
+                                     "modeE_no_coherent_moliere_source");
+                                return probe;
+                            }
+
+                            const int coherent_seed = modeECoherentSourceSeed(
+                                nr_.GetIr(), event_id, modee_segment_id, iteration_id,
+                                active_ancestor);
+                            probe.rng = numrand(coherent_seed);
+                            const double remaining = std::max(0., probe_end - probe.pos[3]);
+                            auto callback = [&](const moliere::ScatteringCandidate &candidate) {
+                                ++n_recursive_coherent_resample_candidates_;
+                                ++n_unresolved_candidate_scatters_;
+                                std::vector<std::pair<int,int>> pairs;
+                                collect_formed_pairs(active_ancestor, candidate.pos[3], pairs);
+
+                                bool resolves_any = false;
+                                double max_qd = 0.;
+                                for (const auto &pair : pairs) {
+                                    // The coherent probe has already accumulated all
+                                    // continuous updates up to this candidate. Project
+                                    // its daughters from that candidate-time state, not
+                                    // from the stale state at the failed daughter probe.
+                                    const auto dperp_result = modeE_pair_dperp_from_source(
+                                        pair.first, pair.second, active_ancestor,
+                                        candidate.p_before, candidate.pos, probe.had,
+                                        candidate.pos[3]);
+                                    if (dperp_result.used_live_positions) ++n_recursive_live_dperp_tests_;
+                                    else ++n_recursive_vacuum_dperp_fallbacks_;
+                                    const double qd = candidate.qperp * dperp_result.dperp;
+                                    max_qd = std::max(max_qd, qd);
+                                    resolves_any = resolves_any ||
+                                        passes_dynamic_moliere_resolution_test(
+                                            candidate.qperp, dperp_result.dperp,
+                                            moliere_unresolved_resolution_c_);
+                                }
+                                sum_qperp_dperp_unresolved_candidates_ += max_qd;
+
+                                std::ostringstream test_note;
+                                test_note << (resolves_any
+                                                  ? "modeE_parent_candidate_veto_resolving"
+                                                  : "modeE_parent_candidate_accept_coherent")
+                                          << ":candidate_qperp=" << candidate.qperp;
+                                emit("recursive_coherent_resample_test", active_ancestor,
+                                     quenched[active_ancestor].GetMom(),
+                                     quenched[active_ancestor].GetD1(),
+                                     quenched[active_ancestor].GetD2(), candidate.pos[3],
+                                     candidate.pos, candidate.p_after, max_qd,
+                                     "max_qperp_dperp",
+                                     test_note.str());
+                                if (resolves_any) {
+                                    ++n_recursive_coherent_candidate_vetoes_;
+                                    return moliere::ScatteringDecision::VetoAndContinue;
+                                }
+
+                                ++n_recursive_coherent_candidate_accepts_;
+                                probe.found = true;
+                                probe.candidate = candidate;
+                                return moliere::ScatteringDecision::StopBeforeApply;
+                            };
+
+                            const auto elastic_rng_state = moliere::elastic_generator_state();
+                            moliere::seed_elastic_generator(static_cast<unsigned int>(coherent_seed));
+                            if (remaining > 1.e-9 && probe.p[3] > 0.) {
+                                moliere::propagate_segment_with_scattering_callback(
+                                    probe.p, probe.pos, remaining,
+                                    partons[active_ancestor].GetId(), probe.rng,
+                                    kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
+                                    compat_moliere_legacy_hydro_, hydro_profile_,
+                                    lres_moliere_particles, probe.had, probe.orient,
+                                    callback);
+                            }
+                            moliere::set_elastic_generator_state(elastic_rng_state);
+                            if (!probe.found) {
+                                ++n_recursive_coherent_resample_exhausted_;
+                                emit("recursive_coherent_resample_exhausted", active_ancestor,
+                                     quenched[active_ancestor].GetMom(),
+                                     quenched[active_ancestor].GetD1(),
+                                     quenched[active_ancestor].GetD2(), probe.pos[3],
+                                     probe.pos, probe.p, 0., "no_accepted_candidate",
+                                     "modeE_reached_lres_interval_end");
+                            }
+                            return probe;
+                        };
 
                         while (p[3] > 0. && pos[3] < total_end - 1.e-9) {
                             const int modee_iteration_id = modee_iteration++;
+                            double window_end = total_end;
+                            for (int group : active_groups) {
+                                tighten_next_formation_boundary(group, pos[3], window_end);
+                            }
                             std::vector<int> probe_frontier;
                             for (int group : active_groups) {
                                 collect_probe_frontier(group, pos[3], probe_frontier);
@@ -1701,7 +1923,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                     const int probe_seed = modeEBranchLocalSeed(
                                         nr_.GetIr(), event_id, modee_segment_id, modee_iteration_id,
                                         active_ancestor_for_probe, probe_id);
-                                    RecursiveProbe probe = probe_object(probe_id, start, numrand(probe_seed), probe_seed);
+                                    RecursiveProbe probe = probe_object(
+                                        probe_id, start, window_end, numrand(probe_seed), probe_seed);
                                     if (record_candidates && probe.found) {
                                         emit("recursive_probe_candidate", probe.probe, probe.active_ancestor,
                                              quenched[probe.probe].GetD1(), quenched[probe.probe].GetD2(),
@@ -1743,8 +1966,10 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             }
 
                             if (!chosen.found) {
-                                propagate_active_groups(total_end);
-                                break;
+                                propagate_active_groups(window_end);
+                                recombine_active_groups();
+                                if (window_end >= total_end - 1.e-9) break;
+                                continue;
                             }
 
                             const double candidate_time = std::min(chosen.candidate.pos[3], total_end);
@@ -1754,6 +1979,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             int current_object = chosen.probe;
                             int child_for_test = chosen.probe;
                             bool resolved_by_candidate = false;
+                            int tested_dipoles = 0;
                             double last_qd = 0.;
                             double candidate_qd_for_average = 0.;
                             const int active_ancestor = chosen.active_ancestor;
@@ -1773,6 +1999,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 }
                                 const auto dperp_result = modeE_pair_dperp(
                                     child_for_test, sibling, chosen.candidate.pos[3]);
+                                ++tested_dipoles;
                                 const double dperp = dperp_result.dperp;
                                 if (dperp_result.used_live_positions) ++n_recursive_live_dperp_tests_;
                                 else ++n_recursive_vacuum_dperp_fallbacks_;
@@ -1802,10 +2029,114 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             }
                             sum_qperp_dperp_unresolved_candidates_ += candidate_qd_for_average;
 
-                            if (!resolved_by_candidate && final_apply == active_ancestor) {
+                            if (!resolved_by_candidate && tested_dipoles == 0 &&
+                                chosen.probe == active_ancestor) {
+                                // Before the first daughter formation, the active object
+                                // itself is the frontier. Its proposal already comes from
+                                // the correct coherent source and needs no veto/resampling.
+                                auto applied_candidate = chosen.candidate;
+                                applied_candidate.pos = qstate[active_ancestor].r;
+                                applied_candidate.pos[3] = candidate_time;
+                                apply_resolved_daughter_kick(
+                                    applied_candidate, qstate[active_ancestor].p,
+                                    lres_moliere_particles, qhad[active_ancestor],
+                                    qorient[active_ancestor]);
+                                qstate[active_ancestor].r = applied_candidate.pos;
                                 ++n_unresolved_coherent_scatters_;
                                 ++n_recursive_coherent_applications_;
-                            } else if (resolved_by_candidate) {
+                                emit("moliere_kick", active_ancestor,
+                                     quenched[active_ancestor].GetMom(),
+                                     quenched[active_ancestor].GetD1(),
+                                     quenched[active_ancestor].GetD2(), candidate_time,
+                                     applied_candidate.pos, qstate[active_ancestor].p,
+                                     applied_candidate.qperp, "q_perp",
+                                     "modeE_active_coherent_source_kick");
+                                recombine_active_groups();
+                                if (pos[3] <= candidate_time) {
+                                    pos[3] = std::min(window_end, candidate_time + 1.e-6);
+                                    for (int group : active_groups) {
+                                        if (qstate[group].r[3] <= candidate_time) {
+                                            qstate[group].r[3] = pos[3];
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+
+                            if (!resolved_by_candidate) {
+                                ++n_recursive_failed_daughter_vetoes_;
+                                emit("recursive_failed_daughter_veto", chosen.probe,
+                                     active_ancestor, quenched[chosen.probe].GetD1(),
+                                     quenched[chosen.probe].GetD2(),
+                                     chosen.candidate.pos[3], chosen.candidate.pos,
+                                     chosen.candidate.p_before, candidate_qd_for_average,
+                                     "qperp_dperp",
+                                     "modeE_discard_daughter_qperp_recoil_hole");
+
+                                const bool colored_parent =
+                                    isColored(partons[active_ancestor].GetId());
+                                // Dani's failed-probe rule: once the daughter proposal is
+                                // rejected, follow the coherent source until its first
+                                // genuinely unresolving proposal or the LRES interval end.
+                                // Formation times crossed along this search are included by
+                                // collect_formed_pairs at each parent-candidate timestamp.
+                                RecursiveProbe coherent = resample_coherent_source(
+                                    active_ancestor, total_end, modee_iteration_id);
+                                if (coherent.found) {
+                                    const double coherent_time =
+                                        std::min(coherent.candidate.pos[3], total_end);
+                                    propagate_active_groups(coherent_time);
+                                    auto applied_candidate = coherent.candidate;
+                                    applied_candidate.pos = qstate[active_ancestor].r;
+                                    applied_candidate.pos[3] = coherent_time;
+                                    apply_resolved_daughter_kick(
+                                        applied_candidate, qstate[active_ancestor].p,
+                                        lres_moliere_particles, qhad[active_ancestor],
+                                        qorient[active_ancestor]);
+                                    qstate[active_ancestor].r = applied_candidate.pos;
+                                    ++n_unresolved_coherent_scatters_;
+                                    ++n_recursive_coherent_applications_;
+                                    emit("moliere_kick", active_ancestor,
+                                         quenched[active_ancestor].GetMom(),
+                                         quenched[active_ancestor].GetD1(),
+                                         quenched[active_ancestor].GetD2(), coherent_time,
+                                         applied_candidate.pos, qstate[active_ancestor].p,
+                                         applied_candidate.qperp, "q_perp",
+                                         "modeE_resampled_coherent_parent_kick");
+                                    recombine_active_groups();
+                                    if (pos[3] <= coherent_time) {
+                                        pos[3] = std::min(total_end, coherent_time + 1.e-6);
+                                        for (int group : active_groups) {
+                                            if (qstate[group].r[3] <= coherent_time) {
+                                                qstate[group].r[3] = pos[3];
+                                            }
+                                        }
+                                    }
+                                    continue;
+                                }
+
+                                if (colored_parent) {
+                                    // No acceptable coherent-source scattering occurred
+                                    // before this finite-LRES interval ended.
+                                    propagate_active_groups(total_end);
+                                } else {
+                                    const double next_time =
+                                        std::min(window_end, candidate_time + 1.e-6);
+                                    for (int group : active_groups) {
+                                        if (qstate[group].r[3] <= candidate_time) {
+                                            qstate[group].r[3] = next_time;
+                                        }
+                                    }
+                                }
+                                recombine_active_groups();
+                                if (window_end >= total_end - 1.e-9 &&
+                                    pos[3] >= window_end - 1.e-9) {
+                                    break;
+                                }
+                                continue;
+                            }
+
+                            if (resolved_by_candidate) {
                                 ++n_unresolved_resolving_scatters_;
                                 ++n_unresolved_pairs_elastically_decohered_;
                             }
@@ -1818,10 +2149,9 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             }
 
                             auto applied_candidate = chosen.candidate;
-                            // The sampled q_perp comes from the frontier probe.  If the
-                            // recursive tests map that candidate upward, apply the same
-                            // kick and single recoil/hole source at the live coherent
-                            // object or resolved subtree that the medium actually sees.
+                            // A resolving daughter proposal acts at the first enclosing
+                            // dipole that it resolves. Failed proposals have already
+                            // taken the separate veto/coherent-resampling path above.
                             applied_candidate.pos = qstate[final_apply].r;
                             applied_candidate.pos[3] = chosen.candidate.pos[3];
                             apply_resolved_daughter_kick(applied_candidate, qstate[final_apply].p,
@@ -1833,15 +2163,12 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                  applied_candidate.pos[3], applied_candidate.pos,
                                  qstate[final_apply].p, applied_candidate.qperp,
                                  "q_perp",
-                                 resolved_by_candidate ? "modeE_recursive_resolving_kick"
-                                                       : "modeE_recursive_coherent_kick");
-                            if (resolved_by_candidate) {
-                                emit("dynamic_resolution", final_apply, active_ancestor,
-                                     quenched[final_apply].GetD1(), quenched[final_apply].GetD2(),
-                                     applied_candidate.pos[3], applied_candidate.pos,
-                                     qstate[final_apply].p, last_qd, "qperp_dperp",
-                                     "modeE_recursive_tree_decoherence");
-                            }
+                                 "modeE_recursive_resolving_kick");
+                            emit("dynamic_resolution", final_apply, active_ancestor,
+                                 quenched[final_apply].GetD1(), quenched[final_apply].GetD2(),
+                                 applied_candidate.pos[3], applied_candidate.pos,
+                                 qstate[final_apply].p, last_qd, "qperp_dperp",
+                                 "modeE_recursive_tree_decoherence");
                             recombine_active_groups();
                             if (pos[3] <= candidate_time) {
                                 pos[3] = std::min(total_end, candidate_time + 1.e-6);

@@ -35,8 +35,13 @@ struct PropagationStep {
 };
 
 enum class ScatteringDecision {
+    // Commit the sampled hard scattering and its recoil/hole source.
     Apply,
-    StopBeforeApply
+    // Return the sampled candidate to the caller without committing it.
+    StopBeforeApply,
+    // Reject this hard candidate, produce no recoil/hole, and keep advancing
+    // the same source so the callback can inspect later candidates.
+    VetoAndContinue
 };
 
 using ScatteringCallback = std::function<ScatteringDecision(const ScatteringCandidate&)>;

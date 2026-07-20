@@ -413,6 +413,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                         }
 
                         vector<double> vkf{kf.x(), kf.y(), kf.z(), kf.t()};
+                        ScatteringDecision scattering_decision = ScatteringDecision::Apply;
                         if (scattering_callback != nullptr) {
                             ScatteringCandidate candidate;
                             candidate.pos = to_arr(vpos);
@@ -424,20 +425,23 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                                 p_before_scattering, p_after_scattering);
                             candidate.recoiler_id = recoiler_id;
                             candidate.hole_id = kf_id;
-                            if ((*scattering_callback)(candidate) == ScatteringDecision::StopBeforeApply) {
+                            scattering_decision = (*scattering_callback)(candidate);
+                            if (scattering_decision == ScatteringDecision::StopBeforeApply) {
                                 marker = 1;
                                 break;
                             }
                         }
 
-                        had_scattering = 1;
-                        p = p_after_scattering;
-                        new_particles.emplace_back(Parton(recoiler_p, 100000000., 0., 0, -1, -1,
-                                                          recoiler_id, "recoiler", 0, 0, false));
-                        new_particles.back().vSetRi(to_arr(vpos));
-                        new_particles.emplace_back(Parton(vkf, 100000000., 0., 0, -1, -1, kf_id, "hole", 0, 0, true));
-                        new_particles.back().vSetRi(to_arr(vpos));
-                        p_prev = p;
+                        if (scattering_decision == ScatteringDecision::Apply) {
+                            had_scattering = 1;
+                            p = p_after_scattering;
+                            new_particles.emplace_back(Parton(recoiler_p, 100000000., 0., 0, -1, -1,
+                                                              recoiler_id, "recoiler", 0, 0, false));
+                            new_particles.back().vSetRi(to_arr(vpos));
+                            new_particles.emplace_back(Parton(vkf, 100000000., 0., 0, -1, -1, kf_id, "hole", 0, 0, true));
+                            new_particles.back().vSetRi(to_arr(vpos));
+                            p_prev = p;
+                        }
                     } else if (elscat[0] == -1) {
                         std::cout << " Elscat problem!" << std::endl;
                     }
