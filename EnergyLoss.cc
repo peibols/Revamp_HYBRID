@@ -12,6 +12,7 @@
 #include <utility>
 #include "MoliereTables.h"
 #include "MoliereElastic.h"
+#include "MoliereResolution.h"
 #include "ModeEPolicy.h"
 #include "vector_operators.h"
 #ifdef HAVE_ROOT
@@ -221,10 +222,9 @@ std::array<double,4> separatedChildPosition(const std::array<double,4> &parent_p
 }
 
 double transverseSeparation(const std::array<double,4> &pos1,
-                            const std::array<double,4> &pos2) {
-    const double dx = pos1[0] - pos2[0];
-    const double dy = pos1[1] - pos2[1];
-    return std::sqrt(dx * dx + dy * dy);
+                            const std::array<double,4> &pos2,
+                            const std::array<double,4> &source_p) {
+    return moliere_resolution::transverse_separation(pos1, pos2, source_p);
 }
 
 double phiFromP(const std::array<double,4> &p) {
@@ -249,18 +249,19 @@ double properTimeFromPos(const std::array<double,4> &pos) {
 
 double compute_unresolved_pair_dperp(const std::array<double,4> &p1_vac,
                                      const std::array<double,4> &p2_vac,
+                                     const std::array<double,4> &source_p,
                                      double split_time,
                                      double scattering_time) {
     const double dt = std::max(0., scattering_time - split_time);
     const auto v1 = velocity(p1_vac);
     const auto v2 = velocity(p2_vac);
-    const double dx = (v1[0] - v2[0]) * dt;
-    const double dy = (v1[1] - v2[1]) * dt;
-    return std::sqrt(dx * dx + dy * dy);
+    const std::array<double,4> pos1 = {v1[0] * dt, v1[1] * dt, v1[2] * dt, scattering_time};
+    const std::array<double,4> pos2 = {v2[0] * dt, v2[1] * dt, v2[2] * dt, scattering_time};
+    return transverseSeparation(pos1, pos2, source_p);
 }
 
 bool passes_dynamic_moliere_resolution_test(double qperp, double dperp, double c_res) {
-    return qperp * dperp > c_res;
+    return moliere_resolution::passes(qperp, dperp, c_res);
 }
 
 moliere::ScatteringDecision apply_coherent_unresolved_kick() {
@@ -302,6 +303,7 @@ struct LresLifetime {
 struct LresState {
     std::array<double,4> p = {0., 0., 0., 0.};
     std::array<double,4> r = {0., 0., 0., 0.};
+    TransportState transport;
 };
 }
 
@@ -311,6 +313,7 @@ EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int
                        bool do_moliere_dynamic_unresolved_resolution,
                        bool do_moliere_dynamic_daughter_unresolved_resolution,
                        bool do_moliere_recursive_unresolved_resolution,
+                       double modee_max_opening_relative_residual,
                        double moliere_unresolved_resolution_c,
                        double lres_rpower,
                        bool dump_hybrid_evolution_history,
@@ -318,14 +321,16 @@ EnergyLoss::EnergyLoss(numrand &nr, double kappa, double alpha, int tmethod, int
                        bool do_event_display,
                        const std::string &event_display_file,
                        bool compat_moliere_legacy_hydro,
+                       int elastic_seed,
                        const std::string &tables_path,
                        const HydroProfile &hydro_profile)
-    : nr_(nr), kappa_(kappa), alpha_(alpha), tmethod_(tmethod), mode_(mode),
+    : nr_(nr), elastic_rng_(static_cast<unsigned int>(elastic_seed)), kappa_(kappa), alpha_(alpha), tmethod_(tmethod), mode_(mode),
       ebe_hydro_(ebe_hydro), do_elastic_(do_elastic), do_lres_(do_lres),
       do_moliere_on_unresolved_partons_(do_moliere_on_unresolved_partons),
       do_moliere_dynamic_unresolved_resolution_(do_moliere_dynamic_unresolved_resolution),
       do_moliere_dynamic_daughter_unresolved_resolution_(do_moliere_dynamic_daughter_unresolved_resolution),
       do_moliere_recursive_unresolved_resolution_(do_moliere_recursive_unresolved_resolution),
+      modee_max_opening_relative_residual_(modee_max_opening_relative_residual),
       moliere_unresolved_resolution_c_(moliere_unresolved_resolution_c),
       dump_hybrid_evolution_history_(dump_hybrid_evolution_history),
       hybrid_evolution_history_file_(hybrid_evolution_history_file),
@@ -795,11 +800,11 @@ void EnergyLoss::do_eloss(const std::vector<Parton> &partons, std::vector<Quench
         if (recoiled == nullptr) {
             std::vector<Quench> local_recoiled;
             moliere::do_eloss(partons, quenched, x, y, nr_, kappa_, alpha_, tmethod_, mode_,
-                              ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, local_recoiled,
+                              ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, elastic_rng_, local_recoiled,
                               do_event_display_ ? callback_factory : moliere::PartonCallbackFactory());
         } else {
             moliere::do_eloss(partons, quenched, x, y, nr_, kappa_, alpha_, tmethod_, mode_,
-                              ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, *recoiled,
+                              ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, elastic_rng_, *recoiled,
                               do_event_display_ ? callback_factory : moliere::PartonCallbackFactory());
         }
         if (do_event_display_) {
@@ -1476,6 +1481,10 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 energyResidual(qstate[parent].p, p1, p2);
                             const double relative_spatial_residual =
                                 qstate[parent].p[3] > 0. ? spatial_residual / qstate[parent].p[3] : 0.;
+                            if (relative_spatial_residual > modee_max_opening_relative_residual_) {
+                                throw std::runtime_error(
+                                    "Mode E parent opening exceeded the configured four-momentum residual");
+                            }
                             ++n_recursive_opening_closure_checks_;
                             sum_recursive_opening_spatial_residual_ += spatial_residual;
                             max_recursive_opening_spatial_residual_ =
@@ -1499,6 +1508,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             qstate[c2].p = p2;
                             qstate[c1].r = pos1;
                             qstate[c2].r = pos2;
+                            qstate[c1].transport = TransportState{};
+                            qstate[c2].transport = TransportState{};
                             qorient[c1] = orientationFor(qstate[c1].p);
                             qorient[c2] = orientationFor(qstate[c2].p);
                             if (qhad[parent] == 1 || qhad[parent] == 2) {
@@ -1548,6 +1559,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             std::array<double,4> pos = {0., 0., 0., 0.};
                             int had = 0;
                             std::array<double,4> orient = {0., 0., 0., 1.};
+                            TransportState transport;
                         };
                         auto project_from_ancestor_state =
                             [&](int node, int ancestor,
@@ -1597,25 +1609,31 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                         auto project_from_active = [&](int node, double target_time) {
                             const int ancestor = find_active_ancestor(node);
                             if (ancestor < 0) return RecursiveProjectedState{};
-                            return project_from_ancestor_state(
+                            auto state = project_from_ancestor_state(
                                 node, ancestor, qstate[ancestor].p, qstate[ancestor].r,
                                 qhad[ancestor], target_time);
+                            if (state.ok && node == ancestor) {
+                                state.transport = qstate[ancestor].transport;
+                            }
+                            return state;
                         };
                         struct ModeEPairDperp {
                             double dperp = 0.;
                             bool used_live_positions = false;
                         };
-                        auto modeE_pair_dperp = [&](int child, int sibling, double target_time) {
+                        auto modeE_pair_dperp = [&](int child, int sibling, double target_time,
+                                                       const std::array<double,4> &source_p) {
                             ModeEPairDperp result;
                             const auto child_state = project_from_active(child, target_time);
                             const auto sibling_state = project_from_active(sibling, target_time);
                             if (child_state.ok && sibling_state.ok) {
-                                result.dperp = transverseSeparation(child_state.pos, sibling_state.pos);
+                                result.dperp = transverseSeparation(child_state.pos, sibling_state.pos, source_p);
                                 result.used_live_positions = true;
                                 return result;
                             }
                             result.dperp = compute_unresolved_pair_dperp(
                                 partons[child].vGetP(), partons[sibling].vGetP(),
+                                source_p,
                                 life[child].creation, target_time);
                             return result;
                         };
@@ -1633,12 +1651,13 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                     source_had, target_time);
                                 if (child_state.ok && sibling_state.ok) {
                                     result.dperp = transverseSeparation(
-                                        child_state.pos, sibling_state.pos);
+                                        child_state.pos, sibling_state.pos, source_p);
                                     result.used_live_positions = true;
                                     return result;
                                 }
                                 result.dperp = compute_unresolved_pair_dperp(
                                     partons[child].vGetP(), partons[sibling].vGetP(),
+                                    source_p,
                                     life[child].creation, target_time);
                                 return result;
                             };
@@ -1683,7 +1702,8 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                     loss_rate(qstate[group].p, qstate[group].r, dt_group,
                                               partons[group].GetId(), length, tlength,
                                               event_id, &event_display_record_id, group,
-                                              quenched[group].GetMom(), gd1, gd2, true);
+                                              quenched[group].GetMom(), gd1, gd2, true,
+                                              &qstate[group].transport);
                                 } else {
                                     qstate[group].r += qstate[group].p / qstate[group].p[3] * dt_group;
                                 }
@@ -1725,6 +1745,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             std::array<double,4> pos = {0., 0., 0., 0.};
                             int had = 0;
                             std::array<double,4> orient = {0., 0., 0., 1.};
+                            TransportState transport;
                             numrand rng;
                         };
                         auto probe_object = [&](int probe_id, const RecursiveProjectedState &start,
@@ -1737,6 +1758,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             probe.pos = start.pos;
                             probe.had = start.had;
                             probe.orient = start.orient;
+                            probe.transport = start.transport;
                             probe.rng = rng_start;
                             const double remaining = std::max(0., probe_end - probe.pos[3]);
                             auto callback = [&](const moliere::ScatteringCandidate &candidate) {
@@ -1744,18 +1766,18 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 probe.candidate = candidate;
                                 return moliere::ScatteringDecision::StopBeforeApply;
                             };
-                            // Moliere gen_particles uses the global Distributions.hpp generator,
-                            // so branch-local probes must scope that generator in addition to numrand.
-                            const auto elastic_rng_state = moliere::elastic_generator_state();
-                            moliere::seed_elastic_generator(static_cast<unsigned int>(elastic_seed));
+                            // Branch probes own deterministic numrand and elastic streams so frontier
+                            // traversal order cannot consume a shared Moliere RNG.
+                            std::default_random_engine probe_elastic_rng(
+                                static_cast<unsigned int>(elastic_seed));
                             if (remaining > 1.e-9 && probe.p[3] > 0.) {
                                 moliere::propagate_segment_with_scattering_callback(
                                     probe.p, probe.pos, remaining, partons[probe_id].GetId(),
                                     probe.rng, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
-                                    compat_moliere_legacy_hydro_, hydro_profile_,
-                                    lres_moliere_particles, probe.had, probe.orient, callback);
+                                    compat_moliere_legacy_hydro_, hydro_profile_, probe_elastic_rng,
+                                    lres_moliere_particles, probe.had, probe.orient, callback,
+                                    moliere::PropagationStepCallback(), &probe.transport);
                             }
-                            moliere::set_elastic_generator_state(elastic_rng_state);
                             return probe;
                         };
                         std::function<void(int, double, std::vector<std::pair<int,int>>&)> collect_formed_pairs =
@@ -1781,6 +1803,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             probe.pos = qstate[active_ancestor].r;
                             probe.had = qhad[active_ancestor];
                             probe.orient = qorient[active_ancestor];
+                            probe.transport = qstate[active_ancestor].transport;
 
                             ++n_recursive_coherent_resample_requests_;
                             if (!modee::is_colored_coherent_source(
@@ -1819,7 +1842,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                         candidate.pos[3]);
                                     if (dperp_result.used_live_positions) ++n_recursive_live_dperp_tests_;
                                     else ++n_recursive_vacuum_dperp_fallbacks_;
-                                    const double qd = candidate.qperp * dperp_result.dperp;
+                                    const double qd = moliere_resolution::qperp_dperp(candidate.qperp, dperp_result.dperp);
                                     max_qd = std::max(max_qd, qd);
                                     resolves_any = resolves_any ||
                                         passes_dynamic_moliere_resolution_test(
@@ -1851,18 +1874,17 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 return moliere::ScatteringDecision::StopBeforeApply;
                             };
 
-                            const auto elastic_rng_state = moliere::elastic_generator_state();
-                            moliere::seed_elastic_generator(static_cast<unsigned int>(coherent_seed));
+                            std::default_random_engine coherent_elastic_rng(
+                                static_cast<unsigned int>(coherent_seed));
                             if (remaining > 1.e-9 && probe.p[3] > 0.) {
                                 moliere::propagate_segment_with_scattering_callback(
                                     probe.p, probe.pos, remaining,
                                     partons[active_ancestor].GetId(), probe.rng,
                                     kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
-                                    compat_moliere_legacy_hydro_, hydro_profile_,
+                                    compat_moliere_legacy_hydro_, hydro_profile_, coherent_elastic_rng,
                                     lres_moliere_particles, probe.had, probe.orient,
-                                    callback);
+                                    callback, moliere::PropagationStepCallback(), &probe.transport);
                             }
-                            moliere::set_elastic_generator_state(elastic_rng_state);
                             if (!probe.found) {
                                 ++n_recursive_coherent_resample_exhausted_;
                                 emit("recursive_coherent_resample_exhausted", active_ancestor,
@@ -2000,12 +2022,13 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                     break;
                                 }
                                 const auto dperp_result = modeE_pair_dperp(
-                                    child_for_test, sibling, chosen.candidate.pos[3]);
+                                    child_for_test, sibling, chosen.candidate.pos[3],
+                                    chosen.candidate.p_before);
                                 ++tested_dipoles;
                                 const double dperp = dperp_result.dperp;
                                 if (dperp_result.used_live_positions) ++n_recursive_live_dperp_tests_;
                                 else ++n_recursive_vacuum_dperp_fallbacks_;
-                                const double qd = chosen.candidate.qperp * dperp;
+                                const double qd = moliere_resolution::qperp_dperp(chosen.candidate.qperp, dperp);
                                 last_qd = qd;
                                 candidate_qd_for_average = qd;
                                 const bool resolves = passes_dynamic_moliere_resolution_test(
@@ -2268,7 +2291,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 moliere::propagate_segment_with_scattering_callback(
                                     probe.p, probe.pos, remaining, partons[daughter].GetId(),
                                     probe.rng, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
-                                    compat_moliere_legacy_hydro_, hydro_profile_,
+                                    compat_moliere_legacy_hydro_, hydro_profile_, elastic_rng_,
                                     lres_moliere_particles, probe.had, probe.orient, callback);
                                 return probe;
                             };
@@ -2307,8 +2330,9 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
 
                             const double dperp = compute_unresolved_pair_dperp(
                                 partons[d1].vGetP(), partons[d2].vGetP(),
+                                chosen.candidate.p_before,
                                 life[d1].creation, chosen.candidate.pos[3]);
-                            const double qd = chosen.candidate.qperp * dperp;
+                            const double qd = moliere_resolution::qperp_dperp(chosen.candidate.qperp, dperp);
                             ++n_unresolved_candidate_scatters_;
                             sum_qperp_dperp_unresolved_candidates_ += qd;
                             const bool resolves = passes_dynamic_moliere_resolution_test(
@@ -2393,7 +2417,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 moliere::propagate_segment_with_scattering_callback(
                                     p1, pos1, remaining_after, partons[d1].GetId(),
                                     nr_, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
-                                    compat_moliere_legacy_hydro_, hydro_profile_,
+                                    compat_moliere_legacy_hydro_, hydro_profile_, elastic_rng_,
                                     lres_moliere_particles, had1, orient1, cb, step_cb);
                             }
                             if (remaining_after > 0. && p2[3] > 0.) {
@@ -2406,7 +2430,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 moliere::propagate_segment_with_scattering_callback(
                                     p2, pos2, remaining_after, partons[d2].GetId(),
                                     nr_, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
-                                    compat_moliere_legacy_hydro_, hydro_profile_,
+                                    compat_moliere_legacy_hydro_, hydro_profile_, elastic_rng_,
                                     lres_moliere_particles, had2, orient2, cb, step_cb);
                             }
 
@@ -2447,8 +2471,9 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                             // elastically decohere the unresolved daughter pair.
                             const double dperp = compute_unresolved_pair_dperp(
                                 partons[d1].vGetP(), partons[d2].vGetP(),
+                                candidate.p_before,
                                 life[d1].creation, candidate.pos[3]);
-                            const double qd = candidate.qperp * dperp;
+                            const double qd = moliere_resolution::qperp_dperp(candidate.qperp, dperp);
                             ++n_unresolved_candidate_scatters_;
                             sum_qperp_dperp_unresolved_candidates_ += qd;
 
@@ -2474,7 +2499,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                         moliere::propagate_segment_with_scattering_callback(
                             p, pos, tof, partons[idx].GetId(), nr_, kappa_, alpha_,
                             tmethod_, mode_, ebe_hydro_, compat_moliere_legacy_hydro_,
-                            hydro_profile_, lres_moliere_particles, qhad[idx],
+                            hydro_profile_, elastic_rng_, lres_moliere_particles, qhad[idx],
                             qorient[idx], dynamic_callback,
                             make_moliere_step_callback(idx, partons[idx].GetId(), quenched[idx].GetMom(),
                                                        d1, d2, true, "modeC_dynamic_parent_step"));
@@ -2551,7 +2576,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 moliere::propagate_segment_with_scattering_callback(
                                     p1, pos1, remaining_after, partons[d1].GetId(),
                                     nr_, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
-                                    compat_moliere_legacy_hydro_, hydro_profile_,
+                                    compat_moliere_legacy_hydro_, hydro_profile_, elastic_rng_,
                                     lres_moliere_particles, had1, orient1, cb, step_cb);
                             }
                             if (remaining_after > 0. && p2[3] > 0.) {
@@ -2564,7 +2589,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                                 moliere::propagate_segment_with_scattering_callback(
                                     p2, pos2, remaining_after, partons[d2].GetId(),
                                     nr_, kappa_, alpha_, tmethod_, mode_, ebe_hydro_,
-                                    compat_moliere_legacy_hydro_, hydro_profile_,
+                                    compat_moliere_legacy_hydro_, hydro_profile_, elastic_rng_,
                                     lres_moliere_particles, had2, orient2, cb, step_cb);
                             }
 
@@ -2620,7 +2645,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                         moliere::propagate_segment_with_scattering_callback(
                             p1, pos1, tof, partons[d1].GetId(), nr_, kappa_, alpha_,
                             tmethod_, mode_, ebe_hydro_, compat_moliere_legacy_hydro_,
-                            hydro_profile_, lres_moliere_particles, had1, orient1, cb1, step_cb1);
+                            hydro_profile_, elastic_rng_, lres_moliere_particles, had1, orient1, cb1, step_cb1);
                         auto cb2 = make_moliere_scattering_callback(
                             d2, partons[d2].GetId(), idx, d1, d2, true,
                             "modeB_unresolved_daughter_scattering");
@@ -2630,7 +2655,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                         moliere::propagate_segment_with_scattering_callback(
                             p2, pos2, tof, partons[d2].GetId(), nr_, kappa_, alpha_,
                             tmethod_, mode_, ebe_hydro_, compat_moliere_legacy_hydro_,
-                            hydro_profile_, lres_moliere_particles, had2, orient2, cb2, step_cb2);
+                            hydro_profile_, elastic_rng_, lres_moliere_particles, had2, orient2, cb2, step_cb2);
 
                         qhad[d1] = had1;
                         qhad[d2] = had2;
@@ -2686,7 +2711,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
                         moliere::propagate_segment_with_scattering_callback(
                             p, pos, tof, partons[idx].GetId(), nr_, kappa_, alpha_,
                             tmethod_, mode_, ebe_hydro_, compat_moliere_legacy_hydro_,
-                            hydro_profile_, lres_moliere_particles, qhad[idx], qorient[idx],
+                            hydro_profile_, elastic_rng_, lres_moliere_particles, qhad[idx], qorient[idx],
                             cb, step_cb);
                     }
                     const double qperp = std::sqrt((p[0] - p_before[0]) * (p[0] - p_before[0]) +
@@ -2760,7 +2785,7 @@ void EnergyLoss::do_lres_eloss_impl(const std::vector<Parton> &partons, std::vec
     if (do_elastic_) {
         std::vector<Quench> &recoiled_out = recoiled != nullptr ? *recoiled : local_recoiled;
         moliere::process_recoilers(lres_moliere_particles, nr_, kappa_, alpha_, tmethod_, mode_,
-                                   ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, recoiled_out);
+                                   ebe_hydro_, compat_moliere_legacy_hydro_, hydro_profile_, elastic_rng_, recoiled_out);
         for (const auto &rp : recoiled_out) {
             const std::string label = (rp.GetOrig() == "recoiler" || rp.GetOrig() == "hole") ? "response_parton" : "other";
             emit("medium_response", -1, -1, -1, -1, rp.GetRi()[3], rp.GetRi(), rp.vGetP(), 0.0, label, rp.GetOrig());
@@ -2798,23 +2823,31 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
                            double &length, double &tlength,
                            int event_id, int *record_id,
                            int parton_index, int parent_index,
-                           int d1, int d2, bool is_unresolved) {
+                           int d1, int d2, bool is_unresolved,
+                           TransportState *transport_state) {
     double Tc;
     if (tmethod_ == 0) Tc = 0.170;
     else Tc = 0.145;
     constexpr double charm_mass = 1.25;
     constexpr double b_mass = 4.2;
 
-    double tot = pos[3] + tof;    // Final time
+    if (tof <= 0. || p[3] <= 0.) return;
+    const double tot = pos[3] + tof;    // Final time
+    if (std::abs(id) == 4 || std::abs(id) == 5) {
+        pos += p / p[3] * tof;
+        return;
+    }
 
-    double tau0h = 0.6;             //Ave hydro
-    if (ebe_hydro_ == 1) tau0h = 0.4;   //ebe hydro
+    const double tau0h = hydro_profile_.hydroStartTime();
 
-    double ei = p[3];      // Initial energy
-
-    double f_dist = 0.;    // Traversed distance in Fluid Frame
-
-    double virt_f_dist = 0.;
+    TransportState local_transport_state;
+    TransportState &state = transport_state != nullptr
+                                ? *transport_state
+                                : local_transport_state;
+    state.initialize(p[3]);
+    const double ei = state.initial_energy;
+    double &f_dist = state.fluid_distance;
+    double &virt_f_dist = state.virtual_fluid_distance;
 
     double CF;
     if (id == 21) {
@@ -2823,11 +2856,13 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
     } else CF = 1.;
 
     int marker = 0;    // If one, exit loop
-    double step = 0.1;  // Time step in LAB frame
+    constexpr double step = 0.1;  // Nominal time step in LAB frame
 
     auto w = p / p[3];  // 4-velocity
 
-    do {
+    while (marker == 0 && pos[3] < tot - 1.e-12 && p[3] > 0.) {
+        const double dt = transport_step_duration(pos[3], tot, step);
+        if (dt <= 0.) break;
         const auto pos_step_start = pos;
         const auto p_step_start = p;
         double temp_for_record = 0.;
@@ -2840,15 +2875,13 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
 #endif
         auto p_pre_floor = p;
 
-        if (pos[3] == tot) marker = 1;
-        if (pos[3] > tot) std::cout << " Warning: Went beyond tot= " << tot << " t= " << pos[3] << std::endl;
-
         // Proper time
         double tau = sqrt(pos[3] * pos[3] - pos[2] * pos[2]);
         if (tau != tau) {
-            std::cout << " TAU Not a number z= " << pos[2] << " t= " << pos[3] << " wz= " << w[2] << " en = " << p[3] << " pz= " << p[2] << "\n";
+            std::cout << " TAU Not a number z= " << pos[2] << " t= " << pos[3]
+                      << " wz= " << w[2] << " en= " << p[3] << " pz= " << p[2] << std::endl;
             std::cout << " Id= " << id << std::endl;
-            exit(1);
+            std::exit(1);
         }
 
         // Rapidity
@@ -2884,7 +2917,8 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
             if (f_lore < 0.) {
                 f_lore = 0.;
             }
-            double f_step = step * sqrt(f_lore);
+            const double f_dist_before = f_dist;
+            double f_step = dt * sqrt(f_lore);
             f_dist += f_step;
 
             // temp is already available from getValues
@@ -2929,7 +2963,7 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
 
                 // Broadening
                 if (kappa_ != 0.) {
-                    trans_kick(w, w2, v, p, temp, vscalw, lore, step, kappa_);
+                    trans_kick(w, w2, v, p, temp, vscalw, lore, dt, kappa_);
                 }
 
                 p_pre_floor = p;
@@ -2941,28 +2975,28 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
                 if (alpha_ != 0. && mode_ == 0 && doquench) {
                     double Efs = ei * lore * (1. - vscalw);
                     double tstop = 0.2 * pow(Efs, 1. / 3.) / (2. * pow(temp, 4. / 3.) * alpha_) / CF;
-                    double beta = tstop / f_dist;
-                    if (beta > 1.) {
-                        double intpiece = Efs * step * 4. / (3.141592) * (1. / (beta * tstop * sqrt(beta * beta - 1.)));
-                        double quench = (p[3] - intpiece) / p[3];
-                        p *= quench;
+                    const double intpiece = strong_coupling_step_loss(
+                        Efs, tstop, f_dist_before, f_dist);
+                    if (f_dist < tstop && intpiece < p[3]) {
+                        p *= (p[3] - intpiece) / p[3];
                     } else {
-                        p[3] = 0.;
+                        p = {0., 0., 0., 0.};
                     }
                 }
 
                 // Radiative
                 if (alpha_ != 0. && mode_ == 1) {
-                    double intpiece = CF * (step / 0.2) * alpha_ * temp * temp * temp * (f_dist / 0.2);
-                    double quench = (p[3] - intpiece) / p[3];
-                    p *= quench;
+                    const double intpiece = CF * alpha_ * temp * temp * temp *
+                        fluid_distance_weighted_step(f_dist_before, f_dist, dt) / (0.2 * 0.2);
+                    if (intpiece < p[3]) p *= (p[3] - intpiece) / p[3];
+                    else p = {0., 0., 0., 0.};
                 }
 
                 // Collisional
                 if (alpha_ != 0. && mode_ == 2) {
-                    double intpiece = CF * (step / 0.2) * alpha_ * temp * temp;
-                    double quench = (p[3] - intpiece) / p[3];
-                    p *= quench;
+                    const double intpiece = CF * (dt / 0.2) * alpha_ * temp * temp;
+                    if (intpiece < p[3]) p *= (p[3] - intpiece) / p[3];
+                    else p = {0., 0., 0., 0.};
                 }
                 
             }
@@ -3000,7 +3034,7 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
                 std::cout << " craazy f_lore= " << f_lore << std::endl;
                 f_lore = 1.;
             }
-            virt_f_dist += step * sqrt(f_lore);
+            virt_f_dist += dt * sqrt(f_lore);
         }
 
         // If parton gets totally quenched, exit
@@ -3017,7 +3051,7 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
             }
             // Update kinematical quantities, with the possibility of advancing to hot regions
             w = p / p[3];
-            double tstep = std::max(double(will_hot), 1.) * step;
+            double tstep = will_hot > 0 ? double(will_hot) * step : dt;
             if (pos[3] + tstep > tot) {
                 tstep = tot - pos[3];
             }
@@ -3052,10 +3086,9 @@ void EnergyLoss::loss_rate(std::array<double,4> &p, std::array<double,4> &pos, d
         }
 #endif
 
-    } while (marker == 0);
+    }
 
     //Just to check the distance travelled, not used
-    if (virt_f_dist == 0.) virt_f_dist = -1;
 }
 
 double EnergyLoss::call_gT(double tau, double x, double y, int comp) const {
@@ -3098,7 +3131,7 @@ double EnergyLoss::resolution_time(double parent_e, double parent_px, double par
         const double proper_sq = ti * ti - z * z;
         const double tau = proper_sq > 0. ? std::sqrt(proper_sq) : 0.;
 
-        if (tau >= 0.6 || hydro_profile_.hasPreHydroAt(tau)) {
+        if (tau >= hydro_profile_.hydroStartTime() || hydro_profile_.hasPreHydroAt(tau)) {
             const double temp = call_gT(tau, x, y, 0);
             const double sep = std::sqrt(xprime * xprime + yprime * yprime + zprime * zprime);
             if (sep >= scale / (temp / 0.2) || temp <= Tc) {

@@ -18,6 +18,7 @@ public:
     void loadPreHydroTable(const std::string &filename);
     bool hasPreHydro() const { return prehydroLoaded_; }
     bool hasPreHydroAt(double tau) const;
+    double hydroStartTime() const { return hydroTau0_; }
 
     // Legacy interface: directs to loadHydro(1, cent) for backward compatibility
     void loadIpsat(int nhyd, const std::string &cent, const std::string &filename = "evolution_all_xyeta.dat") {

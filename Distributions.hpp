@@ -1,6 +1,7 @@
 // I hate c++,I really do. https://xkcd.com/353/
 #include "helperfunctions.hpp"
 #include <random>
+#include <stdexcept>
 #include <vector>
 #include <complex>
 #include "read_tables.hpp"
@@ -43,15 +44,34 @@ int max_n[7]={0};
 //^^^^^^^^^^^^^^^^^^^^^^^^
 
 
-std::default_random_engine generator;
+thread_local std::default_random_engine *active_elastic_generator = nullptr;
+
+std::default_random_engine &elastic_generator() {
+    if (active_elastic_generator == nullptr) {
+        throw std::logic_error("Moliere elastic RNG used without an owning stream");
+    }
+    return *active_elastic_generator;
+}
+
+class ScopedElasticGenerator {
+public:
+    explicit ScopedElasticGenerator(std::default_random_engine &generator)
+        : previous_(active_elastic_generator) {
+        active_elastic_generator = &generator;
+    }
+    ~ScopedElasticGenerator() { active_elastic_generator = previous_; }
+
+private:
+    std::default_random_engine *previous_;
+};
 std::uniform_real_distribution<double> distcon(0.0,1.0);
 std::uniform_int_distribution<> distint(0,1);
 std::uniform_int_distribution<> distintNf(1,Nf);
 
 double distcon_open()
 {
-    double out = distcon(generator);
-    while (out <= 0.) out = distcon(generator);
+    double out = distcon(elastic_generator());
+    while (out <= 0.) out = distcon(elastic_generator());
     return out;
 }
 
@@ -2609,7 +2629,7 @@ std::vector<double> F_QQ(double phi, double dk, double kcm, double x, double pin
 
     double prob=kap/vq*(p1+p3+p4+p4t+p7+p9);
     if (prob==0) return {0,0};
-    double guess=distcon(generator);
+    double guess=distcon(elastic_generator());
     //cout<<p1<<" "<<p3<<" "<<prob<<" "<<guess<<" hi"<<std::endl;
     if (guess<=p1*kap/vq/prob) return {prob,1};
     if (guess<=(p1+p3)*kap/vq/prob) return {prob,3};
@@ -2629,7 +2649,7 @@ std::vector<double> F_QG(double phi,double dk,double kcm,double x,double pin,dou
     double kap=pow(gs,4)*deltime;
     double p8=2*dot(mQG,Proc8_qqb_gg())*c1;
     double p9t=dot(mGQ,Proc9twid_qg_qg());
-    double guess=distcon(generator);
+    double guess=distcon(elastic_generator());
     double prob=kap/vq*(p8+p9t);
     if (prob==0) return {0,0};
     if (guess<=p8/(p8+p9t)) return {prob,8}; 
@@ -2646,7 +2666,7 @@ std::vector<double> F_GQ(double phi,double dk,double kcm,double x,double pin,dou
     double p9t=Nf*dot(mQG,Proc9twid_qg_qg());
     double prob=kap/vg*(p8+p9t);
     if (prob==0) return {0,0};
-    double guess=distcon(generator);
+    double guess=distcon(elastic_generator());
     if (guess<=p8/(p8+p9t)) return {prob,8};
     if (guess<=1) return {prob,-9};
     std::cout<<"F_GQ problem"<<std::endl;
@@ -2663,7 +2683,7 @@ std::vector<double> F_GG(double phi,double dk,double kcm,double x,double pin,dou
     double p11=dot(mGG,Proc11_gg_gg());
     double prob=kap/vg*(p9+p11);
     if (prob==0) return {0,0};
-    double guess=distcon(generator);
+    double guess=distcon(elastic_generator());
     if (guess<=p9/(p9+p11)) return {prob,9};
     if (guess<=1) return {prob,11};
     std::cout<<"F_GG problem"<<std::endl;
@@ -2685,7 +2705,7 @@ std::vector<double> F_QQB(double phi,double dk,double kcm,double x,double pin,do
     double p7=(Nf-1)*dot(mQQ,Proc7_qqb_qpqbp())*c1;
     double prob=kap/vq*(p3t+p4t+p7);
     if (prob==0) return {0,0};
-    double guess=distcon(generator);
+    double guess=distcon(elastic_generator());
     if (guess<=p3t/(p3t+p4t+p7)) return {prob,-3};
     if (guess<=(p3t+p4t)/(p3t+p4t+p7)) return {prob,-4};
     if (guess<=1) return {prob,7};
@@ -2766,7 +2786,7 @@ std::vector<double> is_split(double pin, double deltime, double pinPDG, gsl_inte
         if (prob>=.5) return {-1,.5,0,0,prob, pintype};//-1 means to half the global time step and run again
 
         if (prob<=.05) b=2; //means double the global time step on the next run
-        double guess=distcon(generator);
+        double guess=distcon(elastic_generator());
          //cout<<guess<<"  "<<prob<<std::endl;
         
 	//Is it invariant under interchange of FQQ FGQ and so on?
@@ -2796,7 +2816,7 @@ std::vector<double> is_split(double pin, double deltime, double pinPDG, gsl_inte
         // prob*=corr;
         if (prob>=.5) return {-1,.5,0,0,prob, pintype};
         if (prob<=.05) b=2;
-        double guess=distcon(generator);
+        double guess=distcon(elastic_generator());
         //cout<<guess<<"    "<<prob<<std::endl;
 
         if (guess>=prob) return {0,b,0,0,prob, pintype}; //0 means no splitting this interval
@@ -2837,8 +2857,8 @@ double myproc(double phi,double dk,double kcm,double x,double pin,double g,doubl
 std::vector<double> q_nums(double proc, double pinPDG, double pQGQB) //-1 for gluon,1 for quark,2 for QBar for outgoing particle,input is PDG for incoming and process->pinPDG2,pPDG,kPDG,E4PDG,QG1,QG2
 {//convention of the output is (pin,p,k,E4)
 //doing this for only light quarks 
-    double charge=distint(generator)*2-1;
-    double flavor=distintNf(generator);
+    double charge=distint(elastic_generator())*2-1;
+    double flavor=distintNf(elastic_generator());
 
     //cout<<charge<<"   "<<flavor<<std::endl;
     if (proc==1) return {pinPDG,pinPDG,pinPDG,pinPDG,Q,Q}; //(pin,p,k,E4,Q/G from paper,Q/G from paper)
@@ -2846,18 +2866,18 @@ std::vector<double> q_nums(double proc, double pinPDG, double pQGQB) //-1 for gl
     if (proc==-3) return {pinPDG,-pinPDG,-pinPDG,pinPDG,Q,Q}; 
     if (proc==4) 
     {
-        while (flavor==abs(pinPDG)) flavor=distintNf(generator);
+        while (flavor==abs(pinPDG)) flavor=distintNf(elastic_generator());
         return {pinPDG,pinPDG,charge*flavor,charge*flavor,Q,Q}; 
     }
     if (proc==-4)
     {
-        while (flavor==abs(pinPDG)) flavor=distintNf(generator);
+        while (flavor==abs(pinPDG)) flavor=distintNf(elastic_generator());
         if (pQGQB==1) return {pinPDG,sgn(pinPDG)*flavor,sgn(pinPDG)*flavor,pinPDG,Q,Q}; 
         if (pQGQB==2) return {pinPDG,-sgn(pinPDG)*flavor,-sgn(pinPDG)*flavor,pinPDG,Q,Q}; 
     }
     if (proc==7)
     {
-        while (flavor==abs(pinPDG)) flavor=distintNf(generator);
+        while (flavor==abs(pinPDG)) flavor=distintNf(elastic_generator());
         if (pQGQB==1) return {pinPDG,sgn(pinPDG)*flavor,-pinPDG,-sgn(pinPDG)*flavor,Q,Q}; 
         if (pQGQB==2) return {pinPDG,-sgn(pinPDG)*flavor,-pinPDG,sgn(pinPDG)*flavor,Q,Q}; 
     }
@@ -3015,10 +3035,10 @@ std::vector<double> kinematics(double pinx, double piny, double pinz, double g, 
 
     //cout<<"phi="<<phi<<std::endl;
 
-    double phi_k=distcon(generator)*(2 * M_PI);
+    double phi_k=distcon(elastic_generator())*(2 * M_PI);
     //cout<<"phi_k="<<phi_k<<std::endl;
     double E4=pin+k-p;
-    //double coinflip=distint(generator)*2-1; //y has an arbitrary sign 
+    //double coinflip=distint(elastic_generator())*2-1; //y has an arbitrary sign
     
 
     // double px=p*sin(theta);

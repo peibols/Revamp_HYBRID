@@ -5,6 +5,9 @@
 njob = 0
 Nev = 100
 cent = 0-5
+#pythia_cmnd = setup_pythia.cmnd
+#max_tree_attempts = 100000
+#max_event_attempts = 1000000
 
 # Energy loss parameters
 kappa = 15.0
@@ -14,6 +17,7 @@ tmethod = 0
 mode = 0
 
 # Physics toggles
+# MMLI transports only light quarks and gluons; use MMLHI for charm/bottom physics.
 # do_quench: true/false
 # do_wake: true/false
 # do_source: true/false
@@ -39,8 +43,16 @@ mode = 0
 #                                             the LRES interval ends. Color-neutral
 #                                             coherent objects cannot receive a hard kick.
 #                                             This takes precedence over all other
-#                                             unresolved Moliere modes.
-# moliere_unresolved_resolution_c: O(1) dynamic dipole-resolution threshold.
+#                                             unresolved Moliere modes. Mode E is
+#                                             validation-only until live-parent opening
+#                                             conserves four-momentum. Running it requires
+#                                             explicit acknowledgement plus a residual cap.
+# allow_modee_nonconserving_opening: must be true to run diagnostic Mode E.
+# modee_max_opening_relative_residual: abort when |sum p_daughter-p_parent|/E_parent
+#                                      exceeds this value (default 1e-6).
+# moliere_unresolved_resolution_c: O(1) threshold on the dimensionless lab-frame test
+#                                  q_perp[GeV]*d_perp[fm]/(hbar*c), where d_perp is
+#                                  transverse to the incoming scattering-source direction.
 # dump_hybrid_evolution_history: write time-ordered LRES/Moliere/response records for event-display plots.
 # hybrid_evolution_history_file: output TSV path for those records (append mode).
 # doEventDisplay: write a ROOT TTree with one row per propagated parton time segment.
@@ -59,6 +71,8 @@ do_quench = true
 #do_Moliere_dynamic_unresolved_resolution = false
 #do_Moliere_dynamic_daughter_unresolved_resolution = false
 #do_Moliere_recursive_unresolved_resolution = false
+#allow_modee_nonconserving_opening = false
+#modee_max_opening_relative_residual = 0.000001
 #moliere_unresolved_resolution_c = 1.0
 #dump_hybrid_evolution_history = false
 #hybrid_evolution_history_file = hybrid_evolution_history.tsv

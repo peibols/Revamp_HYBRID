@@ -2,6 +2,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <optional>
 
 // A simple key/value parser for "key = value" text files.
@@ -12,6 +13,7 @@ struct Config {
     std::unordered_map<std::string, std::string> entries;
 
     bool load(const std::string &path);
+    void validateKnownKeys(const std::unordered_set<std::string> &known) const;
 
     std::optional<std::string> getString(const std::string &key) const;
     std::optional<int> getInt(const std::string &key) const;

@@ -14,6 +14,7 @@ using std::vector;
 using namespace std;
 
 #include "Distributions.hpp"
+#include "TransportState.h"
 
 namespace moliere {
 namespace {
@@ -238,23 +239,33 @@ FourVector BoostBack(double b[3], FourVector p) {
 
 void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numrand &nr, double kappa,
                double alpha, int tmethod, int model, int ebe_hydro,
-               bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile, vector<Quench> &new_particles,
+               bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile, std::default_random_engine &elastic_rng, vector<Quench> &new_particles,
                int &had_scattering, vector<double> &orient,
                const ScatteringCallback *scattering_callback = nullptr,
-               const PropagationStepCallback *step_callback = nullptr) {
+               const PropagationStepCallback *step_callback = nullptr,
+               TransportState *transport_state = nullptr) {
     auto &workspaces = integration_workspaces();
     gsl_integration_workspace *wdk = workspaces.wdk;
     gsl_integration_workspace *wkcm = workspaces.wkcm;
     gsl_integration_workspace *wx = workspaces.wx;
+    ScopedElasticGenerator elastic_scope(elastic_rng);
 
     double Tc = (tmethod == 0) ? 0.170 : 0.145;
     double charm_mass = 1.25;
     double b_mass = 4.2;
 
-    double tot = pos[3] + tof;
-    double ei = p[3];
-    double f_dist = 0.;
-    double l_dist = 0.;
+    if (tof <= 0. || p[3] <= 0.) return;
+    const double tot = pos[3] + tof;
+    if (std::abs(id) == 4 || std::abs(id) == 5) {
+        pos += p / p[3] * tof;
+        return;
+    }
+    TransportState local_transport_state;
+    TransportState &state = transport_state != nullptr ? *transport_state : local_transport_state;
+    state.initialize(p[3]);
+    const double ei = state.initial_energy;
+    double &f_dist = state.fluid_distance;
+    double &l_dist = state.lab_distance;
 
     double CF;
     if (id == 21) {
@@ -263,23 +274,22 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
     } else CF = 1.;
 
     int marker = 0;
-    double step = 0.1;
+    constexpr double step = 0.1;
 
     vector<double> p_prev;
     vector<double> p_ini = p;
     vector<double> w = p/p[3];
     vector<double> o_in = orient;
 
-    do {
+    while (marker == 0 && pos[3] < tot - 1.e-12 && p[3] > 0.) {
+        const double dt = transport_step_duration(pos[3], tot, step);
+        if (dt <= 0.) break;
         const vector<double> pos_step_start = pos;
         const vector<double> p_step_start = p;
         double temp_for_record = 0.;
         double tau_for_record = 0.;
         int in_medium_for_record = 0;
         p_prev = p;
-
-        if (pos[3] == tot) marker = 1;
-        if (pos[3] > tot) std::cout << " Warning: Went beyond tot= " << tot << " t= " << pos[3] << std::endl;
 
         double tau = std::sqrt(pos[3]*pos[3]-pos[2]*pos[2]);
         tau_for_record = tau;
@@ -296,7 +306,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
 
         int will_hot = 0;
         double vx = 0., vy = 0., vz = 0.;
-        double tau0h = (ebe_hydro == 1) ? 0.4 : 0.6;
+        const double tau0h = hydro_profile.hydroStartTime();
         if (tau >= tau0h || hydro_profile.hasPreHydroAt(tau)) {
             vector<double> v;
             vx = compat_moliere_legacy_hydro
@@ -323,10 +333,11 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
             temp_for_record = temp;
             in_medium_for_record = temp >= Tc ? 1 : 0;
 
-            l_dist += step;
+            l_dist += dt;
             double f_lore = w2 + lore*lore*(v2 - 2.*vscalw + vscalw*vscalw);
             if (f_lore < 0.) f_lore = 0.;
-            double f_step = step*std::sqrt(f_lore);
+            const double f_dist_before = f_dist;
+            double f_step = dt*std::sqrt(f_lore);
             f_dist += f_step;
 
             if (temp < Tc) {
@@ -356,7 +367,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                 pp = Boost(beta, pp);
 
                 double pin = std::sqrt(pp.x()*pp.x()+pp.y()*pp.y()+pp.z()*pp.z())/temp;
-                if ((id == 21 || std::abs(id) <= 4) && pin < 1500.) {
+                if ((id == 21 || std::abs(id) <= 3) && pin < 1500.) {
                     double deltime = f_step*temp/0.2;
                     vector<double> elscat = gen_particles(pp.x()/temp, pp.y()/temp, pp.z()/temp, id, deltime, wdk, wkcm, wx);
                     if (elscat[0] == 1) {
@@ -449,7 +460,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
 
                 if (marker == 1) continue;
 
-                if (kappa != 0. && step != 0.) trans_kick(w, w2, v, p, temp, vscalw, lore, step, kappa, nr);
+                if (kappa != 0. && dt != 0.) trans_kick(w, w2, v, p, temp, vscalw, lore, dt, kappa, nr);
 
                 orient[0] = p[0]/p[3];
                 orient[1] = p[1]/p[3];
@@ -464,24 +475,24 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                 if (alpha != 0. && model == 0 && doquench) {
                     double Efs = ei*lore*(1.-vscalw);
                     double tstop = 0.2*std::pow(Efs,1./3.)/(2.*std::pow(temp,4./3.)*alpha)/CF;
-                    double beta_s = tstop/f_dist;
-                    if (beta_s > 1.) {
-                        double intpiece = Efs*step*4./(3.141592)*(1./(beta_s*tstop*std::sqrt(beta_s*beta_s-1.)));
-                        double quench = (p[3]-intpiece)/p[3];
-                        p *= quench;
+                    const double intpiece = strong_coupling_step_loss(
+                        Efs, tstop, f_dist_before, f_dist);
+                    if (f_dist < tstop && intpiece < p[3]) {
+                        p *= (p[3]-intpiece)/p[3];
                     } else {
-                        p[3] = 0.;
+                        p = {0., 0., 0., 0.};
                     }
                 }
                 if (alpha != 0. && model == 1) {
-                    double intpiece = CF*(step/0.2)*alpha*temp*temp*temp*(f_dist/0.2);
-                    double quench = (p[3]-intpiece)/p[3];
-                    p *= quench;
+                    const double intpiece = CF*alpha*temp*temp*temp*
+                        fluid_distance_weighted_step(f_dist_before, f_dist, dt) / (0.2*0.2);
+                    if (intpiece < p[3]) p *= (p[3]-intpiece)/p[3];
+                    else p = {0., 0., 0., 0.};
                 }
                 if (alpha != 0. && model == 2) {
-                    double intpiece = CF*(step/0.2)*alpha*temp*temp;
-                    double quench = (p[3]-intpiece)/p[3];
-                    p *= quench;
+                    const double intpiece = CF*(dt/0.2)*alpha*temp*temp;
+                    if (intpiece < p[3]) p *= (p[3]-intpiece)/p[3];
+                    else p = {0., 0., 0., 0.};
                 }
             }
         }
@@ -514,7 +525,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
                 }
             }
             w = p/p[3];
-            double tstep = std::max(double(will_hot),1.)*step;
+            double tstep = will_hot > 0 ? double(will_hot)*step : dt;
             if (pos[3] + tstep > tot) tstep = tot-pos[3];
             if (marker != 1) pos += w*tstep;
         }
@@ -531,7 +542,7 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
             step_record.in_medium = in_medium_for_record;
             (*step_callback)(step_record);
         }
-    } while (marker == 0);
+    }
 
     double scalpprev = orient[0]*o_in[0] + orient[1]*o_in[1] + orient[2]*o_in[2];
     if (scalpprev > 1.) scalpprev = 1.;
@@ -540,31 +551,21 @@ void loss_rate(vector<double> &p, vector<double> &pos, double tof, int id, numra
 
 }  // namespace
 
-std::default_random_engine elastic_generator_state() {
-    return ::generator;
-}
-
-void set_elastic_generator_state(const std::default_random_engine &state) {
-    ::generator = state;
-}
-
-void seed_elastic_generator(unsigned int seed) {
-    ::generator.seed(seed);
-}
-
 void propagate_segment(std::array<double,4> &p, std::array<double,4> &pos, double tof, int id,
                        numrand &nr, double kappa, double alpha, int tmethod, int model, int ebe_hydro,
                        bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile,
+                       std::default_random_engine &elastic_rng,
                        std::vector<Quench> &new_particles, int &had_scattering,
                        std::array<double,4> &orient,
-                       const PropagationStepCallback &step_callback) {
+                       const PropagationStepCallback &step_callback,
+                       TransportState *transport_state) {
     vector<double> p_vec = to_vec(p);
     vector<double> pos_vec = to_vec(pos);
     vector<double> orient_vec = to_vec(orient);
     loss_rate(p_vec, pos_vec, tof, id, nr, kappa, alpha, tmethod, model,
               ebe_hydro, compat_moliere_legacy_hydro, hydro_profile,
-              new_particles, had_scattering, orient_vec, nullptr,
-              step_callback ? &step_callback : nullptr);
+              elastic_rng, new_particles, had_scattering, orient_vec, nullptr,
+              step_callback ? &step_callback : nullptr, transport_state);
     p = to_arr(p_vec);
     pos = to_arr(pos_vec);
     orient = to_arr(orient_vec);
@@ -576,18 +577,20 @@ void propagate_segment_with_scattering_callback(std::array<double,4> &p, std::ar
                                                 int tmethod, int model, int ebe_hydro,
                                                 bool compat_moliere_legacy_hydro,
                                                 const HydroProfile &hydro_profile,
+                                                std::default_random_engine &elastic_rng,
                                                 std::vector<Quench> &new_particles,
                                                 int &had_scattering,
                                                 std::array<double,4> &orient,
                                                 const ScatteringCallback &callback,
-                                                const PropagationStepCallback &step_callback) {
+                                                const PropagationStepCallback &step_callback,
+                                                TransportState *transport_state) {
     vector<double> p_vec = to_vec(p);
     vector<double> pos_vec = to_vec(pos);
     vector<double> orient_vec = to_vec(orient);
     loss_rate(p_vec, pos_vec, tof, id, nr, kappa, alpha, tmethod, model,
               ebe_hydro, compat_moliere_legacy_hydro, hydro_profile,
-              new_particles, had_scattering, orient_vec, &callback,
-              step_callback ? &step_callback : nullptr);
+              elastic_rng, new_particles, had_scattering, orient_vec, &callback,
+              step_callback ? &step_callback : nullptr, transport_state);
     p = to_arr(p_vec);
     pos = to_arr(pos_vec);
     orient = to_arr(orient_vec);
@@ -595,7 +598,7 @@ void propagate_segment_with_scattering_callback(std::array<double,4> &p, std::ar
 
 void process_recoilers(std::vector<Quench> &new_particles, numrand &nr, double kappa, double alpha,
                        int tmethod, int model, int ebe_hydro, bool compat_moliere_legacy_hydro,
-                       const HydroProfile &hydro_profile, std::vector<Quench> &recoiled) {
+                       const HydroProfile &hydro_profile, std::default_random_engine &elastic_rng, std::vector<Quench> &recoiled) {
     while (true) {
         vector<Quench> current_particles = new_particles;
         new_particles.clear();
@@ -612,7 +615,7 @@ void process_recoilers(std::vector<Quench> &new_particles, numrand &nr, double k
             std::array<double,4> orig_en = current_particles[ip].vGetP();
             int had_scattering = 0;
             loss_rate(p, pos, tof, current_particles[ip].GetId(), nr, kappa, alpha, tmethod, model,
-                      ebe_hydro, compat_moliere_legacy_hydro, hydro_profile, new_particles, had_scattering, orient);
+                      ebe_hydro, compat_moliere_legacy_hydro, hydro_profile, elastic_rng, new_particles, had_scattering, orient);
             current_particles[ip].setOrigEn(orig_en);
             current_particles[ip].vSetP(p);
             current_particles[ip].vSetRf(to_arr(pos));
@@ -629,7 +632,7 @@ void process_recoilers(std::vector<Quench> &new_particles, numrand &nr, double k
 
 void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched, double xcre, double ycre,
               numrand &nr, double kappa, double alpha, int tmethod, int model, int ebe_hydro,
-              bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile, std::vector<Quench> &recoiled,
+              bool compat_moliere_legacy_hydro, const HydroProfile &hydro_profile, std::default_random_engine &elastic_rng, std::vector<Quench> &recoiled,
               const PartonCallbackFactory &callback_factory) {
     vector<int> FinId;
     for (unsigned int i = 0; i < quenched.size(); ++i) {
@@ -690,7 +693,7 @@ void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
                     step_callback = callbacks.second;
                 }
                 loss_rate(p, pos, tof, quenched[tp].GetId(), nr, kappa, alpha, tmethod, model,
-                          ebe_hydro, compat_moliere_legacy_hydro, hydro_profile, new_particles, had_scattering, orient,
+                          ebe_hydro, compat_moliere_legacy_hydro, hydro_profile, elastic_rng, new_particles, had_scattering, orient,
                           scattering_callback ? &scattering_callback : nullptr,
                           step_callback ? &step_callback : nullptr);
             } else {
@@ -743,7 +746,7 @@ void do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &quenched,
     FinId.clear();
 
     process_recoilers(new_particles, nr, kappa, alpha, tmethod, model, ebe_hydro,
-                      compat_moliere_legacy_hydro, hydro_profile, recoiled);
+                      compat_moliere_legacy_hydro, hydro_profile, elastic_rng, recoiled);
 }
 
 }  // namespace moliere
