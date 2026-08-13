@@ -10,6 +10,7 @@
 #include "Parton.h"
 #include "Quench.h"
 #include "Random.h"
+#include "TransportState.h"
 
 namespace moliere {
 
@@ -50,10 +51,6 @@ using PropagationStepCallback = std::function<void(const PropagationStep&)>;
 using PartonCallbackFactory = std::function<std::pair<ScatteringCallback, PropagationStepCallback>(
     int parton_index, int pdg_id, int parent_index, int d1, int d2)>;
 
-std::default_random_engine elastic_generator_state();
-void set_elastic_generator_state(const std::default_random_engine &state);
-void seed_elastic_generator(unsigned int seed);
-
 void propagate_segment(std::array<double,4> &p,
                        std::array<double,4> &pos,
                        double tof,
@@ -66,13 +63,15 @@ void propagate_segment(std::array<double,4> &p,
                        int ebe_hydro,
                        bool compat_moliere_legacy_hydro,
                        const HydroProfile &hydro_profile,
+                       std::default_random_engine &elastic_rng,
                        std::vector<Quench> &new_particles,
                        int &had_scattering,
                        std::array<double,4> &orient,
                        const PropagationStepCallback &step_callback = nullptr,
                        const heavy_quark::Parameters &heavy_quark_parameters =
                            heavy_quark::Parameters(),
-                       heavy_quark::Diagnostics *heavy_quark_diagnostics = nullptr);
+                       heavy_quark::Diagnostics *heavy_quark_diagnostics = nullptr,
+                       TransportState *transport_state = nullptr);
 
 void propagate_segment_with_scattering_callback(std::array<double,4> &p,
                                                 std::array<double,4> &pos,
@@ -86,6 +85,7 @@ void propagate_segment_with_scattering_callback(std::array<double,4> &p,
                                                 int ebe_hydro,
                                                 bool compat_moliere_legacy_hydro,
                                                 const HydroProfile &hydro_profile,
+                                                std::default_random_engine &elastic_rng,
                                                 std::vector<Quench> &new_particles,
                                                 int &had_scattering,
                                                 std::array<double,4> &orient,
@@ -93,7 +93,8 @@ void propagate_segment_with_scattering_callback(std::array<double,4> &p,
                                                 const PropagationStepCallback &step_callback = nullptr,
                                                 const heavy_quark::Parameters &heavy_quark_parameters =
                                                     heavy_quark::Parameters(),
-                                                heavy_quark::Diagnostics *heavy_quark_diagnostics = nullptr);
+                                                heavy_quark::Diagnostics *heavy_quark_diagnostics = nullptr,
+                                                TransportState *transport_state = nullptr);
 
 void process_recoilers(std::vector<Quench> &new_particles,
                        numrand &nr,
@@ -104,6 +105,7 @@ void process_recoilers(std::vector<Quench> &new_particles,
                        int ebe_hydro,
                        bool compat_moliere_legacy_hydro,
                        const HydroProfile &hydro_profile,
+                       std::default_random_engine &elastic_rng,
                        std::vector<Quench> &recoiled,
                        const heavy_quark::Parameters &heavy_quark_parameters =
                            heavy_quark::Parameters(),
@@ -121,6 +123,7 @@ void do_eloss(const std::vector<Parton> &partons,
               int ebe_hydro,
               bool compat_moliere_legacy_hydro,
               const HydroProfile &hydro_profile,
+              std::default_random_engine &elastic_rng,
               std::vector<Quench> &recoiled,
               const PartonCallbackFactory &callback_factory = nullptr,
               const heavy_quark::Parameters &heavy_quark_parameters =

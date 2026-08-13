@@ -5,29 +5,33 @@
 
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
+#include <cmath>
 
 using namespace Pythia8;
 
-namespace {
-Pythia g_tree_pythia;
-}
-
-TreeGenerator::TreeGenerator() = default;
-TreeGenerator::~TreeGenerator() = default;
+TreeGenerator::TreeGenerator() : pythia_(new Pythia8::Pythia()) {}
+TreeGenerator::~TreeGenerator() { delete pythia_; }
 
 void TreeGenerator::init(int seed, const std::string &cmndFile) {
-    pythia_ = &g_tree_pythia;
-
     std::ostringstream pythiaset;
     pythiaset << cmndFile;
-    pythia_->readFile(pythiaset.str());
+    if (!pythia_->readFile(pythiaset.str())) {
+        throw std::runtime_error("PYTHIA failed to read command card: " + pythiaset.str());
+    }
 
-    pythia_->readString("Random:setSeed = on");
+    if (!pythia_->readString("Random:setSeed = on")) {
+        throw std::runtime_error("PYTHIA rejected Random:setSeed");
+    }
     std::ostringstream seedstring;
     seedstring << "Random:seed = " << seed;
-    pythia_->readString(seedstring.str().c_str());
+    if (!pythia_->readString(seedstring.str().c_str())) {
+        throw std::runtime_error("PYTHIA rejected the configured random seed");
+    }
 
-    pythia_->init();
+    if (!pythia_->init()) {
+        throw std::runtime_error("PYTHIA initialization failed for card: " + pythiaset.str());
+    }
 }
 
 void TreeGenerator::setTrigger(double pt, double eta, int id) {
@@ -166,6 +170,40 @@ bool TreeGenerator::nextEvent(std::vector<Parton> &partons, double &weight, doub
             }
         }
     } while (changes == 0);
+
+    for (size_t i = 0; i < partons.size(); ++i) {
+        const int d1 = partons[i].GetD1();
+        const int d2 = partons[i].GetD2();
+        if ((d1 < 0) != (d2 < 0)) {
+            throw std::runtime_error("Malformed shower tree: a node has only one daughter");
+        }
+        if (d1 >= 0) {
+            if (d1 >= static_cast<int>(partons.size()) || d2 >= static_cast<int>(partons.size()) ||
+                d1 == d2 || partons[d1].GetMom() != static_cast<int>(i) ||
+                partons[d2].GetMom() != static_cast<int>(i)) {
+                throw std::runtime_error("Malformed shower tree: inconsistent binary daughter links");
+            }
+            std::array<double,4> residual = partons[i].vGetP();
+            for (int k = 0; k < 4; ++k) {
+                residual[k] -= partons[d1].vGetP()[k] + partons[d2].vGetP()[k];
+                if (std::abs(residual[k]) > 1.e-8 * std::max(1., std::abs(partons[i].vGetP()[k]))) {
+                    throw std::runtime_error("Malformed shower tree: binary momentum closure failed");
+                }
+            }
+        }
+        if (!partons[i].GetIsDone()) {
+            throw std::runtime_error(
+                "Unsupported non-binary or incomplete PYTHIA ancestry in normalized shower tree");
+        }
+        int ancestor = partons[i].GetMom();
+        size_t depth = 0;
+        while (ancestor >= 0) {
+            if (ancestor >= static_cast<int>(partons.size()) || ++depth > partons.size()) {
+                throw std::runtime_error("Malformed shower tree: parent cycle or invalid parent index");
+            }
+            ancestor = partons[ancestor].GetMom();
+        }
+    }
 
     return true;
 }

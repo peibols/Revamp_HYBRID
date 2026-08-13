@@ -8,11 +8,13 @@
 #include <sstream>
 #include <stdexcept>
 #include "vector_operators.h"
+#include "ResponseLedger.h"
 
 namespace {
 constexpr int kShowerSeedOffset = 33;
 constexpr int kHybridSeedOffset = 1346;
 constexpr int kLundSeedOffset = 2337;
+constexpr int kElasticSeedOffset = 3779;
 
 int getSeedBase(const Config &cfg) {
     return cfg.getIntOr("seed_base", cfg.getIntOr("njob", 0));
@@ -20,22 +22,93 @@ int getSeedBase(const Config &cfg) {
 
 heavy_quark::Parameters getHeavyQuarkParameters(const Config &cfg) {
     const int heavy_mode = cfg.getIntOr("heavy_quark_eloss_mode", 0);
-    const auto heavy_lambda = cfg.getDouble("heavy_quark_lambda");
-    if (heavy_mode != 0 && !heavy_lambda.has_value()) {
+    const bool has_heavy_lambda =
+        cfg.entries.find("heavy_quark_lambda") != cfg.entries.end();
+    const double heavy_lambda = cfg.getDoubleOr("heavy_quark_lambda", 0.);
+    if (heavy_mode != 0 && !has_heavy_lambda) {
         throw std::invalid_argument(
             "heavy_quark_lambda must be set explicitly when heavy_quark_eloss_mode is enabled");
     }
     return heavy_quark::make_parameters(
-        heavy_mode, heavy_lambda.value_or(0.),
+        heavy_mode, heavy_lambda,
         cfg.getDoubleOr("heavy_quark_charm_mass", 1.25),
         cfg.getDoubleOr("heavy_quark_bottom_mass", 4.2),
         cfg.getBoolOr("heavy_quark_add_generic_broadening_with_diffusion", true),
         cfg.getBoolOr("heavy_quark_enable_hard_moliere", true));
 }
+
+const Config &validateConfig(const Config &cfg) {
+    cfg.validateKnownKeys({
+        "njob", "seed_base", "Nev", "cent", "kappa", "alpha", "tmethod", "mode",
+        "do_quench", "do_wake", "do_source", "do_elastic", "do_lres",
+        "do_Moliere_on_unresolved_partons", "do_Moliere_dynamic_unresolved_resolution",
+        "do_Moliere_dynamic_daughter_unresolved_resolution",
+        "do_Moliere_recursive_unresolved_resolution",
+        "allow_modee_nonconserving_opening", "modee_max_opening_relative_residual",
+        "moliere_unresolved_resolution_c", "lres_rpower", "rpower",
+        "dump_hybrid_evolution_history", "hybrid_evolution_history_file",
+        "doEventDisplay", "eventDisplayFile", "compat_moliere_legacy_hydro",
+        "use_prehydro", "prehydro_file", "use_fixed_xy", "fixed_x", "fixed_y",
+        "ebe_hydro", "hadro_type", "tables_path", "output_base",
+        "use_trigger", "trigger_id", "trigger_pt", "trigger_eta",
+        "pythia_cmnd", "max_tree_attempts", "max_event_attempts",
+        "heavy_quark_eloss_mode", "heavy_quark_lambda",
+        "heavy_quark_charm_mass", "heavy_quark_bottom_mass",
+        "heavy_quark_add_generic_broadening_with_diffusion",
+        "heavy_quark_enable_hard_moliere"});
+    (void)getHeavyQuarkParameters(cfg);
+
+    const int Nev = cfg.getIntOr("Nev", 1);
+    const int max_tree_attempts = cfg.getIntOr("max_tree_attempts", 100000);
+    const int max_event_attempts = cfg.getIntOr("max_event_attempts", 1000000);
+    const int tmethod = cfg.getIntOr("tmethod", 0);
+    const int mode = cfg.getIntOr("mode", 0);
+    const int ebe_hydro = cfg.getIntOr("ebe_hydro", 0);
+    const bool do_elastic = cfg.getBoolOr("do_elastic", false);
+    const bool do_lres = cfg.getBoolOr("do_lres", false);
+    const int hadro_type = cfg.getIntOr("hadro_type", do_elastic ? 1 : 0);
+    if (Nev <= 0 || max_tree_attempts <= 0 || max_event_attempts <= 0) {
+        throw std::invalid_argument("Nev and generation-attempt limits must be positive");
+    }
+    if (tmethod < 0 || tmethod > 1 || mode < 0 || mode > 2 ||
+        ebe_hydro < 0 || ebe_hydro > 1 || hadro_type < 0 || hadro_type > 1) {
+        throw std::invalid_argument("Invalid tmethod, mode, ebe_hydro, or hadro_type value");
+    }
+    const double lres_rpower = cfg.getDoubleOr(
+        "lres_rpower", cfg.getDoubleOr("rpower", 2.0));
+    if (cfg.getDoubleOr("kappa", 1.0) < 0. || cfg.getDoubleOr("alpha", 1.0) < 0. ||
+        lres_rpower < 0. || cfg.getDoubleOr("moliere_unresolved_resolution_c", 1.0) < 0. ||
+        cfg.getDoubleOr("modee_max_opening_relative_residual", 1.e-6) < 0.) {
+        throw std::invalid_argument("Physics parameters and residual thresholds must be nonnegative");
+    }
+
+    const bool mode_b = cfg.getBoolOr("do_Moliere_on_unresolved_partons", false);
+    const bool mode_c = cfg.getBoolOr("do_Moliere_dynamic_unresolved_resolution", false);
+    const bool mode_d = cfg.getBoolOr("do_Moliere_dynamic_daughter_unresolved_resolution", false);
+    const bool mode_e = cfg.getBoolOr("do_Moliere_recursive_unresolved_resolution", false);
+    const bool allow_modee = cfg.getBoolOr("allow_modee_nonconserving_opening", false);
+    const int unresolved_mode_count = static_cast<int>(mode_b) + static_cast<int>(mode_c) +
+                                      static_cast<int>(mode_d) + static_cast<int>(mode_e);
+    if (unresolved_mode_count > 1) {
+        throw std::invalid_argument("Select at most one unresolved Moliere mode (B-E)");
+    }
+    if (unresolved_mode_count > 0 && (!do_elastic || !do_lres)) {
+        throw std::invalid_argument("Unresolved Moliere modes require do_elastic=true and do_lres=true");
+    }
+    if (allow_modee && !mode_e) {
+        throw std::invalid_argument("allow_modee_nonconserving_opening is only valid for Mode E");
+    }
+    if (mode_e && !allow_modee) {
+        throw std::invalid_argument(
+            "Mode E is validation-only: its live-parent opening is not four-momentum "
+            "conserving. Set allow_modee_nonconserving_opening=true only for diagnostics.");
+    }
+    return cfg;
+}
 }
 
 HYBRID::HYBRID(const Config &cfg) :
-      do_quench_(cfg.getBoolOr("do_quench", true)),
+      do_quench_(validateConfig(cfg).getBoolOr("do_quench", true)),
       do_wake_(cfg.getBoolOr("do_wake", true)),
       do_source_(cfg.getBoolOr("do_source", false)),
       do_elastic_(cfg.getBoolOr("do_elastic", false)),
@@ -44,6 +117,7 @@ HYBRID::HYBRID(const Config &cfg) :
       do_moliere_dynamic_unresolved_resolution_(cfg.getBoolOr("do_Moliere_dynamic_unresolved_resolution", false)),
       do_moliere_dynamic_daughter_unresolved_resolution_(cfg.getBoolOr("do_Moliere_dynamic_daughter_unresolved_resolution", false)),
       do_moliere_recursive_unresolved_resolution_(cfg.getBoolOr("do_Moliere_recursive_unresolved_resolution", false)),
+      allow_modee_nonconserving_opening_(cfg.getBoolOr("allow_modee_nonconserving_opening", false)),
       dump_hybrid_evolution_history_(cfg.getBoolOr("dump_hybrid_evolution_history", false)),
       do_event_display_(cfg.getBoolOr("doEventDisplay", false)),
       use_fixed_xy_(cfg.getBoolOr("use_fixed_xy", false)),
@@ -59,18 +133,26 @@ HYBRID::HYBRID(const Config &cfg) :
       heavy_quark_parameters_(getHeavyQuarkParameters(cfg)),
       ebe_hydro_(cfg.getIntOr("ebe_hydro", 0)),
       hadro_type_(cfg.getIntOr("hadro_type", cfg.getBoolOr("do_elastic", false) ? 1 : 0)),
+      max_tree_attempts_(cfg.getIntOr("max_tree_attempts", 100000)),
+      max_event_attempts_(cfg.getIntOr("max_event_attempts", 1000000)),
       lres_rpower_(cfg.getDoubleOr("lres_rpower", cfg.getDoubleOr("rpower", 2.0))),
       moliere_unresolved_resolution_c_(cfg.getDoubleOr("moliere_unresolved_resolution_c", 1.0)),
+      modee_max_opening_relative_residual_(cfg.getDoubleOr("modee_max_opening_relative_residual", 1.e-6)),
       seed_base_(getSeedBase(cfg)),
       shower_seed_(seed_base_ + kShowerSeedOffset),
       hybrid_seed_(seed_base_ + kHybridSeedOffset),
       lund_seed_(seed_base_ + kLundSeedOffset),
+      elastic_seed_(seed_base_ + kElasticSeedOffset),
       fixed_x_(cfg.getDoubleOr("fixed_x", 0.0)),
       fixed_y_(cfg.getDoubleOr("fixed_y", 0.0)),
       tables_path_(cfg.getStringOr("tables_path", "")),
       prehydro_file_(cfg.getStringOr("prehydro_file", "prehydro_table.tsv")),
       hybrid_evolution_history_file_(cfg.getStringOr("hybrid_evolution_history_file", "")),
       event_display_file_(cfg.getStringOr("eventDisplayFile", "eventDisplay.root")),
+      pythia_cmnd_(cfg.getStringOr("pythia_cmnd", "setup_pythia.cmnd")),
+      generated_event_attempts_(0),
+      tree_failures_(0),
+      hadronization_failures_(0),
       nr_(hybrid_seed_),
       tree_gen_(std::make_unique<TreeGenerator>()),
       hydro_profile_(std::make_unique<HydroProfile>()),
@@ -84,6 +166,7 @@ HYBRID::HYBRID(const Config &cfg) :
                                                 do_moliere_dynamic_unresolved_resolution_,
                                                 do_moliere_dynamic_daughter_unresolved_resolution_,
                                                 do_moliere_recursive_unresolved_resolution_,
+                                                modee_max_opening_relative_residual_,
                                                 moliere_unresolved_resolution_c_,
                                                 lres_rpower_,
                                                 dump_hybrid_evolution_history_,
@@ -91,20 +174,24 @@ HYBRID::HYBRID(const Config &cfg) :
                                                 do_event_display_,
                                                 event_display_file_,
                                                 compat_moliere_legacy_hydro_,
+                                                elastic_seed_,
                                                 tables_path_,
                                                 *hydro_profile_)) {
-
     // Open output files
     const std::string out_base = cfg.getStringOr("output_base", "HYBRID");
     // Match the legacy executables: each run owns a fresh output file.
     // Appending across reruns in the same directory can duplicate event blocks.
     hjt_file_.open(out_base + "_Hadrons.out", std::ios_base::out | std::ios_base::trunc);
     pjt_file_.open(out_base + "_Partons.out", std::ios_base::out | std::ios_base::trunc);
+    if (!hjt_file_ || !pjt_file_) {
+        throw std::runtime_error("Failed to open output files for base: " + out_base);
+    }
 
     std::cout << "Seed base= " << seed_base_
               << " shower= " << shower_seed_
               << " hybrid= " << hybrid_seed_
-              << " lund= " << lund_seed_ << std::endl;
+              << " lund= " << lund_seed_
+              << " elastic= " << elastic_seed_ << std::endl;
     if (heavy_quark_parameters_.mode != heavy_quark::Mode::Disabled) {
         std::cout << "Heavy-quark energy loss requested"
                   << " mode= " << static_cast<int>(heavy_quark_parameters_.mode)
@@ -179,6 +266,9 @@ HYBRID::HYBRID(const Config &cfg) :
 }
 
 HYBRID::~HYBRID() {
+    std::cout << "HYBRID run diagnostics: generated_event_attempts="
+              << generated_event_attempts_ << " tree_failures=" << tree_failures_
+              << " hadronization_failures=" << hadronization_failures_ << std::endl;
     hjt_file_.close();
     pjt_file_.close();
 }
@@ -186,6 +276,7 @@ HYBRID::~HYBRID() {
 void HYBRID::run() {
     int count = 0;
     bool lund_initialized = false;
+    bool tree_initialized = false;
 
     std::vector<Parton> partons;
     std::vector<Quench> quenched;
@@ -198,12 +289,23 @@ void HYBRID::run() {
     while (count < Nev_) {
         // Generate PYTHIA tree
         partons.clear();
-        if (count == 0) init_tree();
+        if (!tree_initialized) {
+            init_tree();
+            tree_initialized = true;
+        }
         double weight = 0.;
         double cross = 0.;
         double cross_err = 0.;
-        while (true) {
-          if (do_tree(partons, weight, cross, cross_err)) break;
+        int tree_attempts = 0;
+        while (!do_tree(partons, weight, cross, cross_err)) {
+            ++tree_failures_;
+            if (++tree_attempts >= max_tree_attempts_) {
+                throw std::runtime_error("Exceeded max_tree_attempts while generating or triggering an event");
+            }
+        }
+        ++generated_event_attempts_;
+        if (generated_event_attempts_ > max_event_attempts_) {
+            throw std::runtime_error("Exceeded max_event_attempts after repeated event rejection");
         }
         // Create vector of quenched partons initially equal to vacuum partons
         quenched.clear();
@@ -249,7 +351,7 @@ void HYBRID::run() {
         if (do_wake_) {
             // Do back-reaction
             wake.clear();
-            do_wake(quenched, partons, wake);
+            do_wake(quenched, partons, recoiled, wake);
             std::cout << "Wake size= " << wake.size() << std::endl;
         }
 
@@ -262,8 +364,13 @@ void HYBRID::run() {
         vhadrons.clear();
         qhadrons.clear();
         hhadrons.clear();
-        if (!do_lund(partons, quenched, recoiled, vhadrons, qhadrons, hhadrons)) {
-            std::cout << "Skipping event " << count << " after medium hadronization failure" << std::endl;
+        std::string hadronization_failure_reason;
+        if (!do_lund(partons, quenched, recoiled, vhadrons, qhadrons, hhadrons,
+                     hadronization_failure_reason)) {
+            ++hadronization_failures_;
+            std::cout << "EVENT_REJECT generated_event=" << generated_event_attempts_
+                      << " output_slot=" << count
+                      << " reason=" << hadronization_failure_reason << std::endl;
             continue;
         }
         std::cout << " Vac Hadron size= " << vhadrons.size() << " Med Hadron size= " << qhadrons.size() << std::endl;
@@ -361,7 +468,7 @@ void HYBRID::read_hydro() {
 }
 
 void HYBRID::init_tree() {
-    tree_gen_->init(shower_seed_);
+    tree_gen_->init(shower_seed_, pythia_cmnd_);
 }
 
 bool HYBRID::do_tree(std::vector<Parton> &partons, double &weight, double &cross, double &cross_err) {
@@ -381,8 +488,10 @@ void HYBRID::do_eloss(const std::vector<Parton> &partons, std::vector<Quench> &q
     energy_loss_->do_eloss(partons, quenched, x, y, &recoiled);
 }
 
-void HYBRID::do_wake(const std::vector<Quench> &quenched, const std::vector<Parton> &partons, std::vector<Wake> &wake) {
-    wake_gen_->generate(quenched, partons, wake, nr_);
+void HYBRID::do_wake(const std::vector<Quench> &quenched, const std::vector<Parton> &partons,
+                       const std::vector<Quench> &recoiled, std::vector<Wake> &wake) {
+    const auto deposits = build_response_ledger(quenched, partons, recoiled);
+    wake_gen_->generate(deposits, wake, nr_);
 }
 
 void HYBRID::init_lund() {
@@ -394,7 +503,8 @@ bool HYBRID::do_lund(const std::vector<Parton> &partons,
                      const std::vector<Quench> &recoiled,
                      std::vector<Hadron> &vhadrons,
                      std::vector<Hadron> &qhadrons,
-                     std::vector<Hadron> &hhadrons) {
+                     std::vector<Hadron> &hhadrons,
+                     std::string &failure_reason) {
     lund_gen_->hadronizeVacuum(partons, vhadrons);
     std::vector<Quench> quenchandrecoil = quenched;
     std::vector<Quench> holes;
@@ -418,11 +528,21 @@ bool HYBRID::do_lund(const std::vector<Parton> &partons,
     if (had_counter > 1) {
         std::cout << "Had Counter = " << had_counter << " and had_is_ok= " << had_is_ok << std::endl;
     }
-    if (had_is_ok && !holes.empty()) {
-        hhadrons.clear();
-        lund_gen_->hadronizeMedium(holes, hhadrons, hadro_type_);
+    if (!had_is_ok) {
+        failure_reason = "medium_hadronization_failed";
+        return false;
     }
-    return had_is_ok;
+    if (!holes.empty()) {
+        hhadrons.clear();
+        if (!lund_gen_->hadronizeMedium(holes, hhadrons, hadro_type_)) {
+            qhadrons.clear();
+            hhadrons.clear();
+            failure_reason = "hole_hadronization_failed";
+            return false;
+        }
+    }
+    failure_reason.clear();
+    return true;
 }
 
 void HYBRID::output_event(int count,

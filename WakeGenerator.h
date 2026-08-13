@@ -6,6 +6,7 @@
 #include "Quench.h"
 #include "Wake.h"
 #include "Random.h"
+#include "ResponseDeposit.h"
 
 // Encapsulates hadron wake/back-reaction generation from quenched partons.
 // Replaces global parameters in HadWake.cc with class-based configuration.
@@ -15,8 +16,7 @@ public:
     ~WakeGenerator();
 
     // Generate wake particles from energy loss.
-    void generate(const std::vector<Quench> &quenched, 
-                  const std::vector<Parton> &partons, 
+    void generate(const std::vector<ResponseDeposit> &deposits,
                   std::vector<Wake> &wake, 
                   numrand &nr);
 

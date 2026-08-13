@@ -157,14 +157,12 @@ bool WakeGenerator::tryAddResidualWake(std::vector<Wake> &wake,
     return true;
 }
 
-void WakeGenerator::generate(const std::vector<Quench> &quenched, 
-                             const std::vector<Parton> &partons, 
+void WakeGenerator::generate(const std::vector<ResponseDeposit> &deposits,
                              std::vector<Wake> &wake, 
                              numrand &nr) {
-    int wake_source_idx = 0;  // sequential index of processed final partons
-    for (size_t i = 0; i < quenched.size(); ++i) {
-        if (partons[i].GetD1() != -1) continue;
-        std::array<double,4> delta = partons[i].vGetP() - quenched[i].vGetP();
+    int wake_source_idx = 0;
+    for (const auto &deposit : deposits) {
+        const std::array<double,4> delta = deposit.momentum;
 
         double ptlost = sqrt(delta[0]*delta[0] + delta[1]*delta[1]);
         if (ptlost <= 0.) {

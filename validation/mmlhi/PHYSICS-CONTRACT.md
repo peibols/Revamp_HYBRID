@@ -4,6 +4,16 @@ This document separates the backward-compatible runtime defaults from the
 configuration used for controlled heavy-flavor validation. It is a diagnostic
 transport contract, not a complete matching prescription or heavy-flavor tune.
 
+## Inheritance contract
+
+MMLHI is based directly on the hardened MMLI transport core. Light quarks,
+gluons, hydro access, finite `L_res`, Moliere Modes A-E, response accounting,
+RNG ownership, input validation, and event-failure handling are shared. The
+intended physics difference is heavy routing: MMLI free-streams charm and
+bottom, while MMLHI keeps them in transport and optionally applies the massive
+mode-1/2/3 kernel. A pinned light-only matrix enforces byte-identical MMLI/MMLHI
+output for every shared transport mode.
+
 ## No-Overlap Validation Configuration
 
 ```text
@@ -63,8 +73,8 @@ sampling for charm while leaving light-quark and gluon Moliere scattering
 unchanged. Bottom is always excluded because the existing hard-scattering
 tables and flavor-matching path only cover flavors through charm.
 
-The existing charm path is retained behind the switch for controlled software
-tests, but it is not recommended for physics production. A 100-event forced
+The existing charm path is retained behind an explicit compatibility switch,
+but it is excluded from the production-validation matrix. A historical 100-event forced
 charm audit found seven accepted hard charm scatterings. All seven failed both
 the outgoing heavy-mass-shell check and immediate
 `p_projectile + p_thermal = p_projectile' + p_recoil` closure. The largest
@@ -105,10 +115,11 @@ therefore not be used as an unqualified description of Mode D.
 There are two additional Mode-E qualifications:
 
 - The current live-parent opening preserves total daughter energy but not the
-  full parent three-momentum. In the 20-event feature-on sample, the 23 opening
-  operations have average/max spatial residuals of `0.189/1.856 GeV`; the
-  maximum relative residual is `0.222`. Energy residuals are zero at printed
-  precision. This is not four-momentum conservation.
+  full parent three-momentum. In the August 13 20-event feature-on sample, the
+  23 opening operations have average/max spatial residuals of
+  `0.182/1.856 GeV`; the maximum relative residual is `0.223`. Energy residuals
+  are zero at printed precision. This is not four-momentum conservation, so
+  ordinary Mode-E production is blocked by the same MMLI runtime gate.
 - The opening helper creates massless daughters. A seed-`870001` event-display
   audit materializes an anti-charm daughter massless at `t=6.166 fm/c`; its
   first in-medium heavy update at `t=7.166 fm/c` imposes the `1.25 GeV` floor

@@ -1,7 +1,12 @@
 # MMLHI Validation Matrix
 
 This directory contains the reproducible software-validation matrix for the
-heavy-quark transport layer on top of MMLI. It uses the pinned PYTHIA 8.315
+heavy-quark transport layer on top of MMLI. MMLHI inherits the complete MMLI
+light-parton transport path; its intended specialization is that charm and
+bottom remain massive transported objects instead of taking MMLI's early
+free-stream return. Exact parent/child closure therefore uses a light-only
+PYTHIA card. Heavy-containing runs must differ and are checked against the
+massive-transport contract instead. The matrix uses the pinned PYTHIA 8.315
 installation by default and writes all generated inputs, binaries, logs, and
 event output under the workspace `test/` directory.
 The callback-contract check uses the Python `uproot` package to inspect the
@@ -37,14 +42,14 @@ The runner checks:
   and one recoil/hole pair per candidate were observed;
 - targeted Mode-C, Mode-D, and recursive Mode-E resolving-scattering paths;
 - seed-fixed Mode-E failed-daughter veto, independent coherent-source accept,
-  and resolving parent-candidate veto paths;
+  and resolving parent-candidate veto paths in the inherited MMLI core (the
+  historical fixture contains charm and is not an exact heavy-branch oracle);
 - forced charm modes 1, 2, and 3;
 - forced charm with LRES, Moliere, and combined Modes A-E;
-- a 100-event charm hard-scattering coverage sample;
 - bottom continuous transport with Moliere requested;
 - deterministic mode-2 and Mode-E reruns;
-- explicit hard-charm mass-shell and immediate four-momentum-closure
-  diagnostics;
+- zero hard-heavy scatters in the production-validation cards; the inherited
+  massless hard-heavy sampler remains outside the production contract;
 - missing-`heavy_quark_lambda` rejection;
 - output completeness, invalid-step counters, dynamic candidate accounting,
   one recoil/hole pair per accepted unresolved scattering, finite output
@@ -54,6 +59,10 @@ The runner checks:
   spatial-momentum residuals. These are reported rather than treated as closed:
   the current live-parent opening is energy-preserving, not a four-momentum
   conserving daughter materialization.
+
+The current August 13 matrix is written to
+`test/mmlhi_validation_20260813`. Its complete counters and hashes are in
+`summary.tsv`.
 
 The matrix is an implementation validation. It is not a heavy-flavor physics
 tune and does not establish D- or B-hadron observables because the legacy

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <random>
 #include <string>
 #include <vector>
 #include "Parton.h"
@@ -8,6 +9,7 @@
 #include "Random.h"
 #include "HydroProfile.h"
 #include "HeavyQuarkEnergyLoss.h"
+#include "TransportState.h"
 
 class EnergyLoss {
 public:
@@ -18,6 +20,7 @@ public:
                bool do_moliere_dynamic_unresolved_resolution,
                bool do_moliere_dynamic_daughter_unresolved_resolution,
                bool do_moliere_recursive_unresolved_resolution,
+               double modee_max_opening_relative_residual,
                double moliere_unresolved_resolution_c,
                double lres_rpower,
                bool dump_hybrid_evolution_history,
@@ -25,6 +28,7 @@ public:
                bool do_event_display,
                const std::string &event_display_file,
                bool compat_moliere_legacy_hydro,
+               int elastic_seed,
                const std::string &tables_path,
                const HydroProfile &hydro_profile);
     ~EnergyLoss();
@@ -35,6 +39,7 @@ public:
 
 private:
     numrand &nr_;
+    std::default_random_engine elastic_rng_;
     double kappa_;
     double alpha_;
     int tmethod_;
@@ -48,6 +53,7 @@ private:
     bool do_moliere_dynamic_unresolved_resolution_;
     bool do_moliere_dynamic_daughter_unresolved_resolution_;
     bool do_moliere_recursive_unresolved_resolution_;
+    double modee_max_opening_relative_residual_;
     double moliere_unresolved_resolution_c_;
     bool dump_hybrid_evolution_history_;
     std::string hybrid_evolution_history_file_;
@@ -168,7 +174,8 @@ private:
                    double &length, double &tlength,
                    int event_id = -1, int *record_id = nullptr,
                    int parton_index = -1, int parent_index = -1,
-                   int d1 = -1, int d2 = -1, bool is_unresolved = false);
+                   int d1 = -1, int d2 = -1, bool is_unresolved = false,
+                   TransportState *transport_state = nullptr);
     double resolution_time(double parent_e, double parent_px, double parent_py, double parent_pz,
                            double x, double y, double z,
                            double dvx, double dvy, double dvz,

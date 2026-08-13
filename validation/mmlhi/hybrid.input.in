@@ -21,6 +21,9 @@ do_Moliere_on_unresolved_partons = @MODE_B@
 do_Moliere_dynamic_unresolved_resolution = @MODE_C@
 do_Moliere_dynamic_daughter_unresolved_resolution = @MODE_D@
 do_Moliere_recursive_unresolved_resolution = @MODE_E@
+# Mode E remains diagnostic until live-parent opening conserves four-momentum.
+allow_modee_nonconserving_opening = @MODE_E@
+modee_max_opening_relative_residual = 1.0
 moliere_unresolved_resolution_c = @C_RES@
 rpower = @RPOWER@
 use_fixed_xy = true
